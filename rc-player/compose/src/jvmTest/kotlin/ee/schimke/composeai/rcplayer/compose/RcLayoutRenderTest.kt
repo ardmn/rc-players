@@ -261,6 +261,90 @@ class RcLayoutRenderTest {
     }
   }
 
+  /**
+   * A card with a margin before it (padding, then its solid `background`, then a
+   * `background(brush)` drawn over it, then its content padding): the brush's canvas stream paints
+   * over the solid background, as the reference paints `CanvasOperations` after every modifier, and
+   * from the component's own origin, every padding undone.
+   */
+  @Test
+  fun canvasDecorationAfterAnEndMarginPaintsOverTheBackground() {
+    val bitmap = renderMarginCard(marginLeft = 0f, marginTop = 0f, marginRight = 20f)
+    assertEquals(PURPLE, bitmap.getColor(5, 5), "the brush paints over the background")
+    assertEquals(GRAY, bitmap.getColor(60, 30), "the background shows where the brush doesn't")
+  }
+
+  @Test
+  fun canvasDecorationAfterALeadingMarginStartsAtTheComponentsOrigin() {
+    // A left and top margin: the brush draws from the component's origin, not shifted into it.
+    val bitmap = renderMarginCard(marginLeft = 20f, marginTop = 10f, marginRight = 0f)
+    assertEquals(PURPLE, bitmap.getColor(30, 30), "the brush paints over the background")
+    assertEquals(PURPLE, bitmap.getColor(35, 30), "the brush is 40 wide from the origin, not 20")
+    assertEquals(GRAY, bitmap.getColor(45, 30), "the brush stops 40 from the origin")
+  }
+
+  private fun renderMarginCard(marginLeft: Float, marginTop: Float, marginRight: Float): Bitmap {
+    val document =
+      RcDocument(
+        RcHeader(RcVersion(1, 0, 0), legacyWidth = 100, legacyHeight = 60, modern = false),
+        listOf(
+          RcRootLayout(1),
+          RcLayoutContent(2),
+          RcCanvasLayout(3, 30),
+          width(100f),
+          height(60f),
+          RcPaddingModifier(
+            RcFloatWord.literal(marginLeft),
+            RcFloatWord.literal(marginTop),
+            RcFloatWord.literal(marginRight),
+            RcFloatWord.literal(0f),
+          ),
+          RcBackgroundModifier(
+            flags = 0,
+            colorId = 0,
+            reserved1 = 0,
+            reserved2 = 0,
+            red = RcFloatWord.literal(0.5f),
+            green = RcFloatWord.literal(0.5f),
+            blue = RcFloatWord.literal(0.5f),
+            alpha = RcFloatWord.literal(1f),
+            shapeType = RcBackgroundModifier.SHAPE_RECTANGLE,
+          ),
+          RcNoArg(RcOpcodes.MODIFIER_DRAW_CONTENT),
+          RcPaddingModifier(
+            RcFloatWord.literal(10f),
+            RcFloatWord.literal(10f),
+            RcFloatWord.literal(10f),
+            RcFloatWord.literal(10f),
+          ),
+          RcNoArg(RcOpcodes.CANVAS_OPERATIONS),
+          RcPaintData(listOf(4, PURPLE)),
+          RcDraw4(
+            RcOpcodes.DRAW_RECT,
+            RcFloatWord.literal(0f),
+            RcFloatWord.literal(0f),
+            RcFloatWord.literal(40f),
+            RcFloatWord.literal(60f),
+          ),
+          RcNoArg(RcOpcodes.CONTAINER_END),
+          RcNoArg(RcOpcodes.CONTAINER_END),
+          RcNoArg(RcOpcodes.CONTAINER_END),
+          RcNoArg(RcOpcodes.CONTAINER_END),
+        ),
+      )
+    val scene =
+      ImageComposeScene(width = 100, height = 60, density = Density(1f)) {
+        RcComposePlayer(document)
+      }
+    try {
+      val bitmap = Bitmap().apply { allocN32Pixels(100, 60) }
+      check(scene.render().readPixels(bitmap))
+      return bitmap
+    } finally {
+      scene.close()
+    }
+  }
+
   @Test
   fun canvasDecorationPaintsAtFullBoundsBeforeContentPadding() {
     val purple = 0xff3b3444.toInt()
@@ -2351,6 +2435,8 @@ class RcLayoutRenderTest {
     )
 
   private companion object {
+    const val PURPLE = 0xff3b3444.toInt()
+    const val GRAY = 0xff808080.toInt()
     const val RED = 0xffff0000.toInt()
     const val GREEN = 0xff00ff00.toInt()
   }
