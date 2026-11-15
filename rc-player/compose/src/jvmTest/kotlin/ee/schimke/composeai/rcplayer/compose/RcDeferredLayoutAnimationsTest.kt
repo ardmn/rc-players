@@ -8,6 +8,7 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import ee.schimke.composeai.rcplayer.protocol.RcAnimationSpec
 import ee.schimke.composeai.rcplayer.protocol.RcBackgroundModifier
 import ee.schimke.composeai.rcplayer.protocol.RcBoxLayout
 import ee.schimke.composeai.rcplayer.protocol.RcColumnLayout
@@ -25,6 +26,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcHeader
 import ee.schimke.composeai.rcplayer.protocol.RcHeightModifier
 import ee.schimke.composeai.rcplayer.protocol.RcIdMap
 import ee.schimke.composeai.rcplayer.protocol.RcIntegerExpression
+import ee.schimke.composeai.rcplayer.protocol.RcLayoutAnimation
 import ee.schimke.composeai.rcplayer.protocol.RcLayoutContent
 import ee.schimke.composeai.rcplayer.protocol.RcNamedVariable
 import ee.schimke.composeai.rcplayer.protocol.RcNoArg
@@ -34,6 +36,8 @@ import ee.schimke.composeai.rcplayer.protocol.RcSystemVariables
 import ee.schimke.composeai.rcplayer.protocol.RcVersion
 import ee.schimke.composeai.rcplayer.protocol.RcVisibilityModifier
 import ee.schimke.composeai.rcplayer.protocol.RcWidthModifier
+import ee.schimke.composeai.rcplayer.runtime.RcLayoutModifiers
+import ee.schimke.composeai.rcplayer.runtime.RcLayoutNode
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -61,6 +65,66 @@ class RcDeferredLayoutAnimationsTest {
     val heights = heightsAfterTheValueGrows(defer = false)
     assertTrue(heights.any { it in (SHORT + 1) until TALL }, "the box snapped: $heights")
     assertEquals(TALL, heights.last())
+  }
+
+  @Test
+  fun aDocumentItsHostKeepsChangingKeepsThePassFromItsSecondChange() {
+    // Composed again after each change: once as it lands, and, while the pass is dropped once its
+    // animations settle, once more without it. From the second change on the pass stays.
+    val settled = composedAfterEachChangeSettled(document, listOf(TALL, SHORT, TALL), defer = true)
+    assertTrue(settled[0] > 0, "a document changed once did not drop the pass again: $settled")
+    assertEquals(listOf(0, 0), settled.drop(1), "a live document dropped and rebuilt the pass")
+  }
+
+  @Test
+  fun aDocumentWhoseComponentsAllTurnAnimationOffLandsAtOnceWithoutThePass() {
+    val still = document.withAnimationOff()
+    assertFalse(RcPreparedDocument(still).animatesLayout)
+    assertTrue(RcPreparedDocument(document).animatesLayout)
+    for (defer in listOf(false, true)) {
+      val heights = heightsAfterTheValueGrows(defer, still)
+      assertTrue(heights.none { it in (SHORT + 1) until TALL }, "it eased (defer=$defer): $heights")
+      assertEquals(TALL, heights.last())
+    }
+  }
+
+  @Test
+  fun aChosenAnimationUnderACanvasOrACustomLayoutStillCounts() {
+    val off = RcLayoutModifiers(animationSpec = DisabledSpec)
+    val on = RcLayoutModifiers(animationSpec = DisabledSpec.copy(animationId = 7))
+    fun root(child: RcLayoutNode) =
+      RcLayoutNode.Root(
+        1,
+        off,
+        listOf(RcLayoutNode.Content(2, RcLayoutModifiers(), listOf(child), emptyList())),
+        null,
+      )
+    fun canvasOver(box: RcLayoutModifiers) =
+      RcLayoutNode.Canvas(
+        3,
+        -1,
+        off,
+        null,
+        RcLayoutNode.Content(
+          4,
+          RcLayoutModifiers(),
+          listOf(RcLayoutNode.Box(RcBoxLayout(5, -1, 1, 1), box, null, null)),
+          emptyList(),
+        ),
+      )
+    fun customOver(box: RcLayoutModifiers) =
+      RcLayoutNode.Custom(
+        RcCustomLayout(6, -1, 8, emptyList()),
+        off,
+        listOf(RcLayoutNode.Box(RcBoxLayout(5, -1, 1, 1), box, null, null)),
+      )
+    assertTrue(rcAnimatesLayout(root(canvasOver(on))), "a canvas's content was not looked in")
+    assertTrue(
+      rcAnimatesLayout(root(customOver(on))),
+      "a custom layout's children were not looked in",
+    )
+    assertFalse(rcAnimatesLayout(root(canvasOver(off))))
+    assertFalse(rcAnimatesLayout(root(customOver(off))))
   }
 
   @Test
@@ -143,7 +207,10 @@ class RcDeferredLayoutAnimationsTest {
   }
 
   /** The green box's height on each frame after the host grows `USER:h` from SHORT to TALL. */
-  private fun heightsAfterTheValueGrows(defer: Boolean): List<Int> {
+  private fun heightsAfterTheValueGrows(
+    defer: Boolean,
+    document: RcDocument = this.document,
+  ): List<Int> {
     val values = mutableStateMapOf<String, RcNamedValue>()
     val scene =
       ImageComposeScene(width = 40, height = 40, density = Density(1f)) {
@@ -166,6 +233,61 @@ class RcDeferredLayoutAnimationsTest {
       scene.close()
     }
   }
+
+  /**
+   * For each of [heights], handed to the player in turn once the last change has had time to end:
+   * the layout nodes composed over the frames after it landed, while it animates and settles.
+   */
+  private fun composedAfterEachChangeSettled(
+    document: RcDocument,
+    heights: List<Int>,
+    defer: Boolean,
+  ): List<Int> {
+    val values = mutableStateMapOf<String, RcNamedValue>()
+    val scene =
+      ImageComposeScene(width = 40, height = 40, density = Density(1f)) {
+        CompositionLocalProvider(LocalRcDeferLayoutAnimations provides defer) {
+          RcComposePlayer(RcPreparedDocument(document), Modifier.size(40.dp), namedValues = values)
+        }
+      }
+    try {
+      var time = 0L
+      scene.render(time)
+      return countingCompositions(RENDER_LAYOUT_NODE) { count ->
+        heights.map { height ->
+          values["USER:h"] = RcNamedValue.FloatValue(height.toFloat())
+          Snapshot.sendApplyNotifications()
+          // The frames the change lands on (the pass switching on first, a frame later the value)…
+          repeat(LANDING_FRAMES) {
+            time += FRAME_NANOS
+            scene.render(time)
+          }
+          // …then its 300 ms of animation, and the frames that see it end: a dropped pass rebuilds.
+          val before = count()
+          repeat(SETTLE_FRAMES) {
+            time += FRAME_NANOS
+            scene.render(time)
+          }
+          count() - before
+        }
+      }
+    } finally {
+      scene.close()
+    }
+  }
+
+  /** [document] with a disabled animation spec on every component, as rc-player-edit writes it. */
+  private fun RcDocument.withAnimationOff(): RcDocument =
+    copy(
+      operations =
+        operations.flatMap { operation ->
+          if (
+            operation is RcRootLayout || operation is RcColumnLayout || operation is RcBoxLayout
+          ) {
+            listOf(operation, DisabledSpec)
+          } else listOf(operation)
+        },
+    )
 
   private val document =
     RcDocument(
@@ -209,6 +331,18 @@ class RcDeferredLayoutAnimationsTest {
     const val SHORT = 10
     const val TALL = 30
     const val FRAME_NANOS = 16_000_000L
+    const val LANDING_FRAMES = 6
+    const val SETTLE_FRAMES = 54
+    val DisabledSpec =
+      RcAnimationSpec(
+        animationId = 0,
+        motionDurationMillis = RcFloatWord.literal(300f),
+        motionEasingType = 1,
+        visibilityDurationMillis = RcFloatWord.literal(300f),
+        visibilityEasingType = 1,
+        enterAnimation = RcLayoutAnimation.FadeIn,
+        exitAnimation = RcLayoutAnimation.FadeOut,
+      )
     const val PULSE = 43
     // `RcFloatWord` operator words: 0xffb10000 + opcode; 3 multiplies.
     const val MUL = 0xffb10003.toInt()
