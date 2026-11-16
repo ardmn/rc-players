@@ -79,6 +79,19 @@ line and resolves the alias from its own package instead.
   KDoc links, to `remote-player-compose`'s `androidx.compose.remote.player.compose.action`, where
   `RcPlayer.kt` now imports it from.
 
+One shim runs the other way: it covers a `remote-core` that lacks a member the pinned release has,
+on a consumer's runtime classpath, which a published artifact cannot rule out. It is in
+`CoreVersionSkew.kt`.
+
+- `ImageAttribute.getImageId()` is read through `imageIdCompat` at its two call sites
+  (`draw/RcPlayerDrawing.kt`, `doc/GraphContext.kt`). alpha23 has the getter, but the androidx.dev
+  `1.0.0-SNAPSHOT` that remote-m3-catalog's snapshot lane resolves beside this player (build
+  16639771) does not, and the call threw `NoSuchMethodError` out of the draw stream: every document
+  with an `ImageAttribute` (an image-background button or card) baked fully transparent. The shim
+  calls the getter while it links and otherwise reads the id from the operation's own wire form,
+  `ImageAttribute.write`, cached per operation. `RcImageAttributeVersionSkewTest` covers it. Delete it
+  once no supported consumer pairs this player with a core that lacks the getter.
+
 The previous pin's two shims retired with alpha23, which ships the core changes they stood in for:
 `doc/RcPlayerPreprocess.kt`'s `floatExpressions` registration (`461d551382f`) and the
 `ImageAttribute.imageId` reflection in `doc/` and `draw/CoreVersionSkew.kt` (`d18fe8f34fb`).
@@ -100,7 +113,7 @@ upstream and where it is retired from. The list is meant to shrink.
 Files that exist only here:
 
 - `RcPlayerLocalPatches.kt`: helpers for the patches above.
-- `CreationVersionSkew.kt`: the version-skew shim described above.
+- `CreationVersionSkew.kt` and `CoreVersionSkew.kt`: the version-skew shims described above.
 - `../GoogleFontFamilies.kt`: the Google Fonts cache resolver behind the `google:` patch. It is null
   unless `composeai.fonts.cacheDir` is set, which is a render-side property no app sets.
 

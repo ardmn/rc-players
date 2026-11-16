@@ -45,6 +45,7 @@ import ee.schimke.composeai.rcembedded.player.draw.ComposeLocalPaint
 import ee.schimke.composeai.rcembedded.player.draw.GraphPaintContext
 import ee.schimke.composeai.rcembedded.player.draw.TextMeasurePaintSpec
 import ee.schimke.composeai.rcembedded.player.draw.derefId
+import ee.schimke.composeai.rcembedded.player.imageIdCompat
 import ee.schimke.composeai.rcembedded.player.resources.RcTypefaceCache
 import ee.schimke.composeai.rcembedded.player.resources.resolveImageAttributeDimensions
 import java.util.concurrent.ConcurrentHashMap
@@ -216,7 +217,13 @@ internal class GraphContext(
             // apply(remoteContext).
             if (op is PaintOperation && op !is Component) {
                 if (op is ImageAttribute) {
-                    resolveImageAttributeDimensions(this, writeContext, derefId(op.imageId, this))
+                    // VERSION SKEW (rc-players): `imageIdCompat`, not `imageId` — see
+                    // `CoreVersionSkew.kt`.
+                    resolveImageAttributeDimensions(
+                        this,
+                        writeContext,
+                        derefId(op.imageIdCompat, this),
+                    )
                 }
                 graphPaintContext.paintState =
                     textMeasurePaintSpecs[id]?.toComposeLocalPaint(this) ?: ComposeLocalPaint()

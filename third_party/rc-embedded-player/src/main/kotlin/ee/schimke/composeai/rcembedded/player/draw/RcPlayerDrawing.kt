@@ -99,6 +99,7 @@ import ee.schimke.composeai.rcembedded.player.doc.GraphContext
 import ee.schimke.composeai.rcembedded.player.doc.SnapshotRemoteComposeState
 import ee.schimke.composeai.rcembedded.player.doc.applyTrackingPathChange
 import ee.schimke.composeai.rcembedded.player.doc.withOpCountReset
+import ee.schimke.composeai.rcembedded.player.imageIdCompat
 import ee.schimke.composeai.rcembedded.player.resources.resolveImageAttributeDimensions
 import ee.schimke.composeai.rcembedded.player.state.MaybeVariableFloat
 
@@ -246,7 +247,13 @@ private fun DrawScope.executeOperationsInPass(
                 op.paint(evalPaintContext())
             }
             is ImageAttribute -> {
-                resolveImageAttributeDimensions(graph, remoteContext, derefId(op.imageId, read))
+                // VERSION SKEW (rc-players): `imageIdCompat`, not `imageId` — see
+                // `CoreVersionSkew.kt`.
+                resolveImageAttributeDimensions(
+                    graph,
+                    remoteContext,
+                    derefId(op.imageIdCompat, read),
+                )
                 op.paint(evalPaintContext())
             }
             is TextMeasure -> {
