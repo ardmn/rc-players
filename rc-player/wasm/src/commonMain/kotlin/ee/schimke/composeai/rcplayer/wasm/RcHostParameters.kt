@@ -1,5 +1,7 @@
 package ee.schimke.composeai.rcplayer.wasm
 
+import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
+
 /**
  * Pure parsing for the browser host's page parameters, kept out of `Main.kt` so it runs under a JVM
  * test: the host itself reaches the browser only through `js(...)`, which nothing but a browser can
@@ -118,4 +120,26 @@ internal fun parse3DRendererParameter(raw: String?): Rc3DRendererParameter =
     "software" -> Rc3DRendererParameter.Software
     "gpu" -> Rc3DRendererParameter.Gpu
     else -> Rc3DRendererParameter.Auto
+  }
+
+/**
+ * One `?namedValues=` element's value as the player takes it, or null when [kind] is unknown or
+ * [value] does not parse as it — the element is then dropped, as docs/design/RC_PLAYER_EMBED.md
+ * describes.
+ *
+ * `bool` is a [RcNamedValue.BooleanValue], as the iOS controller and the embedded live bridge write
+ * a boolean, mirroring AndroidX, where `setNamedBooleanOverride` is a separate call; the player
+ * stores it as the integer 1 or 0. It does not validate: anything but `true` is false, as the embed
+ * contract documents.
+ */
+internal fun parseNamedValue(kind: String, value: String): RcNamedValue? =
+  when (kind) {
+    "string" -> RcNamedValue.Text(value)
+    "float",
+    "dp" -> value.toFloatOrNull()?.let(RcNamedValue::FloatValue)
+    "int" -> value.toIntOrNull()?.let(RcNamedValue::Integer)
+    "bool" -> RcNamedValue.BooleanValue(value == "true")
+    "color" -> value.removePrefix("#").toULongOrNull(16)?.toInt()?.let(RcNamedValue::Color)
+    "long" -> value.toLongOrNull()?.let(RcNamedValue::LongValue)
+    else -> null
   }
