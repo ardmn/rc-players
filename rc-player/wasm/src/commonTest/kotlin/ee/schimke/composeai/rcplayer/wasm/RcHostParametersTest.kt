@@ -137,14 +137,105 @@ class RcHostParametersTest {
     assertEquals(RcNamedValue.FloatValue(0.75f), parseNamedValue("float", "0.75"))
     assertEquals(RcNamedValue.FloatValue(12f), parseNamedValue("dp", "12"))
     assertEquals(RcNamedValue.Integer(7), parseNamedValue("int", "7"))
-    assertEquals(RcNamedValue.Color(0xFFFF8800.toInt()), parseNamedValue("color", "#FFFF8800"))
     assertEquals(
       RcNamedValue.LongValue(1_700_000_000_000),
       parseNamedValue("long", "1700000000000"),
     )
     assertNull(parseNamedValue("int", "seven"))
-    assertNull(parseNamedValue("color", "orange"))
     assertNull(parseNamedValue("long", "soon"))
     assertNull(parseNamedValue("unknown", "1"))
+  }
+
+  @Test
+  fun aSixDigitColorIsOpaque() {
+    assertEquals(0xFFFF8800.toInt(), parseArgbColor("#FF8800"))
+    assertEquals(0xFFFF8800.toInt(), parseArgbColor("FF8800"))
+    assertEquals(0xFF336699.toInt(), parseArgbColor("#336699"))
+    // Surrounding whitespace is trimmed, as the web player's HostApi.parseColor trims it.
+    assertEquals(0xFFFF8800.toInt(), parseArgbColor(" #FF8800\n"))
+    assertEquals(RcNamedValue.Color(0xFFFF8800.toInt()), parseNamedValue("color", "#FF8800"))
+  }
+
+  @Test
+  fun anEightDigitColorKeepsItsAlpha() {
+    assertEquals(0xFFFF8800.toInt(), parseArgbColor("#FFFF8800"))
+    assertEquals(0x80FF8800.toInt(), parseArgbColor("80ff8800"))
+    assertEquals(0x00FF8800, parseArgbColor("#00FF8800"))
+  }
+
+  @Test
+  fun anEightDigitColorIsAlphaFirstNotCss() {
+    // RC_PLAYER_EMBED.md's example: CSS would read "#FF880080" as half-transparent orange.
+    assertEquals(0xFF880080.toInt(), parseArgbColor("#FF880080"))
+    assertEquals(0x80FF8800.toInt(), parseArgbColor("#80FF8800"))
+  }
+
+  @Test
+  fun anyOtherColorSpellingIsDropped() {
+    for (value in
+      listOf("", "#", "F80", "#FF880", "#FF88001", "#FFFF88001", "+FF8800", "#GG8800", "orange")) {
+      assertNull(parseArgbColor(value), value)
+      assertNull(parseNamedValue("color", value), value)
+    }
+  }
+
+  @Test
+  fun aNumberColorIsTheArgbItself() {
+    // What JavaScript's String() writes for 0xFFFF8800, its signed form, and 0xFF8800.
+    assertEquals(0xFFFF8800.toInt(), argbFromNumber("4294936576"))
+    assertEquals(0xFFFF8800.toInt(), argbFromNumber("-30720"))
+    assertEquals(0x00FF8800, argbFromNumber("16746496"))
+    assertEquals(0xFFFF8800.toInt(), argbFromNumber("4294936576.9"))
+    assertEquals(
+      RcNamedValue.Color(0xFFFF8800.toInt()),
+      parseNamedValue("color", "4294936576", isNumber = true),
+    )
+  }
+
+  @Test
+  fun aNumberColorIsNotReadAsHexDigits() {
+    // As a string, "16746496" is eight hex digits; as a number it is 0x00FF8800.
+    assertEquals(
+      0x16746496,
+      parseNamedValue("color", "16746496").let { (it as RcNamedValue.Color).argb },
+    )
+    assertEquals(
+      0x00FF8800,
+      (parseNamedValue("color", "16746496", isNumber = true) as RcNamedValue.Color).argb,
+    )
+  }
+
+  @Test
+  fun aNumberColorAtTheEdgesOfThirtyTwoBitsIsKept() {
+    assertEquals(Int.MIN_VALUE, argbFromNumber("-2147483648"))
+    assertEquals(-1, argbFromNumber("4294967295"))
+    assertEquals(Int.MIN_VALUE, argbFromNumber("-2147483648.5"))
+  }
+
+  @Test
+  fun aNumberColorOutsideThirtyTwoBitsIsDropped() {
+    for (value in listOf("4294967296", "-2147483649", "1e+21", "NaN", "Infinity", "")) {
+      assertNull(argbFromNumber(value), value)
+      assertNull(parseNamedValue("color", value, isNumber = true), value)
+    }
+  }
+
+  @Test
+  fun onlyColorReadsANumberDifferently() {
+    for ((kind, value) in
+      listOf(
+        "string" to "7",
+        "float" to "0.75",
+        "dp" to "12",
+        "int" to "7",
+        "bool" to "true",
+        "long" to "17",
+      )) {
+      assertEquals(
+        parseNamedValue(kind, value),
+        parseNamedValue(kind, value, isNumber = true),
+        kind,
+      )
+    }
   }
 }

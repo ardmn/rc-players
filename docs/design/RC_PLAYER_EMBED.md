@@ -138,8 +138,17 @@ const namedValues = [
 const src = `player.html?src=doc.rc&namedValues=${encodeURIComponent(JSON.stringify(namedValues))}`;
 ```
 
-`value` is stringified, so a number or boolean may be passed unquoted. `color` accepts
-`#RRGGBB`/`#AARRGGBB` with or without the leading `#`.
+`value` is stringified, so a number or boolean may be passed unquoted. `color` is the exception that
+reads the two differently, as the vendored TypeScript player's `HostApi.parseColor` does: a string
+is hex, `#RRGGBB` (opaque) or `#AARRGGBB`, with or without the leading `#`, and any other string is
+malformed; a number is the ARGB itself, so its alpha is the top byte — `4294936576` (`0xFFFF8800`,
+or `-30720` as a signed 32-bit value) is opaque orange, while `16746496` (`0xFF8800`) has a zero
+alpha and draws nothing. A number outside 32 bits is dropped (the TypeScript player wraps it).
+
+**An eight-digit `color` puts alpha first, unlike CSS.** CSS reads `#RRGGBBAA`; this parameter
+reads `#AARRGGBB`, Android's order and the ARGB a `.rc` document stores. `"#FF880080"` is therefore
+the opaque purple `#880080`, not a half-transparent orange — that is `"#80FF8800"`. Convert a CSS
+eight-digit colour by moving its last two digits to the front; a six-digit one is the same in both.
 
 **`bool` is `"true"` or nothing.** It is the one kind that does not validate: the parser tests for
 the exact string `true` and maps *everything else* — `"1"`, `"TRUE"`, `"yes"`, a typo — to `false`.

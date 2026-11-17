@@ -131,15 +131,50 @@ internal fun parse3DRendererParameter(raw: String?): Rc3DRendererParameter =
  * a boolean, mirroring AndroidX, where `setNamedBooleanOverride` is a separate call; the player
  * stores it as the integer 1 or 0. It does not validate: anything but `true` is false, as the embed
  * contract documents.
+ *
+ * [isNumber] says the host passed `value` as a JSON number rather than a string; only `color` reads
+ * the two differently (see [argbFromNumber]).
  */
-internal fun parseNamedValue(kind: String, value: String): RcNamedValue? =
+internal fun parseNamedValue(
+  kind: String,
+  value: String,
+  isNumber: Boolean = false,
+): RcNamedValue? =
   when (kind) {
     "string" -> RcNamedValue.Text(value)
     "float",
     "dp" -> value.toFloatOrNull()?.let(RcNamedValue::FloatValue)
     "int" -> value.toIntOrNull()?.let(RcNamedValue::Integer)
     "bool" -> RcNamedValue.BooleanValue(value == "true")
-    "color" -> value.removePrefix("#").toULongOrNull(16)?.toInt()?.let(RcNamedValue::Color)
+    "color" ->
+      (if (isNumber) argbFromNumber(value) else parseArgbColor(value))?.let(RcNamedValue::Color)
     "long" -> value.toLongOrNull()?.let(RcNamedValue::LongValue)
     else -> null
   }
+
+/**
+ * A `color` value as ARGB: `RRGGBB`, which is opaque, or `AARRGGBB`, each with or without a leading
+ * `#` and surrounding whitespace — the forms docs/design/RC_PLAYER_EMBED.md lists, read as the web
+ * player's `HostApi.parseColor` reads a string. Null for anything else, so the element is dropped
+ * like any other value that does not parse.
+ */
+internal fun parseArgbColor(value: String): Int? {
+  val hex = ARGB_COLOR_PATTERN.matchEntire(value.trim())?.groupValues?.get(1) ?: return null
+  val argb = hex.toLong(radix = 16)
+  return (if (hex.length == 6) argb or 0xFF000000L else argb).toInt()
+}
+
+/**
+ * A `color` passed as a JSON number, which is the ARGB itself (`0xFFFF8800`), as the web player's
+ * `HostApi.parseColor` reads one: a fraction is truncated and the value taken as 32 bits, so
+ * `0xFFFF8800` and its signed form `-30720` are the same colour. [value] is the number as
+ * JavaScript's `String` writes it. Null when it is not finite or is outside the 32-bit range either
+ * way, so the element is dropped rather than wrapped into an arbitrary colour.
+ */
+internal fun argbFromNumber(value: String): Int? {
+  val number = value.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return null
+  if (number <= Int.MIN_VALUE - 1.0 || number >= 4_294_967_296.0) return null
+  return number.toLong().toInt()
+}
+
+private val ARGB_COLOR_PATTERN = Regex("#?([0-9a-fA-F]{6}|[0-9a-fA-F]{8})")

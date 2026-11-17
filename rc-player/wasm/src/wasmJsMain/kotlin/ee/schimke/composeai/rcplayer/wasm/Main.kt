@@ -621,10 +621,10 @@ private fun namedValuesFromLocation(): Map<String, RcNamedValue> {
   return buildMap {
     flat.split('\u0001').forEach { row ->
       val fields = row.split('\u0000')
-      if (fields.size != 3) return@forEach
+      if (fields.size != 4) return@forEach
       val name = decodeUriComponent(fields[1])
       val value = decodeUriComponent(fields[2])
-      val namedValue = parseNamedValue(kind = fields[0], value = value)
+      val namedValue = parseNamedValue(kind = fields[0], value = value, isNumber = fields[3] == "n")
       if (name.isNotEmpty() && namedValue != null) put("USER:$name", namedValue)
     }
   }
@@ -637,9 +637,11 @@ private fun flattenNamedValuesFromLocation(): JsString? =
         var raw = new URL(window.location.href).searchParams.get('namedValues') || '[]';
         var values = JSON.parse(raw);
         if (!Array.isArray(values)) return null;
+        // The fourth field says whether `value` was a JSON number; parseNamedValue reads it.
         return values.map(function (value) {
           return [String(value.kind || ''), encodeURIComponent(String(value.name || '')),
-            encodeURIComponent(String(value.value == null ? '' : value.value))].join('\u0000');
+            encodeURIComponent(String(value.value == null ? '' : value.value)),
+            typeof value.value === 'number' ? 'n' : 's'].join('\u0000');
         }).join('\u0001');
       } catch (error) { return null; }
     })()""",
