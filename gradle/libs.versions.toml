@@ -99,7 +99,7 @@ compose-bom-compat = "2025.12.01"
 # downgrade and assume binary compatibility. See README.md's consumer compatibility notes.
 # This ref does not control `rc-player-compose`, which uses CMP and `androidx-compose-for-cmp`.
 androidx-compose = "1.12.1"
-androidx-compose-material3 = "1.4.0"
+androidx-compose-material3 = "1.5.0"
 # The desktop/Skiko floor for `renderer-desktop`, `daemon-desktop`, `bundle-viewer` and the CMP
 # player. This version is also a CEILING CONSTRAINT ON EVERY CATALOG THE SERVE HOST RENDERS LIVE:
 # it must be >= the newest `compose-multiplatform` of any catalog served from this host. A catalog
