@@ -1237,7 +1237,7 @@
       case NativeSwiftCompositingStrategy.offscreen:
         layer.allowsGroupOpacity = true
         layer.shouldRasterize = true
-        layer.rasterizationScale = window?.screen.scale ?? UIScreen.main.scale
+        layer.rasterizationScale = max(traitCollection.displayScale, 1)
       case NativeSwiftCompositingStrategy.modulateAlpha:
         layer.allowsGroupOpacity = false
         layer.shouldRasterize = false

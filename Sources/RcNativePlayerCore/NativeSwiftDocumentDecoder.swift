@@ -2984,7 +2984,47 @@ enum NativeSwiftDocumentDecoder {
     func references(_ ids: Set<Int>) -> Bool {
       if root.references(anyOf: ids) { return true }
       if expressions.contains(where: { references(ids, in: $0.words) }) { return true }
+      if integerExpressions.values.contains(where: {
+        NativeSwiftIntegerExpression.references(anyOf: ids, mask: $0.mask, tokens: $0.tokens)
+      }) {
+        return true
+      }
       if textFromFloats.contains(where: { references(ids, in: [$0.value]) }) { return true }
+      if textOperations.contains(where: { operation in
+        switch operation {
+        case .fromFloat(let op): return references(ids, in: [op.value])
+        case .merge: return false
+        case .lookupInt(let op): return ids.contains(op.indexID)
+        case .lookup(let op): return references(ids, in: [op.index])
+        case .transform(let op), .subtext(let op):
+          return references(ids, in: [op.start, op.length])
+        }
+      }) {
+        return true
+      }
+      if idLookups.contains(where: { references(ids, in: [$0.index]) }) { return true }
+      if floatListUpdates.values.contains(where: { updates in
+        updates.contains { references(ids, in: [$0.index, $0.value]) }
+      }) {
+        return true
+      }
+      if matrixVectorMath.contains(where: { references(ids, in: $0.inputWords) }) { return true }
+      if matrixExpressions.values.contains(where: { references(ids, in: $0.words) }) {
+        return true
+      }
+      if floatLists.values.contains(where: { references(ids, in: $0) }) { return true }
+      if dynamicFloatLists.values.contains(where: { list in
+        references(ids, in: [list.lengthWord])
+          || list.updates.contains { references(ids, in: [$0.index, $0.value]) }
+      }) {
+        return true
+      }
+      if clickAreas.contains(where: {
+        references(ids, in: [$0.left, $0.top, $0.right, $0.bottom])
+      }) {
+        return true
+      }
+      if references(ids, in: wakeWords) { return true }
       return colorExpressions.contains { references(ids, in: $0.floatWords) }
     }
     // A moving clock means the frame has to be re-resolved continuously.
