@@ -2620,7 +2620,7 @@ enum NativeSwiftDocumentDecoder {
         node.text = ParsedText(
           textID: textID, colorARGB: color, colorID: integers[NativeSwiftTextProperty.colorID],
           sizeWord: floats[NativeSwiftTextProperty.fontSize] ?? Float(36).bitPattern,
-          style: integers[NativeSwiftTextProperty.fontStyle] ?? 0,
+          style: integers[NativeSwiftTextProperty.fontStyle] ?? NativeSwiftFontStyle.normal,
           weightWord: floats[NativeSwiftTextProperty.fontWeight] ?? Float(400).bitPattern,
           familyID: integers[NativeSwiftTextProperty.fontFamily] ?? -1,
           alignment: integers[NativeSwiftTextProperty.textAlign].map(
@@ -3092,7 +3092,7 @@ enum NativeSwiftDocumentDecoder {
       if type == NativeSwiftPaintCommand.gradient {
         guard index < words.count else { throw input.malformed("Truncated paint gradient") }
         let colorCount = words[index] & 0xff
-        guard (1...16).contains(colorCount), index + 1 + colorCount < words.count else {
+        guard (1...255).contains(colorCount), index + 1 + colorCount < words.count else {
           throw input.malformed("Invalid paint gradient")
         }
         let stopCount = words[index + 1 + colorCount]

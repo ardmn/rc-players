@@ -3448,7 +3448,7 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
     {
       font = downloaded
     }
-    if (text.style & 2) != 0,
+    if text.style == NativeSwiftFontStyle.italic,
       let italic = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) as NSFont?
     {
       font = italic
