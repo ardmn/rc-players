@@ -574,6 +574,7 @@ internal fun RcComposePlayerResolved(
   systemColors: (name: String) -> Color?,
   customComponents: RcCustomComponentRegistry,
   onStateChanged: ((RcPlayerState) -> Unit)? = null,
+  observeNamedValues: Boolean = true,
 ) {
   val document = prepared.document
   val latestEventSink by rememberUpdatedState(onEvent)
@@ -733,37 +734,60 @@ internal fun RcComposePlayerResolved(
   // Set while the collector below lays the tree out under the pass at the old values, before it
   // applies a change: the composition must not apply it first.
   val switchingOnLookahead = remember(state) { booleanArrayOf(false) }
-  LaunchedEffect(state, namedValues) {
-    snapshotFlow { namedValues.toMap() }
-      .collect { current ->
-        if (current == appliedNamedValues) return@collect
-        if (!lookahead && animatesBounds) {
-          // Lay the tree out under the lookahead pass at the old values first, so the change has
-          // bounds to animate from.
-          switchingOnLookahead[0] = true
-          lookahead = true
-          try {
-            withFrameNanos {}
-            withFrameNanos {}
-          } finally {
-            switchingOnLookahead[0] = false
+  if (observeNamedValues) {
+    LaunchedEffect(state, namedValues) {
+      snapshotFlow { namedValues.toMap() }
+        .collect { current ->
+          if (current == appliedNamedValues) return@collect
+          if (!lookahead && animatesBounds) {
+            // Lay the tree out under the lookahead pass at the old values first, so the change has
+            // bounds to animate from.
+            switchingOnLookahead[0] = true
+            lookahead = true
+            try {
+              withFrameNanos {}
+              withFrameNanos {}
+            } finally {
+              switchingOnLookahead[0] = false
+            }
+            if (namedValues.toMap() == appliedNamedValues) return@collect
           }
-          if (namedValues.toMap() == appliedNamedValues) return@collect
+          applyHostValues(current)
+          // `setNamedValue` writes into the state's maps without going through the action path, so
+          // nothing else tells the draw layer a value moved. Per value, only the top level
+          // recomposes
+          // and publishes what moved; otherwise the whole player does.
+          if (perValueInvalidation) hostValueVersion += 1 else invalidationVersion += 1
+          hostChanges += 1
         }
-        applyHostValues(current)
-        // `setNamedValue` writes into the state's maps without going through the action path, so
-        // nothing else tells the draw layer a value moved. Per value, only the top level recomposes
-        // and publishes what moved; otherwise the whole player does.
-        if (perValueInvalidation) hostValueVersion += 1 else invalidationVersion += 1
-        hostChanges += 1
-      }
+    }
   }
   // Per value, a host change lands in the composition that sees it, rather than a frame later
   // through the collector above: a host that writes its values as it composes (before this player)
   // has them drawn on that frame, as a composable given new parameters would be. The top level then
   // evaluates and publishes them below, in this same composition. A change that first switches the
-  // lookahead pass on still goes through the collector, which waits for the pass.
-  if (perValueInvalidation && !switchingOnLookahead[0] && (lookahead || !animatesBounds)) {
+  // lookahead pass on still goes through the collector (or the on-demand deferred effect below for
+  // embedded players), which waits for the pass.
+  var pendingDeferredNamedValues by
+    remember(state) { mutableStateOf<Map<String, RcNamedValue>?>(null) }
+  if (!observeNamedValues && namedValues.isNotEmpty() && !switchingOnLookahead[0]) {
+    val current = namedValues.toMap()
+    if (current != appliedNamedValues) {
+      if (!lookahead && animatesBounds) {
+        if (pendingDeferredNamedValues != current) pendingDeferredNamedValues = current
+      } else {
+        applyHostValues(current)
+        if (defersLookahead && hostChanges < LOOKAHEAD_LIVE_HOST_CHANGES) {
+          SideEffect { hostChanges += 1 }
+        }
+      }
+    }
+  } else if (
+    observeNamedValues &&
+      perValueInvalidation &&
+      !switchingOnLookahead[0] &&
+      (lookahead || !animatesBounds)
+  ) {
     val current = namedValues.toMap()
     if (current != appliedNamedValues) {
       applyHostValues(current)
@@ -771,6 +795,28 @@ internal fun RcComposePlayerResolved(
       // recompose this top level again on the next frame.
       if (defersLookahead && hostChanges < LOOKAHEAD_LIVE_HOST_CHANGES)
         SideEffect { hostChanges += 1 }
+    }
+  }
+  val deferredChange = pendingDeferredNamedValues
+  if (!observeNamedValues && deferredChange != null) {
+    LaunchedEffect(state, deferredChange) {
+      if (!lookahead && animatesBounds) {
+        switchingOnLookahead[0] = true
+        lookahead = true
+        try {
+          withFrameNanos {}
+          withFrameNanos {}
+        } finally {
+          switchingOnLookahead[0] = false
+        }
+      }
+      val latest = namedValues.toMap()
+      if (latest != appliedNamedValues) {
+        applyHostValues(latest)
+        if (perValueInvalidation) hostValueVersion += 1 else invalidationVersion += 1
+        hostChanges += 1
+      }
+      pendingDeferredNamedValues = null
     }
   }
   if (defersLookahead) {
@@ -1179,11 +1225,13 @@ internal fun RcComposePlayerResolved(
           }
         }
       }
+    val parentLookaheadScope = LocalRcLookaheadScope.current
     val tree: @Composable (probe: RcGeometryProbe?) -> Unit = { probe ->
       // A new tree when the pass switches on: what the old one held of its own (nothing a document
       // that defers the pass keeps; see [RcPreparedDocument.changesLayoutOnItsOwn]) is rebuilt.
-      key(lookahead) {
-        if (lookahead) LookaheadScope { content(this, probe) } else content(null, probe)
+      key(lookahead, parentLookaheadScope) {
+        if (lookahead && parentLookaheadScope == null) LookaheadScope { content(this, probe) }
+        else content(if (lookahead) parentLookaheadScope else null, probe)
       }
     }
     valueVersions.suppressed = false
