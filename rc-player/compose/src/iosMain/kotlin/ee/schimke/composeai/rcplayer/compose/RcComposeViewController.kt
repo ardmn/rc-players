@@ -52,16 +52,59 @@ public class RcComposePlayerController {
   public fun setColor(name: String, argb: Int): Boolean =
     set(name, RcNamedVariable.COLOR_TYPE, RcNamedValue.Color(argb))
 
+  /** Sets an integer variable, returning false when [name] is absent or has a different type. */
+  public fun setInteger(name: String, value: Int): Boolean =
+    set(name, RcNamedVariable.INT_TYPE, RcNamedValue.Integer(value))
+
+  /**
+   * Sets a boolean variable, returning false when [name] is absent or has a different type.
+   *
+   * A Remote Compose boolean is an integer variable holding 1 or 0, as AndroidX's
+   * `setNamedBooleanOverride` writes it, so [name] must be declared with the integer type.
+   */
+  public fun setBoolean(name: String, value: Boolean): Boolean =
+    set(name, RcNamedVariable.INT_TYPE, RcNamedValue.BooleanValue(value))
+
+  /**
+   * Attaches a new document's declarations. Each stored value is re-keyed under the name the new
+   * document resolves its key to — the resolution `RcPlayerState` will apply — and dropped when
+   * that variable is undeclared or of another type. Checking the key as written instead let a bare
+   * `count` stored for one document reach a new document's `USER:count` of another type, which
+   * `RcPlayerState` rejects by throwing.
+   */
   internal fun attach(capabilities: RcDocumentCapabilities) {
     types = capabilities.namedValues
-    values.keys.removeAll { name -> !values.getValue(name).matchesType(types[name]) }
+    for ((key, value) in values.toMap()) {
+      val resolved = declaredName(key)
+      if (resolved == null || !value.matchesType(types[resolved])) {
+        values.remove(key)
+      } else if (resolved != key) {
+        values.remove(key)
+        values[resolved] = value
+      }
+    }
   }
 
   private fun set(name: String, expectedType: Int, value: RcNamedValue): Boolean {
-    val qualifiedName = if (name.contains(':')) name else "USER:$name"
-    if (types[qualifiedName] != expectedType) return false
-    values[qualifiedName] = value
+    val declaredName = declaredName(name) ?: return false
+    if (types[declaredName] != expectedType) return false
+    values[declaredName] = value
     return true
+  }
+
+  /**
+   * The declared name [name] addresses, resolved as `RcPlayerState` resolves a host name: a name
+   * with a namespace as written, otherwise the same name in `USER:` when the document declares it
+   * there, otherwise the bare name. Null when the document declares none of them.
+   */
+  private fun declaredName(name: String): String? {
+    val resolved =
+      when {
+        ':' in name -> name
+        "USER:$name" in types -> "USER:$name"
+        else -> name
+      }
+    return resolved.takeIf { it in types }
   }
 }
 

@@ -175,7 +175,7 @@
         lenient: configuration.compatibility.isLenient,
         opaque: configuration.background.isOpaque,
         soundHost: RcSoundHostCompanion.shared.None,
-        controller: playerController.kotlinController
+        controller: playerController.backend.kotlinController
       )
       isBuilding = false
 
@@ -312,6 +312,9 @@
     }
   }
 #elseif canImport(UIKit)
+  #if canImport(RcNativePlayerCore)
+    import RcNativePlayerCore
+  #endif
   #if canImport(RcNativePlayerUIKit)
     import RcNativePlayerUIKit
   #endif
@@ -336,6 +339,8 @@
     /// land last.
     private var latestNativeUpdates: [String: Int] = [:]
     private var nextNativeUpdateToken = 0
+    /// Reads the current document's declarations off the main thread; replaced on every rebuild.
+    private var declarationTask: Task<Void, Never>?
 
     public init(
       data: Data,
@@ -388,7 +393,7 @@
       guard data != documentData || configuration != self.configuration || controller !== playerController
           || !sameResolver(downloadableFontResolver, self.downloadableFontResolver)
           || resourceResolver !== self.resourceResolver else { return }
-      playerController.installNativeUpdateHandler(nil)
+      playerController.backend.installUpdateHandler(nil)
       documentData = data
       playerController = controller
       self.configuration = configuration
@@ -398,8 +403,13 @@
     }
 
     private func rebuildContent() {
-      playerController.installNativeUpdateHandler(nil)
+      playerController.backend.installUpdateHandler(nil)
       latestNativeUpdates.removeAll()
+      declarationTask?.cancel()
+      declarationTask = nil
+      // Writes are refused until the new document's declarations are read below; the values
+      // written so far are kept for them rather than judged against no document at all.
+      playerController.backend.detach()
       guard configuration.nativeFallbackSupportsTheme else {
         errorHandler(.playback("The native Swift fallback does not support an explicit dark theme yet."))
         return
@@ -414,27 +424,43 @@
         onDiagnostics: { _ in },
         onError: { [weak self] error in self?.errorHandler(.playback(error.localizedDescription)) })
       install(native)
-      playerController.installNativeUpdateHandler { [weak self, weak native] name, value in
-        // The task takes its own weak references rather than sharing the handler's captures.
-        Task { @MainActor [weak self, weak native] in
-          guard let token = self?.beginNativeUpdate(for: name) else { return }
-          // The first native frame is asynchronous. Retry a bounded time so values supplied before
-          // view creation are applied once its retained document session becomes available. Stop
-          // early once the player is gone or rebuilt, or a newer value for this name has started.
-          for _ in 0..<50 {
-            guard native != nil, self?.latestNativeUpdates[name] == token else { return }
-            let accepted: Bool
-            switch value {
-            case .float(let value): accepted = await native?.setFloat(value, for: name) ?? false
-            case .text(let value): accepted = await native?.setString(value, for: name) ?? false
-            case .integer(let value): accepted = await native?.setColor(UInt32(bitPattern: Int32(value)), for: name) ?? false
-            case .none, .floatList, .unsupported: return
+      // Reading the declarations decodes the whole document, so it runs off the main thread, like
+      // the session's own open. The controller is attached as soon as it finishes — normally well
+      // before the session has opened — and replays the values written so far.
+      let data = documentData
+      let limits = native.playerView.executionLimits
+      declarationTask = Task { [weak self, weak native] in
+        let declarations = await Task.detached(priority: .userInitiated) {
+          RemoteComposePlayerViewController.declarations(of: data, within: limits)
+        }.value
+        guard !Task.isCancelled, let self, let native, self.nativeController === native else {
+          return
+        }
+        self.declarationTask = nil
+        guard let declarations else { return }
+        self.playerController.backend.attach(declarations)
+        self.playerController.backend.installUpdateHandler { [weak self, weak native] name, value in
+          // The task takes its own weak references rather than sharing the handler's captures.
+          Task { @MainActor [weak self, weak native] in
+            guard let token = self?.beginNativeUpdate(for: name) else { return }
+            await value.deliver(for: name, to: { native }) {
+              self?.latestNativeUpdates[name] == token
             }
-            if accepted { return }
-            try? await Task.sleep(nanoseconds: 50_000_000)
           }
         }
       }
+    }
+
+    /// The declarations of `data`, or nil when the native player will refuse the document — over
+    /// its size limit, or not decodable — and report that failure itself. The limit is checked
+    /// first so an oversized document is not decoded here only to be refused.
+    nonisolated private static func declarations(
+      of data: Data, within limits: RemoteComposeNativeExecutionLimits
+    ) -> NativeSwiftNamedVariableDeclarations? {
+      guard data.count <= limits.maximumDocumentBytes, data.count <= Int(Int32.max) else {
+        return nil
+      }
+      return try? NativeSwiftNamedVariableDeclarations.declared(in: data)
     }
 
     private func beginNativeUpdate(for name: String) -> Int {
@@ -505,6 +531,8 @@
         configuration: configuration, downloadableFontResolver: downloadableFontResolver, resourceResolver: resourceResolver, onEvent: onEvent, onError: onError)
     }
   }
+
+  extension RemoteComposeNativePlayerViewController: NativeNamedValueTarget {}
 
   private extension RemoteComposePlayerBackground {
     var nativeValue: RemoteComposeNativePlayerBackground { isOpaque ? .opaque : .transparent }
