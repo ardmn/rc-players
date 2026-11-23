@@ -222,7 +222,7 @@ class RcHostParametersTest {
 
   @Test
   fun onlyColorReadsANumberDifferently() {
-    for ((kind, value) in
+    for ((typeName, value) in
       listOf(
         "string" to "7",
         "float" to "0.75",
@@ -232,9 +232,9 @@ class RcHostParametersTest {
         "long" to "17",
       )) {
       assertEquals(
-        parseNamedValue(kind, value),
-        parseNamedValue(kind, value, isNumber = true),
-        kind,
+        parseNamedValue(typeName, value),
+        parseNamedValue(typeName, value, isNumber = true),
+        typeName,
       )
     }
   }
