@@ -624,7 +624,7 @@ private fun namedValuesFromLocation(): Map<String, RcNamedValue> {
       if (fields.size != 3) return@forEach
       val name = decodeUriComponent(fields[1])
       val value = decodeUriComponent(fields[2])
-      val namedValue = parseNamedValue(kind = fields[0], value = value)
+      val namedValue = parseNamedValue(typeName = fields[0], value = value)
       if (name.isNotEmpty() && namedValue != null) put("USER:$name", namedValue)
     }
   }

@@ -123,23 +123,46 @@ internal fun parse3DRendererParameter(raw: String?): Rc3DRendererParameter =
   }
 
 /**
- * One `?namedValues=` element's value as the player takes it, or null when [kind] is unknown or
- * [value] does not parse as it — the element is then dropped, as docs/design/RC_PLAYER_EMBED.md
- * describes.
+ * The value types a `?namedValues=` element can name in its `kind` field. The one owner of these
+ * names in code; the public definition is the embed contract (docs/design/RC_PLAYER_EMBED.md, the
+ * `namedValues` row), and a test keeps the two lists equal. They are the host page's vocabulary, so
+ * they differ from the document's wire types (`dp` is a float, `bool` an integer).
+ */
+internal enum class RcNamedValueType(val typeName: String) {
+  STRING("string"),
+  FLOAT("float"),
+  DP("dp"),
+  INT("int"),
+  BOOL("bool"),
+  COLOR("color"),
+  LONG("long");
+
+  companion object {
+    fun ofTypeName(typeName: String): RcNamedValueType? = entries.firstOrNull {
+      it.typeName == typeName
+    }
+  }
+}
+
+/**
+ * One `?namedValues=` element's value as the player takes it, or null when [typeName] is not a
+ * [RcNamedValueType] or [value] does not parse as it — the element is then dropped, as
+ * docs/design/RC_PLAYER_EMBED.md describes.
  *
  * `bool` is a [RcNamedValue.BooleanValue], as the iOS controller and the embedded live bridge write
  * a boolean, mirroring AndroidX, where `setNamedBooleanOverride` is a separate call; the player
  * stores it as the integer 1 or 0. It does not validate: anything but `true` is false, as the embed
  * contract documents.
  */
-internal fun parseNamedValue(kind: String, value: String): RcNamedValue? =
-  when (kind) {
-    "string" -> RcNamedValue.Text(value)
-    "float",
-    "dp" -> value.toFloatOrNull()?.let(RcNamedValue::FloatValue)
-    "int" -> value.toIntOrNull()?.let(RcNamedValue::Integer)
-    "bool" -> RcNamedValue.BooleanValue(value == "true")
-    "color" -> value.removePrefix("#").toULongOrNull(16)?.toInt()?.let(RcNamedValue::Color)
-    "long" -> value.toLongOrNull()?.let(RcNamedValue::LongValue)
-    else -> null
+internal fun parseNamedValue(typeName: String, value: String): RcNamedValue? =
+  when (RcNamedValueType.ofTypeName(typeName)) {
+    RcNamedValueType.STRING -> RcNamedValue.Text(value)
+    RcNamedValueType.FLOAT,
+    RcNamedValueType.DP -> value.toFloatOrNull()?.let(RcNamedValue::FloatValue)
+    RcNamedValueType.INT -> value.toIntOrNull()?.let(RcNamedValue::Integer)
+    RcNamedValueType.BOOL -> RcNamedValue.BooleanValue(value == "true")
+    RcNamedValueType.COLOR ->
+      value.removePrefix("#").toULongOrNull(16)?.toInt()?.let(RcNamedValue::Color)
+    RcNamedValueType.LONG -> value.toLongOrNull()?.let(RcNamedValue::LongValue)
+    null -> null
   }
