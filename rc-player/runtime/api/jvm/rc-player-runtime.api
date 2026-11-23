@@ -233,9 +233,11 @@ public final class ee/schimke/composeai/rcplayer/runtime/RcHostValueType : java/
 	public static final field INT Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
 	public static final field LONG Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
 	public static final field STRING Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public final fun getCanonicalName ()Ljava/lang/String;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public final fun getNames ()Ljava/util/List;
+	public final fun getHostSuppliable ()Z
 	public final fun getWireType ()I
+	public final fun hasName (Ljava/lang/String;)Z
 	public static fun valueOf (Ljava/lang/String;)Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
 	public static fun values ()[Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
 }

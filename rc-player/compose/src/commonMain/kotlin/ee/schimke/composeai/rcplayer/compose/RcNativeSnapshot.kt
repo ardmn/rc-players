@@ -37,7 +37,6 @@ import ee.schimke.composeai.rcplayer.protocol.RcLayoutContent
 import ee.schimke.composeai.rcplayer.protocol.RcMarqueeModifier
 import ee.schimke.composeai.rcplayer.protocol.RcMultiClickModifier
 import ee.schimke.composeai.rcplayer.protocol.RcMultiClickType
-import ee.schimke.composeai.rcplayer.protocol.RcNamedVariable
 import ee.schimke.composeai.rcplayer.protocol.RcNoArg
 import ee.schimke.composeai.rcplayer.protocol.RcOffsetModifier
 import ee.schimke.composeai.rcplayer.protocol.RcOpcodes
@@ -81,6 +80,7 @@ import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
 import ee.schimke.composeai.rcplayer.runtime.RcPlayerEffect
 import ee.schimke.composeai.rcplayer.runtime.RcPlayerEvent
 import ee.schimke.composeai.rcplayer.runtime.RcPlayerState
+import ee.schimke.composeai.rcplayer.runtime.fitsWireType
 
 /**
  * Static, renderer-neutral snapshot used by the experimental native Apple player.
@@ -431,12 +431,7 @@ public constructor(bytes: ByteArray) {
     timeSeconds: Float = state.animationTimeSeconds,
   ): RcNativeSessionUpdate {
     require(value.isFinite()) { "Native named float must be finite" }
-    return setNamedValue(
-      name,
-      RcNamedVariable.FLOAT_TYPE,
-      RcNamedValue.FloatValue(value),
-      timeSeconds,
-    )
+    return setNamedValue(name, RcNamedValue.FloatValue(value), timeSeconds)
   }
 
   /** Set a declared string named value. Unqualified names use the `USER:` namespace. */
@@ -445,8 +440,7 @@ public constructor(bytes: ByteArray) {
     name: String,
     value: String,
     timeSeconds: Float = state.animationTimeSeconds,
-  ): RcNativeSessionUpdate =
-    setNamedValue(name, RcNamedVariable.STRING_TYPE, RcNamedValue.Text(value), timeSeconds)
+  ): RcNativeSessionUpdate = setNamedValue(name, RcNamedValue.Text(value), timeSeconds)
 
   /** Set a declared packed ARGB named value. Unqualified names use the `USER:` namespace. */
   @Throws(IllegalArgumentException::class)
@@ -454,12 +448,10 @@ public constructor(bytes: ByteArray) {
     name: String,
     argb: Int,
     timeSeconds: Float = state.animationTimeSeconds,
-  ): RcNativeSessionUpdate =
-    setNamedValue(name, RcNamedVariable.COLOR_TYPE, RcNamedValue.Color(argb), timeSeconds)
+  ): RcNativeSessionUpdate = setNamedValue(name, RcNamedValue.Color(argb), timeSeconds)
 
   private fun setNamedValue(
     name: String,
-    expectedType: Int,
     value: RcNamedValue,
     timeSeconds: Float,
   ): RcNativeSessionUpdate {
@@ -467,7 +459,7 @@ public constructor(bytes: ByteArray) {
     pendingEvents.clear()
     beginScheduledWork()
     val qualifiedName = if (':' in name) name else "USER:$name"
-    val accepted = state.namedVariable(qualifiedName)?.type == expectedType
+    val accepted = value.fitsWireType(state.namedVariable(qualifiedName)?.type)
     if (!accepted) return updateResult(false, timeSeconds)
     val previousValue = state.namedValue(qualifiedName)
     state.setNamedValue(qualifiedName, value)

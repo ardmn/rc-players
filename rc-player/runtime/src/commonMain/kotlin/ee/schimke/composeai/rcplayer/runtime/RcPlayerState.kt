@@ -660,11 +660,10 @@ private constructor(
     // applied. `setNamedValue` has no inverse, so without this a host that stops supplying a value
     // has no way back — see [clearNamedValue].
     //
-    // Only the types `RcNamedValue` can represent. `RcNamedVariable` also defines `IMAGE_TYPE` and
-    // `FLOAT_ARRAY_TYPE`, which no `RcNamedValue` case models, so `readNamedValue` throws for them
-    // — and doing that here would fail *construction* of every document that merely declares such a
-    // variable, override or not, turning a renderable document into a hard error. There is nothing
-    // to restore for a variable a host cannot set in the first place.
+    // Only the types a host can supply ([RcHostValueType.hostSuppliable]). `IMAGE_TYPE` has no
+    // `RcNamedValue` case, so `readNamedValue` throws for it — and doing that here would fail
+    // *construction* of every document that merely declares an image variable, override or not.
+    // There is nothing to restore for a variable a host cannot set in the first place.
     variableNames.forEach { (name, variable) ->
       if (variable.type.namedVariableCarriesHostValue()) {
         documentNamedValues[name] = readNamedValue(name)
@@ -2330,12 +2329,7 @@ private constructor(
    * neither [namedValue] nor [setNamedValue] can speak about it.
    */
   private fun Int.namedVariableCarriesHostValue(): Boolean =
-    this == RcNamedVariable.STRING_TYPE ||
-      this == RcNamedVariable.FLOAT_TYPE ||
-      this == RcNamedVariable.COLOR_TYPE ||
-      this == RcNamedVariable.INT_TYPE ||
-      this == RcNamedVariable.LONG_TYPE ||
-      this == RcNamedVariable.FLOAT_ARRAY_TYPE
+    RcHostValueType.ofWire(this)?.hostSuppliable == true
 
   private fun readNamedValue(name: String): RcNamedValue {
     val variable = requireNotNull(variableNames[name]) { "Unknown named variable '$name'" }

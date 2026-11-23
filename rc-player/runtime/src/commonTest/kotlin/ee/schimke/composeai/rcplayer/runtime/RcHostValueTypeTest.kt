@@ -8,8 +8,23 @@ import kotlin.test.assertNull
 class RcHostValueTypeTest {
   @Test
   fun everyNameBelongsToOneType() {
-    val names = RcHostValueType.entries.flatMap { it.names }
-    assertEquals(names.distinct(), names)
+    val names =
+      listOf(
+        "string",
+        "text",
+        "float",
+        "dp",
+        "color",
+        "image",
+        "int",
+        "bool",
+        "long",
+        "float[]",
+        "float_array",
+      )
+    for (name in names) {
+      assertEquals(1, RcHostValueType.entries.count { it.hasName(name) }, name)
+    }
   }
 
   @Test
@@ -47,9 +62,28 @@ class RcHostValueTypeTest {
   }
 
   @Test
-  fun aWireTypeReadsBackAsTheNonBooleanType() {
-    assertEquals(RcHostValueType.INT, RcHostValueType.ofWire(RcNamedVariable.INT_TYPE))
-    assertEquals(RcHostValueType.STRING, RcHostValueType.ofWire(RcNamedVariable.STRING_TYPE))
+  fun everyWireTypeReadsBackAsItsNonBooleanType() {
+    val expected =
+      mapOf(
+        RcNamedVariable.STRING_TYPE to RcHostValueType.STRING,
+        RcNamedVariable.FLOAT_TYPE to RcHostValueType.FLOAT,
+        RcNamedVariable.COLOR_TYPE to RcHostValueType.COLOR,
+        RcNamedVariable.IMAGE_TYPE to RcHostValueType.IMAGE,
+        RcNamedVariable.INT_TYPE to RcHostValueType.INT,
+        RcNamedVariable.LONG_TYPE to RcHostValueType.LONG,
+        RcNamedVariable.FLOAT_ARRAY_TYPE to RcHostValueType.FLOAT_ARRAY,
+      )
+    for ((wire, type) in expected) assertEquals(type, RcHostValueType.ofWire(wire), "wire $wire")
     assertNull(RcHostValueType.ofWire(99))
+  }
+
+  @Test
+  fun onlyImageCannotBeSuppliedByAHost() {
+    assertEquals(
+      listOf(RcHostValueType.IMAGE),
+      RcHostValueType.entries.filterNot { it.hostSuppliable },
+    )
+    assertEquals("string", RcHostValueType.STRING.canonicalName)
+    assertEquals("float[]", RcHostValueType.FLOAT_ARRAY.canonicalName)
   }
 }

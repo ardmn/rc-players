@@ -316,7 +316,7 @@ private fun RcDocument.texts(): List<String> =
 
 private fun RcDocument.namedValues(): List<String> =
   operations.filterIsInstance<RcNamedVariable>().map {
-    val type = RcHostValueType.ofWire(it.type)?.names?.first() ?: "type ${it.type}"
+    val type = RcHostValueType.ofWire(it.type)?.canonicalName ?: "type ${it.type}"
     "${quote(it.name)} ($type)"
   }
 

@@ -67,6 +67,9 @@ public val RcHardcodedValue.hostType: RcHostValueType
       is RcHardcodedValue.BooleanValue -> RcHostValueType.BOOLEAN
     }
 
+/** Whether this value can be written to a variable of [wireType] (a boolean fits an integer). */
+public fun RcHardcodedValue.fitsWireType(wireType: Int?): Boolean = hostType.wireType == wireType
+
 /** Every named variable this document declares — the state a host can bind. */
 public val RcDocument.namedVariables: List<RcNamedVariable>
   get() = operations.filterIsInstance<RcNamedVariable>()
@@ -230,7 +233,7 @@ private fun RcOperation.definedId(): Int? {
 }
 
 private fun definition(variable: RcNamedVariable, value: RcHardcodedValue): RcOperation {
-  if (value.hostType.wireType != variable.type) {
+  if (!value.fitsWireType(variable.type)) {
     throw IllegalArgumentException(
       "Named variable '${variable.name}' has AndroidX type ${variable.type}, incompatible with " +
         "${value::class.simpleName}",

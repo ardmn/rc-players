@@ -29,13 +29,16 @@ final enum class ee.schimke.composeai.rcplayer.runtime/RcHostValueType : kotlin/
     enum entry LONG // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.LONG|null[0]
     enum entry STRING // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.STRING|null[0]
 
+    final val canonicalName // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.canonicalName|{}canonicalName[0]
+        final fun <get-canonicalName>(): kotlin/String // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.canonicalName.<get-canonicalName>|<get-canonicalName>(){}[0]
     final val entries // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.entries|#static{}entries[0]
         final fun <get-entries>(): kotlin.enums/EnumEntries<ee.schimke.composeai.rcplayer.runtime/RcHostValueType> // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.entries.<get-entries>|<get-entries>#static(){}[0]
-    final val names // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.names|{}names[0]
-        final fun <get-names>(): kotlin.collections/List<kotlin/String> // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.names.<get-names>|<get-names>(){}[0]
+    final val hostSuppliable // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.hostSuppliable|{}hostSuppliable[0]
+        final fun <get-hostSuppliable>(): kotlin/Boolean // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.hostSuppliable.<get-hostSuppliable>|<get-hostSuppliable>(){}[0]
     final val wireType // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.wireType|{}wireType[0]
         final fun <get-wireType>(): kotlin/Int // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.wireType.<get-wireType>|<get-wireType>(){}[0]
 
+    final fun hasName(kotlin/String): kotlin/Boolean // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.hasName|hasName(kotlin.String){}[0]
     final fun valueOf(kotlin/String): ee.schimke.composeai.rcplayer.runtime/RcHostValueType // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.valueOf|valueOf#static(kotlin.String){}[0]
     final fun values(): kotlin/Array<ee.schimke.composeai.rcplayer.runtime/RcHostValueType> // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.values|values#static(){}[0]
 

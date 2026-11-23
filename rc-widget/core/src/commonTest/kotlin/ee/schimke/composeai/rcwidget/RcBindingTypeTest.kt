@@ -10,36 +10,35 @@ class RcBindingTypeTest {
   @Test
   fun eachWireNameIsANameOfItsHostType() {
     for (type in RcBindingType.entries) {
-      assertTrue(type.wireName in type.hostType.names, "${type.wireName} in ${type.hostType.names}")
+      assertTrue(type.hostType.hasName(type.wireName), type.wireName)
     }
   }
 
   @Test
-  fun wireTypesAndNamesAreUnchanged() {
-    // The published contract: these spellings and wire types are what templates already use.
-    assertEquals(
-      listOf("text", "float", "color", "image", "int", "long", "float[]"),
-      RcBindingType.entries.map { it.wireName },
-    )
-    assertEquals(RcNamedVariable.STRING_TYPE, RcBindingType.TEXT.wireType)
-    assertEquals(RcNamedVariable.FLOAT_ARRAY_TYPE, RcBindingType.FLOAT_ARRAY.wireType)
-    assertEquals(RcBindingType.TEXT, RcBindingType.ofWireName("text"))
-    assertEquals(RcBindingType.LONG, RcBindingType.ofWire(RcNamedVariable.LONG_TYPE))
+  fun theContractSpellingsAndWireTypesAreUnchanged() {
+    val expected =
+      listOf(
+        Triple(RcBindingType.TEXT, "text", RcNamedVariable.STRING_TYPE),
+        Triple(RcBindingType.FLOAT, "float", RcNamedVariable.FLOAT_TYPE),
+        Triple(RcBindingType.COLOR, "color", RcNamedVariable.COLOR_TYPE),
+        Triple(RcBindingType.IMAGE, "image", RcNamedVariable.IMAGE_TYPE),
+        Triple(RcBindingType.INT, "int", RcNamedVariable.INT_TYPE),
+        Triple(RcBindingType.LONG, "long", RcNamedVariable.LONG_TYPE),
+        Triple(RcBindingType.FLOAT_ARRAY, "float[]", RcNamedVariable.FLOAT_ARRAY_TYPE),
+      )
+    assertEquals(expected.map { it.first }, RcBindingType.entries)
+    for ((type, name, wire) in expected) {
+      assertEquals(name, type.wireName)
+      assertEquals(wire, type.wireType, name)
+      assertEquals(type, RcBindingType.ofWireName(name))
+      assertEquals(type, RcBindingType.ofWire(wire))
+    }
   }
 
   @Test
-  fun otherHostSpellingsOfTheSameTypeAreAccepted() {
-    assertEquals(RcBindingType.TEXT, RcBindingType.ofWireName("string"))
-    assertEquals(RcBindingType.FLOAT_ARRAY, RcBindingType.ofWireName("float_array"))
-    assertEquals(RcBindingType.FLOAT, RcBindingType.ofWireName("dp"))
-    // A boolean has no binding type of its own: it is stored, and declared, as an int.
-    assertEquals(RcBindingType.INT, RcBindingType.ofWireName("bool"))
-    // By name and by wire type always agree.
-    for (host in ee.schimke.composeai.rcplayer.runtime.RcHostValueType.entries) {
-      for (name in host.names) {
-        assertEquals(RcBindingType.ofWire(host.wireType), RcBindingType.ofWireName(name), name)
-      }
+  fun otherHostsSpellingsAreNotPartOfTheWidgetContract() {
+    for (name in listOf("string", "bool", "dp", "float_array", "unknown")) {
+      assertNull(RcBindingType.ofWireName(name), name)
     }
-    assertNull(RcBindingType.ofWireName("unknown"))
   }
 }

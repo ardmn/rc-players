@@ -3,7 +3,7 @@ package ee.schimke.composeai.rcwidget
 import ee.schimke.composeai.rcplayer.edit.RcHardcodedValue
 import ee.schimke.composeai.rcplayer.edit.RcProfileViolation
 import ee.schimke.composeai.rcplayer.edit.RcTargetProfile
-import ee.schimke.composeai.rcplayer.edit.hostType
+import ee.schimke.composeai.rcplayer.edit.fitsWireType
 import ee.schimke.composeai.rcplayer.edit.namedVariables
 import ee.schimke.composeai.rcplayer.edit.validateFor
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
@@ -29,19 +29,18 @@ public enum class RcBindingType(public val hostType: RcHostValueType, public val
     get() = hostType.wireType
 
   /** Whether [value] is a value of this type. A boolean is held as an integer. */
-  public fun accepts(value: RcHardcodedValue): Boolean = value.hostType.wireType == wireType
+  public fun accepts(value: RcHardcodedValue): Boolean = value.fitsWireType(wireType)
 
   public companion object {
     public fun ofWire(type: Int): RcBindingType? = entries.firstOrNull { it.wireType == type }
 
     /**
-     * The binding type a host calls [name]: its [wireName], or any name the shared host vocabulary
-     * gives a type stored the same way (`string` for [TEXT], `float_array` for [FLOAT_ARRAY],
-     * `bool` for [INT], since a boolean is stored as an integer). Resolved through the wire type,
-     * so a name and its wire type always give the same binding type.
+     * The binding type whose [wireName] is [name]. Only rc-widget's own spellings: other hosts'
+     * names for the same type (`string`, `bool`) are not part of this contract.
      */
-    public fun ofWireName(name: String): RcBindingType? =
-      RcHostValueType.ofName(name)?.let { ofWire(it.wireType) }
+    public fun ofWireName(name: String): RcBindingType? = entries.firstOrNull {
+      it.wireName == name
+    }
   }
 }
 
