@@ -7,16 +7,25 @@ import ee.schimke.composeai.rcplayer.edit.namedVariables
 import ee.schimke.composeai.rcplayer.edit.validateFor
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
 import ee.schimke.composeai.rcplayer.protocol.RcNamedVariable
+import ee.schimke.composeai.rcplayer.runtime.RcHostValueType
 
-/** The type of value a named variable holds, as a template declares it. */
-public enum class RcBindingType(public val wireType: Int, public val wireName: String) {
-  TEXT(RcNamedVariable.STRING_TYPE, "text"),
-  FLOAT(RcNamedVariable.FLOAT_TYPE, "float"),
-  COLOR(RcNamedVariable.COLOR_TYPE, "color"),
-  IMAGE(RcNamedVariable.IMAGE_TYPE, "image"),
-  INT(RcNamedVariable.INT_TYPE, "int"),
-  LONG(RcNamedVariable.LONG_TYPE, "long"),
-  FLOAT_ARRAY(RcNamedVariable.FLOAT_ARRAY_TYPE, "float[]");
+/**
+ * The type of value a named variable holds, as a template declares it. [hostType] owns the wire
+ * type and the names every host contract uses ([RcHostValueType]); [wireName] is the spelling a
+ * template writes, one of those names.
+ */
+public enum class RcBindingType(public val hostType: RcHostValueType, public val wireName: String) {
+  TEXT(RcHostValueType.STRING, "text"),
+  FLOAT(RcHostValueType.FLOAT, "float"),
+  COLOR(RcHostValueType.COLOR, "color"),
+  IMAGE(RcHostValueType.IMAGE, "image"),
+  INT(RcHostValueType.INT, "int"),
+  LONG(RcHostValueType.LONG, "long"),
+  FLOAT_ARRAY(RcHostValueType.FLOAT_ARRAY, "float[]");
+
+  /** The document wire type ([RcNamedVariable]'s `*_TYPE`) a variable of this type is stored as. */
+  public val wireType: Int
+    get() = hostType.wireType
 
   /** Whether [value] is a value of this type. A boolean is held as an integer. */
   public fun accepts(value: RcHardcodedValue): Boolean =
@@ -32,9 +41,14 @@ public enum class RcBindingType(public val wireType: Int, public val wireName: S
   public companion object {
     public fun ofWire(type: Int): RcBindingType? = entries.firstOrNull { it.wireType == type }
 
-    public fun ofWireName(name: String): RcBindingType? = entries.firstOrNull {
-      it.wireName == name
-    }
+    /**
+     * The binding type a host calls [name]: its [wireName], or any name the shared host vocabulary
+     * gives a type stored the same way (`string` for [TEXT], `float_array` for [FLOAT_ARRAY],
+     * `bool` for [INT], since a boolean is stored as an integer). Resolved through the wire type,
+     * so a name and its wire type always give the same binding type.
+     */
+    public fun ofWireName(name: String): RcBindingType? =
+      RcHostValueType.ofName(name)?.let { ofWire(it.wireType) }
   }
 }
 

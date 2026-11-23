@@ -223,6 +223,27 @@ public final class ee/schimke/composeai/rcplayer/runtime/RcHostActionValue$TextV
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class ee/schimke/composeai/rcplayer/runtime/RcHostValueType : java/lang/Enum {
+	public static final field BOOLEAN Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public static final field COLOR Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public static final field Companion Lee/schimke/composeai/rcplayer/runtime/RcHostValueType$Companion;
+	public static final field FLOAT Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public static final field FLOAT_ARRAY Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public static final field IMAGE Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public static final field INT Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public static final field LONG Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public static final field STRING Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getNames ()Ljava/util/List;
+	public final fun getWireType ()I
+	public static fun valueOf (Ljava/lang/String;)Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public static fun values ()[Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+}
+
+public final class ee/schimke/composeai/rcplayer/runtime/RcHostValueType$Companion {
+	public final fun ofName (Ljava/lang/String;)Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+}
+
 public final class ee/schimke/composeai/rcplayer/runtime/RcImpulsePhase : java/lang/Enum {
 	public static final field IDLE Lee/schimke/composeai/rcplayer/runtime/RcImpulsePhase;
 	public static final field INITIALIZE Lee/schimke/composeai/rcplayer/runtime/RcImpulsePhase;

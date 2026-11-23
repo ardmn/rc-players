@@ -19,6 +19,31 @@ final enum class ee.schimke.composeai.rcplayer.runtime/RcClickActionType : kotli
     final fun values(): kotlin/Array<ee.schimke.composeai.rcplayer.runtime/RcClickActionType> // ee.schimke.composeai.rcplayer.runtime/RcClickActionType.values|values#static(){}[0]
 }
 
+final enum class ee.schimke.composeai.rcplayer.runtime/RcHostValueType : kotlin/Enum<ee.schimke.composeai.rcplayer.runtime/RcHostValueType> { // ee.schimke.composeai.rcplayer.runtime/RcHostValueType|null[0]
+    enum entry BOOLEAN // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.BOOLEAN|null[0]
+    enum entry COLOR // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.COLOR|null[0]
+    enum entry FLOAT // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.FLOAT|null[0]
+    enum entry FLOAT_ARRAY // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.FLOAT_ARRAY|null[0]
+    enum entry IMAGE // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.IMAGE|null[0]
+    enum entry INT // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.INT|null[0]
+    enum entry LONG // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.LONG|null[0]
+    enum entry STRING // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.STRING|null[0]
+
+    final val entries // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<ee.schimke.composeai.rcplayer.runtime/RcHostValueType> // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.entries.<get-entries>|<get-entries>#static(){}[0]
+    final val names // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.names|{}names[0]
+        final fun <get-names>(): kotlin.collections/List<kotlin/String> // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.names.<get-names>|<get-names>(){}[0]
+    final val wireType // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.wireType|{}wireType[0]
+        final fun <get-wireType>(): kotlin/Int // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.wireType.<get-wireType>|<get-wireType>(){}[0]
+
+    final fun valueOf(kotlin/String): ee.schimke.composeai.rcplayer.runtime/RcHostValueType // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<ee.schimke.composeai.rcplayer.runtime/RcHostValueType> // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.values|values#static(){}[0]
+
+    final object Companion { // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.Companion|null[0]
+        final fun ofName(kotlin/String): ee.schimke.composeai.rcplayer.runtime/RcHostValueType? // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.Companion.ofName|ofName(kotlin.String){}[0]
+    }
+}
+
 final enum class ee.schimke.composeai.rcplayer.runtime/RcImpulsePhase : kotlin/Enum<ee.schimke.composeai.rcplayer.runtime/RcImpulsePhase> { // ee.schimke.composeai.rcplayer.runtime/RcImpulsePhase|null[0]
     enum entry IDLE // ee.schimke.composeai.rcplayer.runtime/RcImpulsePhase.IDLE|null[0]
     enum entry INITIALIZE // ee.schimke.composeai.rcplayer.runtime/RcImpulsePhase.INITIALIZE|null[0]
