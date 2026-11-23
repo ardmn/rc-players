@@ -1,5 +1,6 @@
 package ee.schimke.composeai.rcplayer.wasm
 
+import ee.schimke.composeai.rcplayer.runtime.RcHostValueType
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
 
 /**
@@ -123,30 +124,16 @@ internal fun parse3DRendererParameter(raw: String?): Rc3DRendererParameter =
   }
 
 /**
- * The value types a `?namedValues=` element can name in its `kind` field. The one owner of these
- * names in code; the public definition is the embed contract (docs/design/RC_PLAYER_EMBED.md, the
- * `namedValues` row), and a test keeps the two lists equal. They are the host page's vocabulary, so
- * they differ from the document's wire types (`dp` is a float, `bool` an integer).
+ * The `kind` names the embed contract accepts (docs/design/RC_PLAYER_EMBED.md, the `namedValues`
+ * row; a test keeps the two lists equal). Each resolves through [RcHostValueType], the one owner of
+ * host type names; the contract accepts only these spellings.
  */
-internal enum class RcNamedValueType(val typeName: String) {
-  STRING("string"),
-  FLOAT("float"),
-  DP("dp"),
-  INT("int"),
-  BOOL("bool"),
-  COLOR("color"),
-  LONG("long");
-
-  companion object {
-    fun ofTypeName(typeName: String): RcNamedValueType? = entries.firstOrNull {
-      it.typeName == typeName
-    }
-  }
-}
+internal val EMBED_TYPE_NAMES: List<String> =
+  listOf("string", "float", "dp", "int", "bool", "color", "long")
 
 /**
- * One `?namedValues=` element's value as the player takes it, or null when [typeName] is not a
- * [RcNamedValueType] or [value] does not parse as it — the element is then dropped, as
+ * One `?namedValues=` element's value as the player takes it, or null when [typeName] is not one of
+ * [EMBED_TYPE_NAMES] or [value] does not parse as it — the element is then dropped, as
  * docs/design/RC_PLAYER_EMBED.md describes.
  *
  * `bool` is a [RcNamedValue.BooleanValue], as the iOS controller and the embedded live bridge write
@@ -162,15 +149,16 @@ internal fun parseNamedValue(
   value: String,
   isNumber: Boolean = false,
 ): RcNamedValue? =
-  when (RcNamedValueType.ofTypeName(typeName)) {
-    RcNamedValueType.STRING -> RcNamedValue.Text(value)
-    RcNamedValueType.FLOAT,
-    RcNamedValueType.DP -> value.toFloatOrNull()?.let(RcNamedValue::FloatValue)
-    RcNamedValueType.INT -> value.toIntOrNull()?.let(RcNamedValue::Integer)
-    RcNamedValueType.BOOL -> RcNamedValue.BooleanValue(value == "true")
-    RcNamedValueType.COLOR ->
+  when (if (typeName in EMBED_TYPE_NAMES) RcHostValueType.ofName(typeName) else null) {
+    RcHostValueType.STRING -> RcNamedValue.Text(value)
+    RcHostValueType.FLOAT -> value.toFloatOrNull()?.let(RcNamedValue::FloatValue)
+    RcHostValueType.INT -> value.toIntOrNull()?.let(RcNamedValue::Integer)
+    RcHostValueType.BOOLEAN -> RcNamedValue.BooleanValue(value == "true")
+    RcHostValueType.COLOR ->
       (if (isNumber) argbFromNumber(value) else parseArgbColor(value))?.let(RcNamedValue::Color)
-    RcNamedValueType.LONG -> value.toLongOrNull()?.let(RcNamedValue::LongValue)
+    RcHostValueType.LONG -> value.toLongOrNull()?.let(RcNamedValue::LongValue)
+    RcHostValueType.IMAGE,
+    RcHostValueType.FLOAT_ARRAY,
     null -> null
   }
 
