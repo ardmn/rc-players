@@ -2370,32 +2370,30 @@ private constructor(
   public fun setNamedValue(hostName: String, value: RcNamedValue) {
     val name = resolveName(hostName)
     val variable = variableNames[name] ?: return
-    when {
-      variable.type == RcNamedVariable.STRING_TYPE && value is RcNamedValue.Text ->
-        setText(variable.id, value.value)
+    if (!value.fitsWireType(variable.type)) {
+      throw IllegalArgumentException(
+        "Named variable '$name' has AndroidX type ${variable.type}, incompatible with ${value::class.simpleName}",
+      )
+    }
+    when (value) {
+      is RcNamedValue.Text -> setText(variable.id, value.value)
       // `setFloat`, not `storeFloat`: a host overriding a named *system* variable claims it, the
       // same as any other host write, or the next frame's clock would replace the override.
-      variable.type == RcNamedVariable.FLOAT_TYPE && value is RcNamedValue.FloatValue ->
-        setFloat(variable.id, value.value)
-      variable.type == RcNamedVariable.COLOR_TYPE && value is RcNamedValue.Color -> {
+      is RcNamedValue.FloatValue -> setFloat(variable.id, value.value)
+      is RcNamedValue.Color -> {
         colorOverrides.add(variable.id)
         colors[variable.id] = value.argb
       }
-      variable.type == RcNamedVariable.INT_TYPE && value is RcNamedValue.Integer -> {
+      is RcNamedValue.Integer -> {
         if (variable.id in RcSystemVariables.ALL) claimedSystemIds.add(variable.id)
         setInteger(variable.id, value.value)
       }
-      variable.type == RcNamedVariable.LONG_TYPE && value is RcNamedValue.LongValue ->
-        longs[variable.id] = value.value
+      is RcNamedValue.LongValue -> longs[variable.id] = value.value
       // AndroidX's `setNamedBooleanOverride` is an integer override of 1 or 0.
-      variable.type == RcNamedVariable.INT_TYPE && value is RcNamedValue.BooleanValue ->
+      is RcNamedValue.BooleanValue ->
         setNamedValue(name, RcNamedValue.Integer(if (value.value) 1 else 0))
-      variable.type == RcNamedVariable.FLOAT_ARRAY_TYPE && value is RcNamedValue.FloatArrayValue ->
+      is RcNamedValue.FloatArrayValue ->
         floatArrayOverrides[variable.id] = value.values.toFloatArray()
-      else ->
-        throw IllegalArgumentException(
-          "Named variable '$name' has AndroidX type ${variable.type}, incompatible with ${value::class.simpleName}",
-        )
     }
   }
 }

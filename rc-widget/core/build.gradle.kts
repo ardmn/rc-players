@@ -38,6 +38,8 @@ kotlin {
     commonMain.dependencies {
       // `api`: documents in and out are `RcDocument`s, and the targets are `RcTargetProfile`s.
       api(project(":rc-player-edit"))
+      // RcBindingType exposes RcHostValueType from the runtime in its public API.
+      api(project(":rc-player-runtime"))
       implementation(libs.kotlinx.coroutines.core)
     }
     // Android and the JVM share the `java.io` file store, which no hierarchy group holds.

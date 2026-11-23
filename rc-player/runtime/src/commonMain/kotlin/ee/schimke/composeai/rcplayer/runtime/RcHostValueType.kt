@@ -26,5 +26,32 @@ public enum class RcHostValueType(public val wireType: Int, public val names: Li
   public companion object {
     /** The type a host calls [name], or null when no contract uses that name. */
     public fun ofName(name: String): RcHostValueType? = entries.firstOrNull { name in it.names }
+
+    /**
+     * The type a variable of [wireType] holds, or null for an unknown wire type. [INT] for
+     * `INT_TYPE`: a boolean is an integer once stored, so [BOOLEAN] is never the answer here.
+     */
+    public fun ofWire(wireType: Int): RcHostValueType? = entries.firstOrNull {
+      it.wireType == wireType
+    }
   }
 }
+
+/** The host value type of this value: the one mapping from a value to its type. */
+public val RcNamedValue.hostType: RcHostValueType
+  get() =
+    when (this) {
+      is RcNamedValue.Text -> RcHostValueType.STRING
+      is RcNamedValue.FloatValue -> RcHostValueType.FLOAT
+      is RcNamedValue.Color -> RcHostValueType.COLOR
+      is RcNamedValue.Integer -> RcHostValueType.INT
+      is RcNamedValue.LongValue -> RcHostValueType.LONG
+      is RcNamedValue.BooleanValue -> RcHostValueType.BOOLEAN
+      is RcNamedValue.FloatArrayValue -> RcHostValueType.FLOAT_ARRAY
+    }
+
+/**
+ * Whether this value can be written to a variable of [wireType]: the one compatibility rule every
+ * host and the player use. A boolean fits an integer variable.
+ */
+public fun RcNamedValue.fitsWireType(wireType: Int?): Boolean = hostType.wireType == wireType

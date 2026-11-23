@@ -12,6 +12,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcOpcodes
 import ee.schimke.composeai.rcplayer.protocol.RcOperation
 import ee.schimke.composeai.rcplayer.protocol.RcTextData
 import ee.schimke.composeai.rcplayer.protocol.RcVersion
+import ee.schimke.composeai.rcplayer.runtime.RcHostValueType
 
 /**
  * How two versions of a document differ, structurally: [summary] says what changed in terms a
@@ -315,13 +316,7 @@ private fun RcDocument.texts(): List<String> =
 
 private fun RcDocument.namedValues(): List<String> =
   operations.filterIsInstance<RcNamedVariable>().map {
-    val type =
-      when (it.type) {
-        RcNamedVariable.STRING_TYPE -> "string"
-        RcNamedVariable.FLOAT_TYPE -> "float"
-        RcNamedVariable.COLOR_TYPE -> "color"
-        else -> "type ${it.type}"
-      }
+    val type = RcHostValueType.ofWire(it.type)?.names?.first() ?: "type ${it.type}"
     "${quote(it.name)} ($type)"
   }
 

@@ -11,6 +11,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcOperationProfiles
 import ee.schimke.composeai.rcplayer.runtime.RcDocumentCapabilities
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
 import ee.schimke.composeai.rcplayer.runtime.RcPlayerEvent
+import ee.schimke.composeai.rcplayer.runtime.fitsWireType
 import platform.Foundation.NSBundle
 import platform.Foundation.NSLog
 import platform.Foundation.NSNumber
@@ -76,7 +77,7 @@ public class RcComposePlayerController {
     types = capabilities.namedValues
     for ((key, value) in values.toMap()) {
       val resolved = declaredName(key)
-      if (resolved == null || !value.matchesType(types[resolved])) {
+      if (resolved == null || !value.fitsWireType(types[resolved])) {
         values.remove(key)
       } else if (resolved != key) {
         values.remove(key)
@@ -107,17 +108,6 @@ public class RcComposePlayerController {
     return resolved.takeIf { it in types }
   }
 }
-
-private fun RcNamedValue.matchesType(type: Int?): Boolean =
-  when (this) {
-    is RcNamedValue.Text -> type == RcNamedVariable.STRING_TYPE
-    is RcNamedValue.FloatValue -> type == RcNamedVariable.FLOAT_TYPE
-    is RcNamedValue.Color -> type == RcNamedVariable.COLOR_TYPE
-    is RcNamedValue.Integer -> type == RcNamedVariable.INT_TYPE
-    is RcNamedValue.LongValue -> type == RcNamedVariable.LONG_TYPE
-    is RcNamedValue.BooleanValue -> type == RcNamedVariable.INT_TYPE
-    is RcNamedValue.FloatArrayValue -> type == RcNamedVariable.FLOAT_ARRAY_TYPE
-  }
 
 private var didWarnAboutHighRefreshRatePlist = false
 

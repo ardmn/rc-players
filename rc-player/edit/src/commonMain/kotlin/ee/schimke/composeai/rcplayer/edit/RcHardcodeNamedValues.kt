@@ -32,6 +32,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcTextStyle
 import ee.schimke.composeai.rcplayer.protocol.RcUpdateDynamicFloatList
 import ee.schimke.composeai.rcplayer.protocol.RcValueFloatExpressionChangeAction
 import ee.schimke.composeai.rcplayer.protocol.RcValueIntegerExpressionChangeAction
+import ee.schimke.composeai.rcplayer.runtime.RcHostValueType
 
 /**
  * A value to write into a document in place of host-bound state.
@@ -53,6 +54,18 @@ public sealed interface RcHardcodedValue {
   /** An integer-typed name holding 1 or 0, as AndroidX keeps a boolean. */
   public data class BooleanValue(val value: Boolean) : RcHardcodedValue
 }
+
+/** The host value type of this value ([RcHostValueType] owns the types and their wire types). */
+public val RcHardcodedValue.hostType: RcHostValueType
+  get() =
+    when (this) {
+      is RcHardcodedValue.Text -> RcHostValueType.STRING
+      is RcHardcodedValue.FloatValue -> RcHostValueType.FLOAT
+      is RcHardcodedValue.Color -> RcHostValueType.COLOR
+      is RcHardcodedValue.Integer -> RcHostValueType.INT
+      is RcHardcodedValue.LongValue -> RcHostValueType.LONG
+      is RcHardcodedValue.BooleanValue -> RcHostValueType.BOOLEAN
+    }
 
 /** Every named variable this document declares — the state a host can bind. */
 public val RcDocument.namedVariables: List<RcNamedVariable>
@@ -216,26 +229,22 @@ private fun RcOperation.definedId(): Int? {
   }
 }
 
-private fun definition(variable: RcNamedVariable, value: RcHardcodedValue): RcOperation =
-  when {
-    variable.type == RcNamedVariable.STRING_TYPE && value is RcHardcodedValue.Text ->
-      RcTextData(variable.id, value.value)
-    variable.type == RcNamedVariable.FLOAT_TYPE && value is RcHardcodedValue.FloatValue ->
-      RcFloatConstant(variable.id, RcFloatWord.literal(value.value))
-    variable.type == RcNamedVariable.COLOR_TYPE && value is RcHardcodedValue.Color ->
-      RcColorConstant(variable.id, value.argb)
-    variable.type == RcNamedVariable.INT_TYPE && value is RcHardcodedValue.Integer ->
-      RcIntegerConstant(variable.id, value.value)
-    variable.type == RcNamedVariable.INT_TYPE && value is RcHardcodedValue.BooleanValue ->
-      RcIntegerConstant(variable.id, if (value.value) 1 else 0)
-    variable.type == RcNamedVariable.LONG_TYPE && value is RcHardcodedValue.LongValue ->
-      RcLongConstant(variable.id, value.value)
-    else ->
-      throw IllegalArgumentException(
-        "Named variable '${variable.name}' has AndroidX type ${variable.type}, incompatible with " +
-          "${value::class.simpleName}",
-      )
+private fun definition(variable: RcNamedVariable, value: RcHardcodedValue): RcOperation {
+  if (value.hostType.wireType != variable.type) {
+    throw IllegalArgumentException(
+      "Named variable '${variable.name}' has AndroidX type ${variable.type}, incompatible with " +
+        "${value::class.simpleName}",
+    )
   }
+  return when (value) {
+    is RcHardcodedValue.Text -> RcTextData(variable.id, value.value)
+    is RcHardcodedValue.FloatValue -> RcFloatConstant(variable.id, RcFloatWord.literal(value.value))
+    is RcHardcodedValue.Color -> RcColorConstant(variable.id, value.argb)
+    is RcHardcodedValue.Integer -> RcIntegerConstant(variable.id, value.value)
+    is RcHardcodedValue.BooleanValue -> RcIntegerConstant(variable.id, if (value.value) 1 else 0)
+    is RcHardcodedValue.LongValue -> RcLongConstant(variable.id, value.value)
+  }
+}
 
 /** The namespace AndroidX gives names a document's author declared, as the player resolves it. */
 private const val USER_PREFIX = "USER"

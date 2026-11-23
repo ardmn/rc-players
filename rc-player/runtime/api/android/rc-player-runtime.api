@@ -242,6 +242,12 @@ public final class ee/schimke/composeai/rcplayer/runtime/RcHostValueType : java/
 
 public final class ee/schimke/composeai/rcplayer/runtime/RcHostValueType$Companion {
 	public final fun ofName (Ljava/lang/String;)Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+	public final fun ofWire (I)Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
+}
+
+public final class ee/schimke/composeai/rcplayer/runtime/RcHostValueTypeKt {
+	public static final fun fitsWireType (Lee/schimke/composeai/rcplayer/runtime/RcNamedValue;Ljava/lang/Integer;)Z
+	public static final fun getHostType (Lee/schimke/composeai/rcplayer/runtime/RcNamedValue;)Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
 }
 
 public final class ee/schimke/composeai/rcplayer/runtime/RcImpulsePhase : java/lang/Enum {

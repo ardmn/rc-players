@@ -3,6 +3,7 @@ package ee.schimke.composeai.rcwidget
 import ee.schimke.composeai.rcplayer.edit.RcHardcodedValue
 import ee.schimke.composeai.rcplayer.edit.RcProfileViolation
 import ee.schimke.composeai.rcplayer.edit.RcTargetProfile
+import ee.schimke.composeai.rcplayer.edit.hostType
 import ee.schimke.composeai.rcplayer.edit.namedVariables
 import ee.schimke.composeai.rcplayer.edit.validateFor
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
@@ -11,8 +12,8 @@ import ee.schimke.composeai.rcplayer.runtime.RcHostValueType
 
 /**
  * The type of value a named variable holds, as a template declares it. [hostType] owns the wire
- * type and the names every host contract uses ([RcHostValueType]); [wireName] is the spelling a
- * template writes, one of those names.
+ * type and the names every host contract uses ([RcHostValueType]); [wireName] is the spelling
+ * [RcBindingContract.encode] writes, one of those names.
  */
 public enum class RcBindingType(public val hostType: RcHostValueType, public val wireName: String) {
   TEXT(RcHostValueType.STRING, "text"),
@@ -28,15 +29,7 @@ public enum class RcBindingType(public val hostType: RcHostValueType, public val
     get() = hostType.wireType
 
   /** Whether [value] is a value of this type. A boolean is held as an integer. */
-  public fun accepts(value: RcHardcodedValue): Boolean =
-    when (value) {
-      is RcHardcodedValue.Text -> this == TEXT
-      is RcHardcodedValue.FloatValue -> this == FLOAT
-      is RcHardcodedValue.Color -> this == COLOR
-      is RcHardcodedValue.Integer,
-      is RcHardcodedValue.BooleanValue -> this == INT
-      is RcHardcodedValue.LongValue -> this == LONG
-    }
+  public fun accepts(value: RcHardcodedValue): Boolean = value.hostType.wireType == wireType
 
   public companion object {
     public fun ofWire(type: Int): RcBindingType? = entries.firstOrNull { it.wireType == type }

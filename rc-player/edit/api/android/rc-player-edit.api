@@ -152,6 +152,7 @@ public final class ee/schimke/composeai/rcplayer/edit/RcHardcodeDensityKt {
 }
 
 public final class ee/schimke/composeai/rcplayer/edit/RcHardcodeNamedValuesKt {
+	public static final fun getHostType (Lee/schimke/composeai/rcplayer/edit/RcHardcodedValue;)Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
 	public static final fun getNamedVariables (Lee/schimke/composeai/rcplayer/protocol/RcDocument;)Ljava/util/List;
 	public static final fun hardcodeNamedValues (Lee/schimke/composeai/rcplayer/protocol/RcDocument;Ljava/util/Map;)Lee/schimke/composeai/rcplayer/protocol/RcDocument;
 	public static final fun hardcodeUnboundNamedValues (Lee/schimke/composeai/rcplayer/protocol/RcDocument;Ljava/util/Set;)Lee/schimke/composeai/rcplayer/protocol/RcDocument;

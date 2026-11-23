@@ -41,6 +41,7 @@ final enum class ee.schimke.composeai.rcplayer.runtime/RcHostValueType : kotlin/
 
     final object Companion { // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.Companion|null[0]
         final fun ofName(kotlin/String): ee.schimke.composeai.rcplayer.runtime/RcHostValueType? // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.Companion.ofName|ofName(kotlin.String){}[0]
+        final fun ofWire(kotlin/Int): ee.schimke.composeai.rcplayer.runtime/RcHostValueType? // ee.schimke.composeai.rcplayer.runtime/RcHostValueType.Companion.ofWire|ofWire(kotlin.Int){}[0]
     }
 }
 
@@ -1545,7 +1546,10 @@ final object ee.schimke.composeai.rcplayer.runtime/RcToneSynthesizer { // ee.sch
 
 final val ee.schimke.composeai.rcplayer.runtime/hasPortableVisibilityAnimation // ee.schimke.composeai.rcplayer.runtime/hasPortableVisibilityAnimation|@ee.schimke.composeai.rcplayer.protocol.RcAnimationSpec{}hasPortableVisibilityAnimation[0]
     final fun (ee.schimke.composeai.rcplayer.protocol/RcAnimationSpec).<get-hasPortableVisibilityAnimation>(): kotlin/Boolean // ee.schimke.composeai.rcplayer.runtime/hasPortableVisibilityAnimation.<get-hasPortableVisibilityAnimation>|<get-hasPortableVisibilityAnimation>@ee.schimke.composeai.rcplayer.protocol.RcAnimationSpec(){}[0]
+final val ee.schimke.composeai.rcplayer.runtime/hostType // ee.schimke.composeai.rcplayer.runtime/hostType|@ee.schimke.composeai.rcplayer.runtime.RcNamedValue{}hostType[0]
+    final fun (ee.schimke.composeai.rcplayer.runtime/RcNamedValue).<get-hostType>(): ee.schimke.composeai.rcplayer.runtime/RcHostValueType // ee.schimke.composeai.rcplayer.runtime/hostType.<get-hostType>|<get-hostType>@ee.schimke.composeai.rcplayer.runtime.RcNamedValue(){}[0]
 
 final fun (ee.schimke.composeai.rcplayer.protocol/RcAnimationSpec).ee.schimke.composeai.rcplayer.runtime/visibilityTransform(kotlin/Boolean, kotlin/Float): ee.schimke.composeai.rcplayer.runtime/RcVisibilityTransform // ee.schimke.composeai.rcplayer.runtime/visibilityTransform|visibilityTransform@ee.schimke.composeai.rcplayer.protocol.RcAnimationSpec(kotlin.Boolean;kotlin.Float){}[0]
 final fun (ee.schimke.composeai.rcplayer.protocol/RcOperation).ee.schimke.composeai.rcplayer.runtime/isLayoutComputeExecutable(): kotlin/Boolean // ee.schimke.composeai.rcplayer.runtime/isLayoutComputeExecutable|isLayoutComputeExecutable@ee.schimke.composeai.rcplayer.protocol.RcOperation(){}[0]
+final fun (ee.schimke.composeai.rcplayer.runtime/RcNamedValue).ee.schimke.composeai.rcplayer.runtime/fitsWireType(kotlin/Int?): kotlin/Boolean // ee.schimke.composeai.rcplayer.runtime/fitsWireType|fitsWireType@ee.schimke.composeai.rcplayer.runtime.RcNamedValue(kotlin.Int?){}[0]
 final fun ee.schimke.composeai.rcplayer.runtime/androidXMarqueeOffset(kotlin/Float, kotlin/Float, kotlin/Float, kotlin/Float, kotlin/Float): kotlin/Float // ee.schimke.composeai.rcplayer.runtime/androidXMarqueeOffset|androidXMarqueeOffset(kotlin.Float;kotlin.Float;kotlin.Float;kotlin.Float;kotlin.Float){}[0]
