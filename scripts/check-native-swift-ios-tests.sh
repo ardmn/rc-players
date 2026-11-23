@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Run the native player's SwiftPM test target on an iOS simulator.
+# Run the package's SwiftPM test targets on an iOS simulator.
 #
 # `RC_COMPOSE_PLAYER_NATIVE_ONLY=1 swift test` covers the macOS host. This is the UIKit half: it
-# compiles `RcNativePlayerCore` and `RcNativePlayerUIKit` for the iOS Simulator — including the
-# `#if canImport(UIKit)` renderer a macOS build never sees — and runs `RcNativePlayerCoreTests` and
-# `RcNativePlayerUIKitTests` there. No app host is involved; the simulator UI checks stay in their own
-# scripts.
+# compiles `RcNativePlayerCore`, `RcNativePlayerUIKit` and the SwiftUI overlay for the iOS
+# Simulator — including the `#if canImport(UIKit)` renderer a macOS build never sees — and runs
+# `RcNativePlayerCoreTests`, `RcNativePlayerUIKitTests` and `RcComposePlayerSwiftUITests` there. No
+# app host is involved; the simulator UI checks stay in their own scripts.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
