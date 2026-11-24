@@ -2,58 +2,17 @@
   import Foundation
   import RcNativePlayerCore
   import Testing
+  import RcNativePlayerTestDocuments
   import UIKit
 
   @testable import RcComposePlayerSwiftUI
   @_spi(RemoteComposeController) @testable import RcNativePlayerUIKit
 
   /// A controller write that returned `true` reaches the screen of the real native player, whatever
-  /// the scene and the session do in between: the background, a write in flight as the scene leaves,
+  /// the scene and the session do in between: the background, a write queued as the scene leaves,
   /// and a session reopened for a new density.
   @MainActor @Suite struct NativeControllerDeliveryTests {
-    private typealias Op = NativeSwiftWireOpcode
-    private static let boxID = 10
-    private static let shownID = 550
     private static let visible = NativeSwiftVisibility.visible
-
-    /// A 200×200 document whose 50×50 box is gone until the integer named "shown" says otherwise.
-    private static func document() -> Data {
-      var data = Data()
-      func u8(_ value: Int) { data.append(UInt8(truncatingIfNeeded: value)) }
-      func int(_ value: Int) {
-        let raw = UInt32(bitPattern: Int32(truncatingIfNeeded: value))
-        for shift in [24, 16, 8, 0] { data.append(UInt8(truncatingIfNeeded: raw >> shift)) }
-      }
-      func float(_ value: Float) { int(Int(Int32(bitPattern: value.bitPattern))) }
-      u8(Op.header)
-      for value in [1, 0, 0, 200, 200, 0, 0] { int(value) }
-      u8(Op.dataInt)
-      int(shownID)
-      int(NativeSwiftVisibility.gone)
-      let name = Array("shown".utf8)
-      u8(Op.namedVariable)
-      int(shownID)
-      int(4)  // NativeSwiftNamedVariableType.int
-      int(name.count)
-      for byte in name { u8(Int(byte)) }
-      u8(Op.layoutRoot)
-      int(1)
-      u8(Op.layoutBox)
-      for value in [boxID, -1, 1, 1] { int(value) }
-      for opcode in [Op.modifierWidth, Op.modifierHeight] {
-        u8(opcode)
-        int(NativeSwiftDimensionType.exact)
-        float(50)
-      }
-      u8(Op.modifierVisibility)
-      int(shownID)
-      u8(Op.layoutContent)
-      int(-1)
-      u8(Op.containerEnd)
-      u8(Op.containerEnd)
-      u8(Op.containerEnd)
-      return data
-    }
 
     private struct Player {
       let controller: RemoteComposePlayerController
@@ -64,7 +23,7 @@
     private func player() async throws -> Player {
       let controller = RemoteComposePlayerController()
       let host = RemoteComposePlayerViewController(
-        data: Self.document(), controller: controller, resourceResolver: nil)
+        data: NativeTestDocuments.shownBox(), controller: controller, resourceResolver: nil)
       host.loadViewIfNeeded()
       let native = try #require(host.children.first as? RemoteComposeNativePlayerViewController)
       let opened = await eventually { !controller.names.isEmpty && !native.isOpeningDocument }
@@ -78,7 +37,7 @@
       while !pending.isEmpty {
         let next = pending.removeFirst()
         if let component = next as? NativeComponentView,
-          let box = component.descendant(withID: Self.boxID)
+          let box = component.descendant(withID: NativeTestDocuments.boxID)
         {
           return !box.isHidden
         }
@@ -119,10 +78,11 @@
       #expect(await eventually { isBoxShown(in: player.view) == true })
     }
 
-    /// The scene leaves while the session is working through input — the write in flight or
-    /// queued behind other input — so the session is reopened from the bytes on activation, and
-    /// the write still lands.
-    @Test func aWriteTheSessionIsWorkingOnAsTheSceneLeavesIsShownAfterIt() async throws {
+    /// The scene leaves while the write is queued behind other input the session is applying, so
+    /// the queue is abandoned and the session is reopened from the bytes on activation; the write
+    /// still lands. (A write that is itself in flight as the scene leaves is answered `.deferred`
+    /// in the same way — `NativeInputDeferralTests` covers that answer.)
+    @Test func aWriteQueuedAsTheSceneLeavesIsShownAfterIt() async throws {
       let player = try await player()
       for _ in 0..<50 {
         Task { @MainActor in
