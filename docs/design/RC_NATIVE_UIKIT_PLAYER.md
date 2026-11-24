@@ -242,9 +242,9 @@ container.addSubview(player)
 
 `RemoteComposeNativePlayerViewController` is a convenience for controller-based hosts and exposes
 `load(_:)`, resource configuration, explicit `renderFrame(at:)`, and asynchronous typed
-`setFloat(_:for:)`, `setString(_:for:)`, and `setColor(_:for:)` updates. The view offers the same
-operations. `RemoteComposeNativePlayerRepresentable` is only an adapter: its renderer is the same
-UIKit tree. All three entry points accept an `onEvent` callback.
+`setFloat(_:for:)`, `setString(_:for:)`, `setColor(_:for:)`, and `setInteger(_:for:)` updates. The
+view offers the same operations. `RemoteComposeNativePlayerRepresentable` is only an adapter: its
+renderer is the same UIKit tree. All three entry points accept an `onEvent` callback.
 
 ```swift
 let player = RemoteComposeNativePlayerView(
@@ -256,10 +256,22 @@ let player = RemoteComposeNativePlayerView(
 )
 
 Task { @MainActor in
-  let accepted = await player.setFloat(0.75, for: "progress")
-  assert(accepted)
+  if !(await player.setFloat(0.75, for: "progress")) {
+    // Not applied: write it again once the player can take it.
+  }
 }
 ```
+
+A setter answers `true` only when the document applied the value to the open session. `false` means
+the value was not applied and nothing is queued for later: the name is undeclared or of another
+type, the document refused it or failed, the document is still opening, the scene is in the
+background, the input queue is full, or the session that took it was superseded by a reopen. A value
+also lives only as long as the session it was applied to. The player reopens its retained bytes when
+it returns from the background with input outstanding and when its density, compatibility policy,
+limits, resolvers, custom components or document change; the new session starts from the document's
+own values. A host driving the view directly writes its values again after such a change.
+`RemoteComposePlayerController` in the SwiftUI overlay keeps its values and replays them into every
+new session itself.
 
 The default `.compatible` policy renders the supported subset and reports all known differences.
 `.strict` refuses to install a document view when any diagnostic is present, including a known

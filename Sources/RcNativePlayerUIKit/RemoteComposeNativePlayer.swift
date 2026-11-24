@@ -130,21 +130,26 @@
       playerView.renderFrame(at: timeSeconds)
     }
 
+    /// Sets a float named variable — see ``RemoteComposeNativePlayerView/setFloat(_:for:)`` for
+    /// what the answer means and why a value does not survive a reopen.
     @discardableResult
     public func setFloat(_ value: Float, for name: String) async -> Bool {
       await playerView.setFloat(value, for: name)
     }
 
+    /// Sets a string named variable — see ``RemoteComposeNativePlayerView/setFloat(_:for:)``.
     @discardableResult
     public func setString(_ value: String, for name: String) async -> Bool {
       await playerView.setString(value, for: name)
     }
 
+    /// Sets an ARGB colour named variable — see ``RemoteComposeNativePlayerView/setFloat(_:for:)``.
     @discardableResult
     public func setColor(_ argb: UInt32, for name: String) async -> Bool {
       await playerView.setColor(argb, for: name)
     }
 
+    /// Sets an integer named variable — see ``RemoteComposeNativePlayerView/setFloat(_:for:)``.
     @discardableResult
     public func setInteger(_ value: Int, for name: String) async -> Bool {
       await playerView.setInteger(value, for: name)
@@ -493,7 +498,8 @@
       }
     }
 
-    /// Whether the open session is applying an input right now.
+    /// Whether the open session is applying an input right now. A test hook: the input-deferral
+    /// tests use it to move the scene to the background while an input is in flight.
     var isApplyingInput: Bool { openPresentation?.activity == .input }
 
     /// The open session that accepts input, whether or not an error is showing.
@@ -683,21 +689,38 @@
       startPump(for: presentation)
     }
 
+    /// Sets a float named variable in the open session and answers whether it was applied.
+    ///
+    /// `true` means the document applied the value to the open session. `false` means it was not
+    /// applied: the name is undeclared or of another type, the document refused it or
+    /// failed, the document is still opening, the scene is in the background, the input queue is
+    /// full, or the session that took it was superseded by a reopen. Nothing is queued for later;
+    /// write it again when the player can take it.
+    ///
+    /// A value lives in the session, not in the player. The player reopens its document — and
+    /// starts again from the document's own values — when it returns from the background with
+    /// input outstanding, and when its density, policy, limits, resolvers, custom components or
+    /// document change. A host that needs its values to persist writes them again after such a
+    /// change; the SwiftUI controller (`RemoteComposePlayerController`) does this itself.
     @discardableResult
     public func setFloat(_ value: Float, for name: String) async -> Bool {
       await submit(.setFloat(value, name: name))
     }
 
+    /// Sets a string named variable; answers as ``setFloat(_:for:)`` does.
     @discardableResult
     public func setString(_ value: String, for name: String) async -> Bool {
       await submit(.setString(value, name: name))
     }
 
+    /// Sets an ARGB colour named variable; answers as ``setFloat(_:for:)`` does.
     @discardableResult
     public func setColor(_ argb: UInt32, for name: String) async -> Bool {
       await submit(.setColor(argb, name: name))
     }
 
+    /// Sets an integer named variable — a boolean is 1 or 0 — and answers as
+    /// ``setFloat(_:for:)`` does.
     @discardableResult
     public func setInteger(_ value: Int, for name: String) async -> Bool {
       await submit(.setInteger(value, name: name))
