@@ -16,3 +16,80 @@ public enum RemoteComposeNativeNamedValue: Equatable, Sendable {
   /// ARGB, as the document stores a color.
   case color(UInt32)
 }
+
+/// How a native player answered a named-variable write.
+@_spi(RemoteComposeController)
+public enum RemoteComposeNativeInputAdmission: Equatable, Sendable {
+  /// The document applied it.
+  case accepted
+  /// The document's final answer: the name or value is refused, or applying it failed (and that
+  /// failure was reported). Offering it again gets the same answer.
+  case refused
+  /// The player could not take it yet — its document is still opening, its scene is in the
+  /// background, its input queue is full, or the session it reached was discarded for a reopen. It
+  /// may be accepted once ``RemoteComposeNativeInputAvailability`` signals.
+  case deferred
+}
+
+/// Tells a caller holding a deferred write when to offer it again: the player signals each time it
+/// may take input it could not before — its scene became active, its queue gave up an input, or a
+/// session opened or failed — and opens for good when it goes away, so no waiter outlives it.
+///
+/// Thread-safe, and holds no reference to the player, so a waiter does not keep it alive.
+@_spi(RemoteComposeController)
+public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
+  private let lock = NSLock()
+  private var epoch: UInt64 = 0
+  private var isClosed = false
+  private var nextWaiter: UInt64 = 0
+  private var waiters: [UInt64: CheckedContinuation<Void, Never>] = [:]
+
+  public init() {}
+
+  /// The point to wait from. Read it before offering a write, so a signal that arrives while the
+  /// write is being answered is not missed.
+  public var mark: UInt64 { locked { epoch } }
+
+  /// Returns once the player has signalled since `mark`, has gone away, or the task is cancelled.
+  public func wait(after mark: UInt64) async {
+    let id = locked { () -> UInt64 in
+      nextWaiter &+= 1
+      return nextWaiter
+    }
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        let resumeNow = locked { () -> Bool in
+          if epoch != mark || isClosed || Task.isCancelled { return true }
+          waiters[id] = continuation
+          return false
+        }
+        if resumeNow { continuation.resume() }
+      }
+    } onCancel: {
+      locked { waiters.removeValue(forKey: id) }?.resume()
+    }
+  }
+
+  /// Releases every waiter: input may be accepted now that was not before.
+  func signal() {
+    for waiter in locked({ () -> [CheckedContinuation<Void, Never>] in
+      epoch &+= 1
+      defer { waiters.removeAll() }
+      return Array(waiters.values)
+    }) {
+      waiter.resume()
+    }
+  }
+
+  /// Releases every waiter, present and future: the player is gone.
+  func close() {
+    locked { isClosed = true }
+    signal()
+  }
+
+  private func locked<T>(_ body: () -> T) -> T {
+    lock.lock()
+    defer { lock.unlock() }
+    return body()
+  }
+}

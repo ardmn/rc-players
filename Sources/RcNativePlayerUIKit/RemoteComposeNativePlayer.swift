@@ -153,13 +153,9 @@
     /// Whether the player is still opening its document — see
     /// ``RemoteComposeNativePlayerView/isOpeningDocument``.
     public var isOpeningDocument: Bool { playerView.isOpeningDocument }
-
-    /// Whether the open session is holding off input for now — see
-    /// ``RemoteComposeNativePlayerView/isInputDeferred``.
-    public var isInputDeferred: Bool { playerView.isInputDeferred }
   }
 
-  /// How many host inputs may wait behind the one in flight. Beyond this an input is refused
+  /// How many host inputs may wait behind the one in flight. Beyond this an input is deferred
   /// (`set*` returns false, a gesture is dropped) rather than queued without bound.
   private let nativePlayerInputCapacity = 256
 
@@ -172,8 +168,8 @@
 
   private struct NativePendingInput {
     let input: NativePlayerEngine.Input
-    /// Receives whether the document accepted the input; nil for a gesture nobody awaits.
-    let reply: ((Bool) -> Void)?
+    /// Receives the document's answer; nil for a gesture nobody awaits.
+    let reply: ((RemoteComposeNativeInputAdmission) -> Void)?
   }
 
   private struct NativeFrameRequest {
@@ -208,15 +204,16 @@
 
     var isBusy: Bool { activity != .idle || !inputs.isEmpty || pendingFrame != nil }
 
-    /// Drop everything pending. Queued input is answered `false`; whatever the pump is awaiting is
-    /// discarded by the view's generation check when it returns.
+    /// Drop everything pending. Queued input is answered `.deferred`, since the session that would
+    /// have applied it is being replaced; whatever the pump is awaiting is discarded by the view's
+    /// generation check when it returns.
     func abandon() {
       pump?.cancel()
       pump = nil
       activity = .idle
       pendingFrame = nil
       deferredFrameTime = nil
-      for pending in inputs.removeAll() { pending.reply?(false) }
+      for pending in inputs.removeAll() { pending.reply?(.deferred) }
     }
   }
 
@@ -308,6 +305,9 @@
     private weak var observedScene: UIScene?
     /// A display-link or wake frame that arrived while the view was busy, taken once it frees up.
     private var scheduledFramePending = false
+    /// Signals a caller holding a deferred write when to offer it again.
+    @_spi(RemoteComposeController)
+    public let inputAvailability = RemoteComposeNativeInputAvailability()
     private let clock: any RemoteComposeNativePlayerClock
     private var animationTimeline = NativeAnimationTimeline()
     private var frameSchedule = NativeFrameSchedule.idle
@@ -378,6 +378,7 @@
       // weakly, and may be waiting on a resolver) and a wake timer can outlive it.
       if case .loading(let task) = state { task.cancel() }
       delayedWakeTask?.cancel()
+      inputAvailability.close()
       NotificationCenter.default.removeObserver(self)
     }
 
@@ -483,16 +484,8 @@
       }
     }
 
-    /// Whether the open session may be refusing input only for now: its scene is in the
-    /// background, or it is still working through earlier input — the only time its input queue
-    /// can be full. While this holds, a refused named-variable write may yet be accepted, once the
-    /// scene returns to the foreground or the queue drains, as while ``isOpeningDocument`` holds.
-    /// Read after a refusal; it is not the queue's fullness itself, which the session may already
-    /// have eased by one input by the time the caller looks.
-    public var isInputDeferred: Bool {
-      guard let presentation = openPresentation else { return false }
-      return !isSceneActive || presentation.hasOutstandingInput
-    }
+    /// Whether the open session is applying an input right now.
+    var isApplyingInput: Bool { openPresentation?.activity == .input }
 
     /// The open session that accepts input, whether or not an error is showing.
     private var openPresentation: NativePlayerPresentation? {
@@ -601,6 +594,7 @@
       effects: [RemoteComposeNativePlayerEvent]
     ) {
       let presentation = NativePlayerPresentation(engine: engine, resources: resources)
+      defer { announceOpened() }
       do {
         try validateExecution(model, events: effects)
         try install(model, for: presentation)
@@ -612,6 +606,11 @@
         return
       }
       if scheduledFramePending { requestScheduledFrame() }
+    }
+
+    /// A session has opened: release the writes that waited for it.
+    private func announceOpened() {
+      inputAvailability.signal()
     }
 
     private static func prepareResources(
@@ -692,18 +691,48 @@
       await submit(.setInteger(value, name: name))
     }
 
-    private func submit(_ input: NativePlayerEngine.Input) async -> Bool {
-      await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-        enqueue(input) { accepted in continuation.resume(returning: accepted) }
+    /// Writes a named variable and answers how the document took it. Unlike the `set*` methods,
+    /// it tells a write the player cannot take yet (`.deferred`) from one the document refuses;
+    /// offer a deferred write again once ``inputAvailability`` signals.
+    @_spi(RemoteComposeController)
+    public func submit(
+      _ value: RemoteComposeNativeNamedValue, for name: String
+    ) async -> RemoteComposeNativeInputAdmission {
+      switch value {
+      case .float(let value): await admit(.setFloat(value, name: name))
+      case .text(let value): await admit(.setString(value, name: name))
+      case .color(let argb): await admit(.setColor(argb, name: name))
+      case .integer(let value): await admit(.setInteger(value, name: name))
       }
     }
 
-    /// Queue `input` behind the open session's pending work. `reply` is called exactly once.
-    private func enqueue(_ input: NativePlayerEngine.Input, reply: ((Bool) -> Void)?) {
-      guard isSceneActive, let presentation = openPresentation,
+    private func submit(_ input: NativePlayerEngine.Input) async -> Bool {
+      await admit(input) == .accepted
+    }
+
+    private func admit(
+      _ input: NativePlayerEngine.Input
+    ) async -> RemoteComposeNativeInputAdmission {
+      await withCheckedContinuation {
+        (continuation: CheckedContinuation<RemoteComposeNativeInputAdmission, Never>) in
+        enqueue(input) { admission in continuation.resume(returning: admission) }
+      }
+    }
+
+    /// Queue `input` behind the open session's pending work. `reply` is called exactly once:
+    /// `.deferred` while the document is opening, the scene is in the background or the queue is
+    /// full, and `.refused` when no document will open.
+    private func enqueue(
+      _ input: NativePlayerEngine.Input, reply: ((RemoteComposeNativeInputAdmission) -> Void)?
+    ) {
+      guard let presentation = openPresentation else {
+        reply?(isOpeningDocument ? .deferred : .refused)
+        return
+      }
+      guard isSceneActive,
         presentation.inputs.append(NativePendingInput(input: input, reply: reply))
       else {
-        reply?(false)
+        reply?(.deferred)
         return
       }
       startPump(for: presentation)
@@ -732,6 +761,8 @@
           if scheduledFramePending { requestScheduledFrame() }
         } else if let pending = presentation.inputs.popFirst() {
           presentation.activity = .input
+          // The queue has room again.
+          inputAvailability.signal()
           await applyInput(pending, to: presentation, generation: generation)
         } else if presentation.activity == .input {
           // The last input is done: take the frame that waited for it.
@@ -791,23 +822,20 @@
         result = .failure(error)
       }
       guard generation == self.generation else {
-        // Superseded by a reload or the background: report what the session said, but nothing
-        // from a superseded session reaches the screen or the host's callbacks.
-        if case .success(let update) = result {
-          pending.reply?(update.accepted)
-        } else {
-          pending.reply?(false)
-        }
+        // Superseded by a reload or the background: the session that applied it is discarded and
+        // the bytes are reopened, so whatever it said, the input is not on screen and will not be.
+        // Nothing from a superseded session reaches the screen or the host's callbacks.
+        pending.reply?(.deferred)
         return
       }
       switch result {
       case .success(let update):
         // Evaluated first: an optional-chained call skips its argument when a gesture has no reply.
         let accepted = presentInput(update, on: presentation, generation: generation)
-        pending.reply?(accepted)
+        pending.reply?(accepted ? .accepted : .refused)
       case .failure(let error):
         if !(error is CancellationError) { show(error: error, retaining: presentation) }
-        pending.reply?(false)
+        pending.reply?(.refused)
       }
     }
 
@@ -944,6 +972,8 @@
     private func show(error: Error, retaining presentation: NativePlayerPresentation?) {
       stopFrameDriver()
       state = .failed(presentation)
+      // A write waiting for the document to open gets its answer from the failed state.
+      if presentation == nil { inputAvailability.signal() }
       scheduledFramePending = false
       errorLabel.text = error.localizedDescription
       errorLabel.isHidden = false
@@ -973,7 +1003,8 @@
           .customText(value, componentID: componentID, propertyID: propertyID), reply: nil)
       case .acknowledgedText(let value, let completion):
         enqueue(
-          .customText(value, componentID: componentID, propertyID: propertyID), reply: completion)
+          .customText(value, componentID: componentID, propertyID: propertyID),
+          reply: { completion($0 == .accepted) })
       }
     }
 
@@ -1198,6 +1229,8 @@
       } else {
         updateFrameDriver()
       }
+      // Input refused for the background may be taken now, or deferred to the reopen.
+      inputAvailability.signal()
     }
   }
 #endif

@@ -316,7 +316,7 @@
     import RcNativePlayerCore
   #endif
   #if canImport(RcNativePlayerUIKit)
-    import RcNativePlayerUIKit
+    @_spi(RemoteComposeController) import RcNativePlayerUIKit
   #endif
   #if canImport(RcPlayerAppleFonts)
     import RcPlayerAppleFonts
@@ -335,10 +335,13 @@
     private var resourceResolver: (any RemoteComposeNativeResourceResolving)?
     private var nativeController: RemoteComposeNativePlayerViewController?
     /// The latest native value update for each name, as a token from `nextNativeUpdateToken`. A
-    /// retry loop gives up once a newer update for its name has started, so a stale value cannot
+    /// delivery gives up once a newer update for its name has started, so a stale value cannot
     /// land last.
     private var latestNativeUpdates: [String: Int] = [:]
     private var nextNativeUpdateToken = 0
+    /// The delivery of each name's latest value, cancelled when a newer one starts or the player is
+    /// rebuilt, so a delivery waiting for the player does not outlive its value.
+    private var nativeUpdateTasks: [String: Task<Void, Never>] = [:]
     /// Reads the current document's declarations off the main thread; replaced on every rebuild.
     private var declarationTask: Task<Void, Never>?
 
@@ -405,6 +408,8 @@
     private func rebuildContent() {
       playerController.backend.installUpdateHandler(nil)
       latestNativeUpdates.removeAll()
+      for task in nativeUpdateTasks.values { task.cancel() }
+      nativeUpdateTasks.removeAll()
       declarationTask?.cancel()
       declarationTask = nil
       // Writes are refused until the new document's declarations are read below; the values
@@ -440,12 +445,14 @@
         guard let declarations else { return }
         self.playerController.backend.attach(declarations)
         self.playerController.backend.installUpdateHandler { [weak self, weak native] name, value in
+          guard let self else { return }
+          let token = self.beginNativeUpdate(for: name)
           // The task takes its own weak references rather than sharing the handler's captures.
-          Task { @MainActor [weak self, weak native] in
-            guard let token = self?.beginNativeUpdate(for: name) else { return }
+          self.nativeUpdateTasks[name] = Task { @MainActor [weak self, weak native] in
             await value.deliver(for: name, to: { native }) {
               self?.latestNativeUpdates[name] == token
             }
+            if self?.latestNativeUpdates[name] == token { self?.nativeUpdateTasks[name] = nil }
           }
         }
       }
@@ -467,6 +474,7 @@
       let token = nextNativeUpdateToken
       nextNativeUpdateToken += 1
       latestNativeUpdates[name] = token
+      nativeUpdateTasks.removeValue(forKey: name)?.cancel()
       return token
     }
 
@@ -532,7 +540,15 @@
     }
   }
 
-  extension RemoteComposeNativePlayerViewController: NativeNamedValueTarget {}
+  extension RemoteComposeNativePlayerViewController: NativeNamedValueTarget {
+    func submit(_ value: RemoteComposeNativeNamedValue, for name: String) async
+      -> RemoteComposeNativeInputAdmission
+    {
+      await playerView.submit(value, for: name)
+    }
+
+    var inputAvailability: RemoteComposeNativeInputAvailability { playerView.inputAvailability }
+  }
 
   private extension RemoteComposePlayerBackground {
     var nativeValue: RemoteComposeNativePlayerBackground { isOpaque ? .opaque : .transparent }

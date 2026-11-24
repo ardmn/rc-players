@@ -112,7 +112,7 @@ if nativeOnly {
   targets.append(
     .testTarget(
       name: "RcComposePlayerSwiftUITests",
-      dependencies: ["RcComposePlayerSwiftUI", "RcNativePlayerCore"]
+      dependencies: ["RcComposePlayerSwiftUI", "RcNativePlayerCore", "RcNativePlayerUIKit"]
     ))
 }
 if coreOnly {

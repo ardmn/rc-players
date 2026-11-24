@@ -6,7 +6,7 @@ import Foundation
   import RcNativePlayerCore
 #endif
 #if canImport(RcNativePlayerUIKit)
-  import RcNativePlayerUIKit
+  @_spi(RemoteComposeController) import RcNativePlayerUIKit
 #endif
 
 // Which player `RemoteComposePlayerController` drives, decided once per build. The overlay compiles
@@ -133,60 +133,55 @@ protocol ControllerBackendProtocol: AnyObject {
     }
   }
 
-  /// The native player's named setters, as the controller's values reach them. A protocol so the
-  /// routing below can be tested without a player.
+  /// The native player, as the controller's values reach it. A protocol so the delivery below can
+  /// be tested without a player.
   @MainActor
   protocol NativeNamedValueTarget: AnyObject {
-    func setFloat(_ value: Float, for name: String) async -> Bool
-    func setString(_ value: String, for name: String) async -> Bool
-    func setColor(_ argb: UInt32, for name: String) async -> Bool
-    func setInteger(_ value: Int, for name: String) async -> Bool
-    /// Whether the player is still opening its document, so a refused write may yet be accepted.
-    var isOpeningDocument: Bool { get }
-    /// Whether the open session may be refusing input only for now — its scene is in the background
-    /// or it is working through queued input — so a refused write may yet be accepted.
-    var isInputDeferred: Bool { get }
+    func submit(_ value: RemoteComposeNativeNamedValue, for name: String) async
+      -> RemoteComposeNativeInputAdmission
+    /// Signals when a deferred write may be offered again.
+    var inputAvailability: RemoteComposeNativeInputAvailability { get }
   }
 
   extension ControllerNamedValue {
-    /// Writes this value through the native setter for its type; a boolean is the integer 1 or 0,
-    /// as the document stores it.
-    @MainActor
-    func apply(to target: some NativeNamedValueTarget, for name: String) async -> Bool {
+    /// This value as the native player takes it; a boolean is the integer 1 or 0, as the document
+    /// stores it.
+    var nativeValue: RemoteComposeNativeNamedValue {
       switch self {
-      case .float(let value): await target.setFloat(value, for: name)
-      case .text(let value): await target.setString(value, for: name)
-      case .color(let argb): await target.setColor(argb, for: name)
-      case .integer(let value): await target.setInteger(Int(value), for: name)
-      case .boolean(let value): await target.setInteger(value ? 1 : 0, for: name)
+      case .float(let value): .float(value)
+      case .text(let value): .text(value)
+      case .color(let argb): .color(argb)
+      case .integer(let value): .integer(Int(value))
+      case .boolean(let value): .integer(value ? 1 : 0)
       }
     }
 
-    /// Writes this value into the native player. The controller has already checked it against
-    /// the document's declarations, so a refusal normally means the asynchronous session has not
-    /// opened yet, its scene is in the background, or its input queue is full. It is retried for as
-    /// long as any of those holds — however long the resources, the background or the queue take —
-    /// since the controller has already answered `true`. A refusal from a session that could take
-    /// input is retried only `openRetries` times. It stops as soon as the player is gone, or
-    /// `isCurrent` says a newer value for this name has started or the player was rebuilt.
+    /// Writes this value into the native player. The controller has already answered `true`, so a
+    /// write the player cannot take yet — its document is still opening, its scene is in the
+    /// background, its input queue is full, or a reopen discarded the session that took it — is
+    /// offered again each time the player signals that input may be accepted, however long that
+    /// takes. Nothing polls while it waits. A refusal is the document's final answer, already
+    /// reported by the player, and is not offered again. It stops as soon as the player is gone,
+    /// the task is cancelled, or `isCurrent` says a newer value for this name has started or the
+    /// player was rebuilt.
     @MainActor
     func deliver<Target: NativeNamedValueTarget>(
-      for name: String, to target: () -> Target?,
-      retryInterval: UInt64 = 50_000_000, openRetries: Int = 50,
-      isCurrent: () -> Bool
+      for name: String, to target: () -> Target?, isCurrent: () -> Bool
     ) async {
-      var retriesAfterOpen = openRetries
       while true {
-        // The strong reference lives only for the call, not across the sleep below.
+        let availability: RemoteComposeNativeInputAvailability
+        let mark: UInt64
+        // The strong reference lives only for the offer, not across the wait below.
         do {
-          guard let target = target(), isCurrent() else { return }
-          if await apply(to: target, for: name) { return }
-          if !target.isOpeningDocument, !target.isInputDeferred {
-            retriesAfterOpen -= 1
-            if retriesAfterOpen <= 0 { return }
+          guard !Task.isCancelled, let target = target(), isCurrent() else { return }
+          availability = target.inputAvailability
+          mark = availability.mark
+          switch await target.submit(nativeValue, for: name) {
+          case .accepted, .refused: return
+          case .deferred: break
           }
         }
-        try? await Task.sleep(nanoseconds: retryInterval)
+        await availability.wait(after: mark)
       }
     }
   }

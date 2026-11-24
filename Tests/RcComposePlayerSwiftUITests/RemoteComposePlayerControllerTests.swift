@@ -3,6 +3,7 @@ import Testing
 
 @testable import RcComposePlayerSwiftUI
 @testable import RcNativePlayerCore
+@_spi(RemoteComposeController) @testable import RcNativePlayerUIKit
 
 /// The controller's native fallback must answer every write the way the Kotlin controller does:
 /// false before a document is attached, for a name the document does not declare, and for a value
@@ -158,76 +159,84 @@ import Testing
     #expect(applied == ["USER:count": .integer(3)])
   }
 
-  /// A value refused while the player is still opening its document is retried until it opens,
-  /// however long that takes, rather than for a fixed time.
-  @Test func deliveryWaitsForTheDocumentToOpen() async {
+  /// A deferred value — the document is still opening, the scene is in the background, or the
+  /// queue is full — waits for the player to say input may be accepted again, however long that
+  /// takes, and is then offered again. It does not poll while it waits.
+  @Test func aDeferredValueWaitsForThePlayerToTakeInputAgain() async {
     let target = RecordingTarget()
-    target.accepts = false
-    target.isOpeningDocument = true
-    var attempts = 0
-    await Value.integer(1).deliver(
-      for: "USER:count", to: { target }, retryInterval: 0, openRetries: 3,
-      isCurrent: {
-        attempts += 1
-        // Far past `openRetries`; then the session opens and accepts.
-        if attempts == 20 {
-          target.isOpeningDocument = false
-          target.accepts = true
-        }
-        return true
-      })
-    #expect(target.calls.count == 20)
-    #expect(target.calls.last == .integer(1))
+    target.answers = [.deferred, .deferred]
+    let delivery = Task { @MainActor in
+      await Value.integer(5).deliver(for: "USER:count", to: { target }, isCurrent: { true })
+    }
+    await Self.settle()
+    #expect(target.calls == [.integer(5)], "offered again without a signal")
 
-    // Once open, a full queue is retried a bounded number of times.
-    let open = RecordingTarget()
-    open.accepts = false
-    await Value.integer(1).deliver(
-      for: "USER:count", to: { open }, retryInterval: 0, openRetries: 3,
-      isCurrent: { true })
-    #expect(open.calls.count == 3)
+    target.inputAvailability.signal()
+    await Self.settle()
+    #expect(target.calls == [.integer(5), .integer(5)])
 
-    // A newer value (or a rebuild) stops it at once.
+    target.inputAvailability.signal()
+    await delivery.value
+    #expect(target.calls == [.integer(5), .integer(5), .integer(5)])
+  }
+
+  /// A signal that arrives while the value is being offered is not missed.
+  @Test func aSignalDuringTheOfferIsNotMissed() async {
+    let target = RecordingTarget()
+    target.answers = [.deferred]
+    target.onCall = { target.inputAvailability.signal() }
+    await Value.integer(5).deliver(for: "USER:count", to: { target }, isCurrent: { true })
+    #expect(target.calls == [.integer(5), .integer(5)])
+  }
+
+  /// A refusal is the document's final answer — a validation or execution-limit failure the
+  /// player has already reported — so it is not offered again, even while other input is queued.
+  @Test func aRefusedValueIsNotOfferedAgain() async {
+    let target = RecordingTarget()
+    target.answers = [.refused]
+    await Value.integer(5).deliver(for: "USER:count", to: { target }, isCurrent: { true })
+    #expect(target.calls == [.integer(5)])
+  }
+
+  /// A waiting delivery ends when the player goes away, when its task is cancelled — a newer value
+  /// for the name, or a rebuild — or when a newer value has started.
+  @Test func aWaitingDeliveryEndsWithThePlayerOrItsTask() async {
+    var target: RecordingTarget? = RecordingTarget()
+    let availability = target!.inputAvailability
+    target!.answers = [.deferred]
+    let gone = Task { @MainActor in
+      await Value.integer(5).deliver(for: "USER:count", to: { target }, isCurrent: { true })
+    }
+    await Self.settle()
+    target = nil
+    availability.close()
+    await gone.value
+
+    let cancelled = RecordingTarget()
+    cancelled.answers = [.deferred]
+    let delivery = Task { @MainActor in
+      await Value.integer(5).deliver(for: "USER:count", to: { cancelled }, isCurrent: { true })
+    }
+    await Self.settle()
+    delivery.cancel()
+    await delivery.value
+    #expect(cancelled.calls == [.integer(5)])
+
     let superseded = RecordingTarget()
-    superseded.accepts = false
-    superseded.isOpeningDocument = true
-    await Value.integer(1).deliver(
-      for: "USER:count", to: { superseded }, retryInterval: 0, openRetries: 3,
-      isCurrent: { superseded.calls.count < 2 })
-    #expect(superseded.calls.count == 2)
-  }
-
-  /// A value refused while the open session holds off input — its scene is in the background, or
-  /// its input queue is full — is retried until the session takes it, however long that takes. It
-  /// used to be given up after `openRetries`, so a write that returned `true` was never shown.
-  @Test func deliveryWaitsWhileTheSessionDefersInput() async {
-    let target = RecordingTarget()
-    target.accepts = false
-    target.isInputDeferred = true
-    var attempts = 0
+    superseded.answers = [.deferred]
+    superseded.onCall = { superseded.inputAvailability.signal() }
     await Value.integer(5).deliver(
-      for: "USER:count", to: { target }, retryInterval: 0, openRetries: 3,
-      isCurrent: {
-        attempts += 1
-        // Far past `openRetries`; then the scene returns or the queue drains.
-        if attempts == 20 {
-          target.isInputDeferred = false
-          target.accepts = true
-        }
-        return true
-      })
-    #expect(target.calls.count == 20)
-    #expect(target.calls.last == .integer(5))
+      for: "USER:count", to: { superseded }, isCurrent: { superseded.calls.isEmpty })
+    #expect(superseded.calls == [.integer(5)])
   }
 
-  /// Each value reaches the native setter for its type. A colour and an integer are both carried
-  /// as integers, and a colour used to be the only integer the native player was sent, so an
-  /// integer went to `setColor` and was refused there.
-  @Test func eachValueReachesTheNativeSetterForItsType() async {
-    let target = RecordingTarget()
-    let cases: [(Value, RecordingTarget.Call)] = [
+  /// Each value reaches the native player as the value of its type. A colour and an integer are
+  /// both carried as integers, and a colour used to be the only integer the native player was
+  /// sent, so an integer went to `setColor` and was refused there.
+  @Test func eachValueReachesTheNativePlayerAsItsType() async {
+    let cases: [(Value, RemoteComposeNativeNamedValue)] = [
       (.float(0.75), .float(0.75)),
-      (.text("Ready"), .string("Ready")),
+      (.text("Ready"), .text("Ready")),
       (.color(0xFF33_6699), .color(0xFF33_6699)),
       (.integer(7), .integer(7)),
       (.integer(Int32.min), .integer(Int(Int32.min))),
@@ -235,39 +244,32 @@ import Testing
       (.boolean(false), .integer(0)),
     ]
     for (value, expected) in cases {
-      #expect(await value.apply(to: target, for: "USER:name"))
-      #expect(target.calls.last == expected, "\(value)")
+      let target = RecordingTarget()
+      await value.deliver(for: "USER:name", to: { target }, isCurrent: { true })
+      #expect(target.calls == [expected], "\(value)")
     }
-    #expect(target.calls.count == cases.count)
+  }
 
-    // The player's answer is passed back, so a refusal is retried rather than taken as applied.
-    target.accepts = false
-    #expect(!(await Value.integer(1).apply(to: target, for: "USER:name")))
+  /// Lets every task the test started run until it suspends.
+  private static func settle() async {
+    for _ in 0..<50 { await Task.yield() }
   }
 }
 
-/// A native player that records which setter each value reached.
+/// A native player that records each value it is offered and answers from `answers`, then
+/// `.accepted`.
 @MainActor
 private final class RecordingTarget: NativeNamedValueTarget {
-  enum Call: Equatable {
-    case float(Float)
-    case string(String)
-    case color(UInt32)
-    case integer(Int)
-  }
+  var calls: [RemoteComposeNativeNamedValue] = []
+  var answers: [RemoteComposeNativeInputAdmission] = []
+  var onCall: () -> Void = {}
+  let inputAvailability = RemoteComposeNativeInputAvailability()
 
-  var calls: [Call] = []
-  var accepts = true
-  var isOpeningDocument = false
-  var isInputDeferred = false
-
-  func setFloat(_ value: Float, for name: String) async -> Bool { record(.float(value)) }
-  func setString(_ value: String, for name: String) async -> Bool { record(.string(value)) }
-  func setColor(_ argb: UInt32, for name: String) async -> Bool { record(.color(argb)) }
-  func setInteger(_ value: Int, for name: String) async -> Bool { record(.integer(value)) }
-
-  private func record(_ call: Call) -> Bool {
-    calls.append(call)
-    return accepts
+  func submit(_ value: RemoteComposeNativeNamedValue, for name: String) async
+    -> RemoteComposeNativeInputAdmission
+  {
+    calls.append(value)
+    onCall()
+    return answers.isEmpty ? .accepted : answers.removeFirst()
   }
 }
