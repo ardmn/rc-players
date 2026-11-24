@@ -15,6 +15,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcHeader
 import ee.schimke.composeai.rcplayer.protocol.RcHeightModifier
 import ee.schimke.composeai.rcplayer.protocol.RcLayoutContent
 import ee.schimke.composeai.rcplayer.protocol.RcNoArg
+import ee.schimke.composeai.rcplayer.protocol.RcOffsetModifier
 import ee.schimke.composeai.rcplayer.protocol.RcOpcodes
 import ee.schimke.composeai.rcplayer.protocol.RcOperation
 import ee.schimke.composeai.rcplayer.protocol.RcPaintData
@@ -88,6 +89,33 @@ class RcGraphicsLayerCompositingRenderTest {
       offscreen.getColor(HOLE_X, MID_Y),
       "Offscreen stops the cut-out at the layer",
     )
+  }
+
+  /**
+   * A child moved with `offset` is still inside its parent's layer, so it is faded with the rest of
+   * it whatever the strategy, as AndroidX's embedded player draws it.
+   *
+   * Compose's lambda `Modifier.offset` places its child with a layer of its own, and on Skiko a
+   * `ModulateAlpha` layer fades only its own draw calls: a child layer is drawn into the raw canvas
+   * at full alpha. So the offset child of a half-alpha `ModulateAlpha` layer used to be opaque.
+   */
+  @Test
+  fun anOffsetChildIsFadedWithItsParentLayer() {
+    for (strategy in
+      listOf(
+        RcGraphicsLayerModifier.COMPOSITING_STRATEGY_AUTO,
+        RcGraphicsLayerModifier.COMPOSITING_STRATEGY_OFFSCREEN,
+        RcGraphicsLayerModifier.COMPOSITING_STRATEGY_MODULATE_ALPHA,
+      )) {
+      val image = render(offsetChildDocument(strategy))
+      // The child without an offset, for comparison, then the offset one beside it.
+      assertEquals(HALF_BLUE, image.getColor(RED_ONLY_X, MID_Y), "strategy $strategy: still child")
+      assertEquals(
+        HALF_RED,
+        image.getColor(OFFSET_CHILD_X, MID_Y),
+        "strategy $strategy: offset child",
+      )
+    }
   }
 
   /**
@@ -192,6 +220,66 @@ class RcGraphicsLayerCompositingRenderTest {
         ),
     )
 
+  /**
+   * A 60x20 box with a half-alpha layer of [strategy] and two 20x20 children: a blue one where the
+   * box puts it, and a red one the box puts there too and `offset` moves 40 to the right.
+   */
+  private fun offsetChildDocument(strategy: Int): RcDocument {
+    val end = RcNoArg(RcOpcodes.CONTAINER_END)
+    fun child(id: Int, red: Float, blue: Float, offsetX: Float?) = buildList {
+      add(RcBoxLayout(id, 30 + id, 1, 1))
+      offsetX?.let { add(RcOffsetModifier(RcFloatWord.literal(it), RcFloatWord.literal(0f))) }
+      add(RcWidthModifier(RcDimensionType.EXACT, RcFloatWord.literal(HEIGHT.toFloat())))
+      add(RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(HEIGHT.toFloat())))
+      add(
+        RcBackgroundModifier(
+          flags = 0,
+          colorId = 0,
+          reserved1 = 0,
+          reserved2 = 0,
+          red = RcFloatWord.literal(red),
+          green = RcFloatWord.literal(0f),
+          blue = RcFloatWord.literal(blue),
+          alpha = RcFloatWord.literal(1f),
+          shapeType = RcBackgroundModifier.SHAPE_RECTANGLE,
+        ),
+      )
+      add(RcLayoutContent(id + 1))
+      add(end)
+      add(end)
+    }
+    val operations =
+      buildList<RcOperation> {
+        add(RcRootLayout(1))
+        add(RcLayoutContent(2))
+        add(RcBoxLayout(3, 30, 1, 1))
+        add(
+          RcGraphicsLayerModifier(
+            listOf(
+              RcGraphicsLayerAttribute.FloatValue(
+                RcGraphicsLayerModifier.ALPHA,
+                RcFloatWord.literal(0.5f),
+              ),
+              RcGraphicsLayerAttribute.IntValue(
+                RcGraphicsLayerModifier.COMPOSITING_STRATEGY,
+                strategy,
+              ),
+            ),
+          ),
+        )
+        add(RcWidthModifier(RcDimensionType.EXACT, RcFloatWord.literal(WIDTH.toFloat())))
+        add(RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(HEIGHT.toFloat())))
+        add(RcLayoutContent(4))
+        addAll(child(10, red = 0f, blue = 1f, offsetX = null))
+        addAll(child(20, red = 1f, blue = 0f, offsetX = OFFSET_CHILD_SHIFT))
+        repeat(4) { add(end) }
+      }
+    return RcDocument(
+      RcHeader(RcVersion(1, 0, 0), legacyWidth = WIDTH, legacyHeight = HEIGHT, modern = false),
+      operations,
+    )
+  }
+
   private fun document(
     parentBackground: Boolean,
     layer: List<RcGraphicsLayerAttribute>,
@@ -251,7 +339,11 @@ class RcGraphicsLayerCompositingRenderTest {
     const val RED_ONLY_X = 10
     const val OVERLAP_X = 30
     const val HOLE_X = 30
+    const val OFFSET_CHILD_SHIFT = 40f
+    const val OFFSET_CHILD_X = 50
     const val RED = 0xffff0000.toInt()
+    const val HALF_RED = 0x80ff0000.toInt()
+    const val HALF_BLUE = 0x800000ff.toInt()
     const val BLUE = 0xff0000ff.toInt()
 
     /** `PaintBundle` tags: a colour word follows 4; 18 packs the blend mode in its high bits. */

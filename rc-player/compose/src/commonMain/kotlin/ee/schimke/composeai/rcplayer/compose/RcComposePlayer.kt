@@ -37,7 +37,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.layout.requiredWidthIn
@@ -3414,7 +3413,7 @@ private fun Modifier.applyComponentModifiers(
         if (laterOffsets.isEmpty()) applyPressHandlers(result)
         else {
           val shift: Density.() -> IntOffset = { rcOffsetPixels(laterOffsets, state, density) }
-          applyPressHandlers(result.offset(shift)).offset { -shift() }
+          applyPressHandlers(result.rcOffset(shift)).rcOffset { -shift() }
         }
     }
     result =
@@ -3453,7 +3452,7 @@ private fun Modifier.applyComponentModifiers(
           insetBottom += rcPaddingEndPixels(top, bottom)
           result.rcPaddingPixels(left = left, top = top, right = right, bottom = bottom, density)
         }
-        is RcOffsetModifier -> result.offset { rcOffsetPixels(listOf(operation), state, density) }
+        is RcOffsetModifier -> result.rcOffset { rcOffsetPixels(listOf(operation), state, density) }
         is RcZIndexModifier -> result.zIndex(state.resolve(operation.value))
         is RcBackgroundModifier,
         is RcBorderModifier,
@@ -3496,6 +3495,21 @@ private fun Modifier.applyComponentModifiers(
   }
   return result
 }
+
+/**
+ * `Modifier.offset { }` without the layer: [offset] is read when the content is placed, so a change
+ * re-places it without recomposing or measuring, and the start edge stays mirrored in RTL.
+ *
+ * Compose's lambda offset places its content with a layer of its own. On Skiko a `ModulateAlpha`
+ * graphics layer fades only its own draw calls and draws a child layer at full alpha, so the offset
+ * child of a faded `ModulateAlpha` component was drawn opaque; Android's render nodes pass the
+ * alpha on, and AndroidX's players fade it.
+ */
+private fun Modifier.rcOffset(offset: Density.() -> IntOffset): Modifier =
+  layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    layout(placeable.width, placeable.height) { placeable.placeRelative(offset()) }
+  }
 
 /** The whole pixels [offsets] move a component by, each rounded as its own modifier rounds it. */
 private fun rcOffsetPixels(
