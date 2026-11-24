@@ -143,6 +143,9 @@ protocol ControllerBackendProtocol: AnyObject {
     func setInteger(_ value: Int, for name: String) async -> Bool
     /// Whether the player is still opening its document, so a refused write may yet be accepted.
     var isOpeningDocument: Bool { get }
+    /// Whether the open session may be refusing input only for now — its scene is in the background
+    /// or it is working through queued input — so a refused write may yet be accepted.
+    var isInputDeferred: Bool { get }
   }
 
   extension ControllerNamedValue {
@@ -160,11 +163,12 @@ protocol ControllerBackendProtocol: AnyObject {
     }
 
     /// Writes this value into the native player. The controller has already checked it against
-    /// the document's declarations, so a refusal means the asynchronous session has not opened
-    /// yet, or its input queue is full. It is retried for as long as the player is still opening
-    /// its document — however long its resources take — and then `openRetries` times for a full
-    /// queue. It stops as soon as the player is gone, or `isCurrent` says a newer value for this
-    /// name has started or the player was rebuilt.
+    /// the document's declarations, so a refusal normally means the asynchronous session has not
+    /// opened yet, its scene is in the background, or its input queue is full. It is retried for as
+    /// long as any of those holds — however long the resources, the background or the queue take —
+    /// since the controller has already answered `true`. A refusal from a session that could take
+    /// input is retried only `openRetries` times. It stops as soon as the player is gone, or
+    /// `isCurrent` says a newer value for this name has started or the player was rebuilt.
     @MainActor
     func deliver<Target: NativeNamedValueTarget>(
       for name: String, to target: () -> Target?,
@@ -177,7 +181,7 @@ protocol ControllerBackendProtocol: AnyObject {
         do {
           guard let target = target(), isCurrent() else { return }
           if await apply(to: target, for: name) { return }
-          if !target.isOpeningDocument {
+          if !target.isOpeningDocument, !target.isInputDeferred {
             retriesAfterOpen -= 1
             if retriesAfterOpen <= 0 { return }
           }

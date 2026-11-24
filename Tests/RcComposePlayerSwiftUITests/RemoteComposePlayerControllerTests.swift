@@ -197,6 +197,29 @@ import Testing
     #expect(superseded.calls.count == 2)
   }
 
+  /// A value refused while the open session holds off input — its scene is in the background, or
+  /// its input queue is full — is retried until the session takes it, however long that takes. It
+  /// used to be given up after `openRetries`, so a write that returned `true` was never shown.
+  @Test func deliveryWaitsWhileTheSessionDefersInput() async {
+    let target = RecordingTarget()
+    target.accepts = false
+    target.isInputDeferred = true
+    var attempts = 0
+    await Value.integer(5).deliver(
+      for: "USER:count", to: { target }, retryInterval: 0, openRetries: 3,
+      isCurrent: {
+        attempts += 1
+        // Far past `openRetries`; then the scene returns or the queue drains.
+        if attempts == 20 {
+          target.isInputDeferred = false
+          target.accepts = true
+        }
+        return true
+      })
+    #expect(target.calls.count == 20)
+    #expect(target.calls.last == .integer(5))
+  }
+
   /// Each value reaches the native setter for its type. A colour and an integer are both carried
   /// as integers, and a colour used to be the only integer the native player was sent, so an
   /// integer went to `setColor` and was refused there.
@@ -236,6 +259,7 @@ private final class RecordingTarget: NativeNamedValueTarget {
   var calls: [Call] = []
   var accepts = true
   var isOpeningDocument = false
+  var isInputDeferred = false
 
   func setFloat(_ value: Float, for name: String) async -> Bool { record(.float(value)) }
   func setString(_ value: String, for name: String) async -> Bool { record(.string(value)) }

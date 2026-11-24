@@ -153,6 +153,10 @@
     /// Whether the player is still opening its document — see
     /// ``RemoteComposeNativePlayerView/isOpeningDocument``.
     public var isOpeningDocument: Bool { playerView.isOpeningDocument }
+
+    /// Whether the open session is holding off input for now — see
+    /// ``RemoteComposeNativePlayerView/isInputDeferred``.
+    public var isInputDeferred: Bool { playerView.isInputDeferred }
   }
 
   /// How many host inputs may wait behind the one in flight. Beyond this an input is refused
@@ -477,6 +481,17 @@
       case .loading, .awaitingForeground: return true
       case .idle, .presenting, .failed: return false
       }
+    }
+
+    /// Whether the open session may be refusing input only for now: its scene is in the
+    /// background, or it is still working through earlier input — the only time its input queue
+    /// can be full. While this holds, a refused named-variable write may yet be accepted, once the
+    /// scene returns to the foreground or the queue drains, as while ``isOpeningDocument`` holds.
+    /// Read after a refusal; it is not the queue's fullness itself, which the session may already
+    /// have eased by one input by the time the caller looks.
+    public var isInputDeferred: Bool {
+      guard let presentation = openPresentation else { return false }
+      return !isSceneActive || presentation.hasOutstandingInput
     }
 
     /// The open session that accepts input, whether or not an error is showing.
