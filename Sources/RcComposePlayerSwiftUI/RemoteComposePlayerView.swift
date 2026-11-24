@@ -429,6 +429,13 @@
         onDiagnostics: { _ in },
         onError: { [weak self] error in self?.errorHandler(.playback(error.localizedDescription)) })
       install(native)
+      // A session the player opens again — back from the background, or for a new density —
+      // starts from the document's own values, so the values written so far are replayed into it,
+      // as the Kotlin player re-applies them when it is rebuilt.
+      native.playerView.onSessionReopened = { [weak self, weak native] in
+        guard let self, let native, self.nativeController === native else { return }
+        self.playerController.backend.replay()
+      }
       // Reading the declarations decodes the whole document, so it runs off the main thread, like
       // the session's own open. The controller is attached as soon as it finishes — normally well
       // before the session has opened — and replays the values written so far.

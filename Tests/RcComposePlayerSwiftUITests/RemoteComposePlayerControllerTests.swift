@@ -159,6 +159,29 @@ import Testing
     #expect(applied == ["USER:count": .integer(3)])
   }
 
+  /// A native player that opens its document anew — back from the background, or for a new
+  /// density — starts from the document's own values, so every value written so far is handed to
+  /// the update handler again, as the Kotlin player re-applies its values when it is rebuilt.
+  @Test func replayHandsEveryStoredValueToTheUpdateHandlerAgain() {
+    let controller = RemoteComposePlayerController()
+    controller.backend.replay()  // Nothing attached or installed: nothing to hand over.
+    controller.backend.attach(Self.declarations)
+    #expect(controller.setInteger(5, for: "count"))
+    #expect(controller.setBoolean(true, for: "enabled"))
+
+    var applied: [String: Value] = [:]
+    controller.backend.installUpdateHandler { applied[$0] = $1 }
+    applied.removeAll()
+    controller.backend.replay()
+    #expect(applied == ["USER:count": .integer(5), "USER:enabled": .boolean(true)])
+
+    // Without a handler — the player is being rebuilt — the values wait for the next one.
+    controller.backend.installUpdateHandler(nil)
+    applied.removeAll()
+    controller.backend.replay()
+    #expect(applied.isEmpty)
+  }
+
   /// A deferred value — the document is still opening, the scene is in the background, or the
   /// queue is full — waits for the player to say input may be accepted again, however long that
   /// takes, and is then offered again. It does not poll while it waits.

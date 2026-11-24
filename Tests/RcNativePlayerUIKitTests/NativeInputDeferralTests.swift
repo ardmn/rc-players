@@ -137,6 +137,23 @@
       for write in busy { #expect(await write.value == .accepted) }
     }
 
+    /// Every session opened after the first — here for a new density — is announced, so a host
+    /// can set its values again; the first one is not.
+    @Test func aReopenedSessionIsAnnounced() async throws {
+      let view = try await openedView()
+      var reopened = 0
+      view.onSessionReopened = { reopened += 1 }
+      #expect(reopened == 0)
+      let mark = view.inputAvailability.mark
+      view.configureHostDensity(2)
+      #expect(view.isOpeningDocument)
+      for _ in 0..<1_000 where view.isOpeningDocument {
+        try await Task.sleep(nanoseconds: 10_000_000)
+      }
+      #expect(reopened == 1)
+      #expect(view.inputAvailability.mark != mark)
+    }
+
     /// A waiter is released when the player goes away, so nothing waits for a scene that will
     /// never come back.
     @Test func theSignalOpensWhenThePlayerGoesAway() async throws {

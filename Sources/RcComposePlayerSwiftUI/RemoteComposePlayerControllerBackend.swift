@@ -125,10 +125,18 @@ protocol ControllerBackendProtocol: AnyObject {
     /// removes it with `nil`.
     func installUpdateHandler(_ handler: ((String, ControllerNamedValue) -> Void)?) {
       updateHandler = handler
-      guard let handler else { return }
+      replay()
+    }
+
+    /// Hands every value written so far to the installed update handler again, as the Kotlin
+    /// player re-applies its values when it is rebuilt: the native player opened its document
+    /// anew, and its new session holds only the document's own values. Does nothing while no
+    /// handler is installed.
+    func replay() {
+      guard let updateHandler else { return }
       for name in values.keys.sorted() {
         guard let value = values[name] else { continue }
-        handler(name, value)
+        updateHandler(name, value)
       }
     }
   }

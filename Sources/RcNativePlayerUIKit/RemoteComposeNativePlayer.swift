@@ -308,6 +308,13 @@
     /// Signals a caller holding a deferred write when to offer it again.
     @_spi(RemoteComposeController)
     public let inputAvailability = RemoteComposeNativeInputAvailability()
+    /// Called each time a session opens after an earlier one — the bytes were reopened for the
+    /// foreground, a new density, policy or resolver, or a new document. The new session starts
+    /// from the document's own values, so a host that set named variables sets them again here.
+    @_spi(RemoteComposeController)
+    public var onSessionReopened: (() -> Void)?
+    /// Whether a session has opened before, so the next one is a reopen.
+    private var hasOpenedSession = false
     private let clock: any RemoteComposeNativePlayerClock
     private var animationTimeline = NativeAnimationTimeline()
     private var frameSchedule = NativeFrameSchedule.idle
@@ -608,8 +615,11 @@
       if scheduledFramePending { requestScheduledFrame() }
     }
 
-    /// A session has opened: release the writes that waited for it.
+    /// A session has opened: tell the host when it replaces an earlier one, and release the writes
+    /// that waited for it.
     private func announceOpened() {
+      if hasOpenedSession { onSessionReopened?() }
+      hasOpenedSession = true
       inputAvailability.signal()
     }
 
