@@ -10,7 +10,7 @@
 
   /// A controller write that returned `true` reaches the screen of the real native player, whatever
   /// the scene and the session do in between: the background, a write queued as the scene leaves,
-  /// and a session reopened for a new density.
+  /// a session reopened for a new density, and a first open that failed.
   @MainActor @Suite struct NativeControllerDeliveryTests {
     private static let visible = NativeSwiftVisibility.visible
 
@@ -118,6 +118,29 @@
       #expect(await eventually { isBoxShown(in: player.view) == true })
       try await Task.sleep(nanoseconds: 200_000_000)
       #expect(isBoxShown(in: player.view) == true)
+    }
+
+    /// The player's first open fails, so a write the controller accepted is refused by the
+    /// player; once a later open succeeds, the write is shown.
+    @Test func aWriteRefusedByAFailedFirstOpenIsShownOnceAnOpenSucceeds() async throws {
+      let controller = RemoteComposePlayerController()
+      let host = RemoteComposePlayerViewController(
+        data: NativeTestDocuments.shownBox(), controller: controller, resourceResolver: nil)
+      host.loadViewIfNeeded()
+      let native = try #require(host.children.first as? RemoteComposeNativePlayerViewController)
+      // Invalid limits fail the open before it starts; the declarations are still read.
+      var invalid = RemoteComposeNativeExecutionLimits.default
+      invalid.maximumFrameWork = 0
+      native.playerView.configureExecutionLimits(invalid)
+      #expect(!native.isOpeningDocument)
+      #expect(await eventually { !controller.names.isEmpty })
+      #expect(controller.setInteger(Self.visible, for: "shown"))
+      try await Task.sleep(nanoseconds: 200_000_000)
+      #expect(isBoxShown(in: native.playerView) == nil)
+
+      native.playerView.configureExecutionLimits(.default)
+      #expect(await eventually { !native.isOpeningDocument })
+      #expect(await eventually { isBoxShown(in: native.playerView) == true })
     }
 
     /// A new density reopens the session from the bytes; the values written before survive it.

@@ -130,7 +130,8 @@ protocol ControllerBackendProtocol: AnyObject {
 
     /// Hands every value written so far to the installed update handler again, as the Kotlin
     /// player re-applies its values when it is rebuilt: the native player opened its document
-    /// anew, and its new session holds only the document's own values. Does nothing while no
+    /// anew, and its new session holds only the document's own values. That includes values an
+    /// earlier session refused, which the new session judges afresh. Does nothing while no
     /// handler is installed.
     func replay() {
       guard let updateHandler else { return }
@@ -168,8 +169,12 @@ protocol ControllerBackendProtocol: AnyObject {
     /// write the player cannot take yet — its document is still opening, its scene is in the
     /// background, its input queue is full, or a reopen discarded the session that took it — is
     /// offered again each time the player signals that input may be accepted, however long that
-    /// takes. Nothing polls while it waits. A refusal is the document's final answer, already
-    /// reported by the player, and is not offered again. It stops as soon as the player is gone,
+    /// takes. Nothing polls while it waits. A refusal is the session's final answer — the document
+    /// is failed, declines the value (which reports nothing), or failed applying it (reported
+    /// through `onError`) — and is not offered to that session again. The value stays with the
+    /// controller, as on the Kotlin player, and the replay offers it to each new session the player
+    /// opens, which judges it afresh: a value that fails an execution limit is reported once per
+    /// session, not once per retry. It stops as soon as the player is gone,
     /// the task is cancelled, or `isCurrent` says a newer value for this name has started or the
     /// player was rebuilt.
     @MainActor

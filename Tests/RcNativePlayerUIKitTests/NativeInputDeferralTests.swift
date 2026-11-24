@@ -114,6 +114,30 @@
       #expect(view.inputAvailability.mark != mark)
     }
 
+    /// A first open that fails counts as an earlier session: the writes answered `.refused` while
+    /// it was failed are owed to the next session that opens, so that one is announced as a reopen.
+    @Test func anOpenAfterAFailedFirstOpenIsAnnouncedAsAReopen() async throws {
+      var errors: [RemoteComposeNativePlayerError] = []
+      let view = RemoteComposeNativePlayerView(
+        data: NativeTestDocuments.shownBox(), resourceResolver: nil,
+        onError: { errors.append($0) })
+      var reopened = 0
+      view.onSessionReopened = { reopened += 1 }
+      // Invalid limits fail the open before it starts, so the first session never opens.
+      var invalid = RemoteComposeNativeExecutionLimits.default
+      invalid.maximumFrameWork = 0
+      view.configureExecutionLimits(invalid)
+      #expect(!view.isOpeningDocument && errors.count == 1)
+      #expect(await view.submit(.integer(Self.visible), for: "shown") == .refused)
+
+      view.configureExecutionLimits(.default)
+      for _ in 0..<1_000 where view.isOpeningDocument {
+        try await Task.sleep(nanoseconds: 10_000_000)
+      }
+      #expect(errors.count == 1)
+      #expect(reopened == 1)
+    }
+
     /// A waiter is released when the player goes away, so nothing waits for a scene that will
     /// never come back.
     @Test func theSignalOpensWhenThePlayerGoesAway() async throws {

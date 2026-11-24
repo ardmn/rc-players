@@ -22,8 +22,10 @@ public enum RemoteComposeNativeNamedValue: Equatable, Sendable {
 public enum RemoteComposeNativeInputAdmission: Equatable, Sendable {
   /// The document applied it.
   case accepted
-  /// The document's final answer: the name or value is refused, or applying it failed (and that
-  /// failure was reported). Offering it again gets the same answer.
+  /// This session's final answer: the document is failed and has no session, the document
+  /// declines the name or value (nothing is reported), or applying it failed (reported through
+  /// `onError`). Offering it again to the same session gets the same answer; a later session —
+  /// see `onSessionReopened` — judges it afresh.
   case refused
   /// The player could not take it yet — its document is still opening, its scene is in the
   /// background, its input queue is full, or the session it reached was discarded for a reopen. It

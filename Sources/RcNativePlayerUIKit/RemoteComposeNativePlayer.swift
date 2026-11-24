@@ -308,13 +308,15 @@
     /// Signals a caller holding a deferred write when to offer it again.
     @_spi(RemoteComposeController)
     public let inputAvailability = RemoteComposeNativeInputAvailability()
-    /// Called each time a session opens after an earlier one — the bytes were reopened for the
-    /// foreground, a new density, policy or resolver, or a new document. The new session starts
-    /// from the document's own values, so a host that set named variables sets them again here.
+    /// Called each time a session opens after an earlier open finished — the bytes were reopened
+    /// for the foreground, a new density, policy or resolver, or a new document, or the earlier
+    /// open failed. The new session starts from the document's own values, so a host that set
+    /// named variables, or had them refused while the document was failed, sets them again here.
     @_spi(RemoteComposeController)
     public var onSessionReopened: (() -> Void)?
-    /// Whether a session has opened before, so the next one is a reopen.
-    private var hasOpenedSession = false
+    /// Whether an open has finished before — a session opened, or the document failed without
+    /// one — so the next session to open is a reopen.
+    private var hasFinishedOpen = false
     private let clock: any RemoteComposeNativePlayerClock
     private var animationTimeline = NativeAnimationTimeline()
     private var frameSchedule = NativeFrameSchedule.idle
@@ -618,8 +620,8 @@
     /// A session has opened: tell the host when it replaces an earlier one, and release the writes
     /// that waited for it.
     private func announceOpened() {
-      if hasOpenedSession { onSessionReopened?() }
-      hasOpenedSession = true
+      if hasFinishedOpen { onSessionReopened?() }
+      hasFinishedOpen = true
       inputAvailability.signal()
     }
 
@@ -982,8 +984,12 @@
     private func show(error: Error, retaining presentation: NativePlayerPresentation?) {
       stopFrameDriver()
       state = .failed(presentation)
-      // A write waiting for the document to open gets its answer from the failed state.
-      if presentation == nil { inputAvailability.signal() }
+      if presentation == nil {
+        // The open failed. A write waiting for it gets its answer, `.refused`, from the failed
+        // state, and the next session to open is announced as a reopen so it gets them again.
+        hasFinishedOpen = true
+        inputAvailability.signal()
+      }
       scheduledFramePending = false
       errorLabel.text = error.localizedDescription
       errorLabel.isHidden = false
