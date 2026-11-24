@@ -177,3 +177,5 @@ private object RcPathConicApi34 {
     path.asAndroidPath().conicTo(x1, y1, x2, y2, weight)
   }
 }
+
+internal actual val rcChildLayersMissModulatedAlpha: Boolean = false

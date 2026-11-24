@@ -145,6 +145,9 @@ import androidx.compose.ui.layout.LastBaseline
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.layout
@@ -156,10 +159,12 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
 import androidx.compose.ui.node.DelegatableNode
 import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.LayoutModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.PointerInputModifierNode
 import androidx.compose.ui.node.SemanticsModifierNode
 import androidx.compose.ui.node.currentValueOf
+import androidx.compose.ui.node.invalidatePlacement
 import androidx.compose.ui.node.invalidateSemantics
 import androidx.compose.ui.platform.InfiniteAnimationPolicy
 import androidx.compose.ui.platform.InspectorInfo
@@ -1315,8 +1320,59 @@ private class RcFloatAnimationLoop {
   var running = false
 }
 
+/**
+ * [RenderLayoutNodeContent], with [LocalRcUnderModulateAlpha] set for the node and everything under
+ * it when the node's graphics layer is `ModulateAlpha` on a platform whose child layers miss that
+ * alpha (see [rcChildLayersMissModulatedAlpha]).
+ */
 @Composable
 private fun RenderLayoutNode(
+  node: RcLayoutNode,
+  modifier: Modifier = Modifier,
+  forceGone: Boolean = false,
+  ignoreOwnVisibility: Boolean = false,
+  state: RcPlayerState,
+  textMeasurer: TextMeasurer,
+  images: MutableMap<Int, ImageBitmap>,
+  theme: Int,
+) {
+  val content: @Composable () -> Unit = {
+    RenderLayoutNodeContent(
+      node,
+      modifier,
+      forceGone,
+      ignoreOwnVisibility,
+      state,
+      textMeasurer,
+      images,
+      theme,
+    )
+  }
+  if (
+    rcChildLayersMissModulatedAlpha &&
+      !LocalRcUnderModulateAlpha.current &&
+      node.modifiers.graphicsLayer?.modulatesAlpha() == true
+  ) {
+    CompositionLocalProvider(LocalRcUnderModulateAlpha provides true, content)
+  } else {
+    content()
+  }
+}
+
+/**
+ * Set under a `ModulateAlpha` graphics layer where child layers would miss its alpha, so that this
+ * player does not give a child a layer it can do without (see [rcOffset]).
+ */
+private val LocalRcUnderModulateAlpha = staticCompositionLocalOf { false }
+
+private fun RcGraphicsLayerModifier.modulatesAlpha(): Boolean = attributes.any {
+  it is RcGraphicsLayerAttribute.IntValue &&
+    it.index == RcGraphicsLayerModifier.COMPOSITING_STRATEGY &&
+    it.value == RcGraphicsLayerModifier.COMPOSITING_STRATEGY_MODULATE_ALPHA
+}
+
+@Composable
+private fun RenderLayoutNodeContent(
   node: RcLayoutNode,
   modifier: Modifier = Modifier,
   forceGone: Boolean = false,
@@ -3392,6 +3448,7 @@ private fun Modifier.applyComponentModifiers(
     return handled
   }
 
+  val offsetLayers = rcOffsetWithLayer(LocalRcUnderModulateAlpha.current)
   var scrollApplied = false
   var operationIndex = 0
   while (operationIndex < modifiers.ordered.size) {
@@ -3413,7 +3470,9 @@ private fun Modifier.applyComponentModifiers(
         if (laterOffsets.isEmpty()) applyPressHandlers(result)
         else {
           val shift: Density.() -> IntOffset = { rcOffsetPixels(laterOffsets, state, density) }
-          applyPressHandlers(result.rcOffset(shift)).rcOffset { -shift() }
+          applyPressHandlers(result.rcOffset(offsetLayers, shift)).rcOffset(offsetLayers) {
+            -shift()
+          }
         }
     }
     result =
@@ -3452,7 +3511,8 @@ private fun Modifier.applyComponentModifiers(
           insetBottom += rcPaddingEndPixels(top, bottom)
           result.rcPaddingPixels(left = left, top = top, right = right, bottom = bottom, density)
         }
-        is RcOffsetModifier -> result.rcOffset { rcOffsetPixels(listOf(operation), state, density) }
+        is RcOffsetModifier ->
+          result.rcOffset(offsetLayers) { rcOffsetPixels(listOf(operation), state, density) }
         is RcZIndexModifier -> result.zIndex(state.resolve(operation.value))
         is RcBackgroundModifier,
         is RcBorderModifier,
@@ -3497,19 +3557,64 @@ private fun Modifier.applyComponentModifiers(
 }
 
 /**
- * `Modifier.offset { }` without the layer: [offset] is read when the content is placed, so a change
- * re-places it without recomposing or measuring, and the start edge stays mirrored in RTL.
- *
- * Compose's lambda offset places its content with a layer of its own. On Skiko a `ModulateAlpha`
- * graphics layer fades only its own draw calls and draws a child layer at full alpha, so the offset
- * child of a faded `ModulateAlpha` component was drawn opaque; Android's render nodes pass the
- * alpha on, and AndroidX's players fade it.
+ * Whether an offset places its content with a layer of its own, as Compose's lambda
+ * `Modifier.offset` does. A layer lets an animated offset move without redrawing anything around
+ * it, so it is the default. Under a `ModulateAlpha` layer whose child layers miss its alpha
+ * ([LocalRcUnderModulateAlpha]) the content is placed without one, so the alpha reaches it.
  */
-private fun Modifier.rcOffset(offset: Density.() -> IntOffset): Modifier =
-  layout { measurable, constraints ->
-    val placeable = measurable.measure(constraints)
-    layout(placeable.width, placeable.height) { placeable.placeRelative(offset()) }
+internal fun rcOffsetWithLayer(underModulateAlpha: Boolean): Boolean =
+  !(underModulateAlpha && rcChildLayersMissModulatedAlpha)
+
+/**
+ * Compose's lambda `Modifier.offset`, with the layer optional ([rcOffsetWithLayer]). [offset] is
+ * read when the content is placed, so a change re-places it without recomposing or measuring; a new
+ * lambda instance only invalidates placement, as `OffsetPxNode`'s does. The start edge mirrors in
+ * RTL either way.
+ */
+internal fun Modifier.rcOffset(withLayer: Boolean, offset: Density.() -> IntOffset): Modifier =
+  this then RcOffsetElement(offset, withLayer)
+
+private class RcOffsetElement(
+  val offset: Density.() -> IntOffset,
+  val withLayer: Boolean,
+) : ModifierNodeElement<RcOffsetNode>() {
+  override fun create(): RcOffsetNode = RcOffsetNode(offset, withLayer)
+
+  override fun update(node: RcOffsetNode) = node.update(offset, withLayer)
+
+  override fun equals(other: Any?): Boolean =
+    other is RcOffsetElement && offset === other.offset && withLayer == other.withLayer
+
+  override fun hashCode(): Int = 31 * offset.hashCode() + withLayer.hashCode()
+
+  override fun InspectorInfo.inspectableProperties() {
+    name = "rcOffset"
+    properties["withLayer"] = withLayer
   }
+}
+
+private class RcOffsetNode(var offset: Density.() -> IntOffset, var withLayer: Boolean) :
+  LayoutModifierNode, Modifier.Node() {
+  override val shouldAutoInvalidate: Boolean = false
+
+  fun update(offset: Density.() -> IntOffset, withLayer: Boolean) {
+    if (this.offset !== offset || this.withLayer != withLayer) invalidatePlacement()
+    this.offset = offset
+    this.withLayer = withLayer
+  }
+
+  override fun MeasureScope.measure(
+    measurable: Measurable,
+    constraints: Constraints,
+  ): MeasureResult {
+    val placeable = measurable.measure(constraints)
+    return layout(placeable.width, placeable.height) {
+      val value = offset()
+      if (withLayer) placeable.placeRelativeWithLayer(value.x, value.y)
+      else placeable.placeRelative(value.x, value.y)
+    }
+  }
+}
 
 /** The whole pixels [offsets] move a component by, each rounded as its own modifier rounds it. */
 private fun rcOffsetPixels(

@@ -107,3 +107,5 @@ internal actual fun rcRuntimeShaderSupported(source: String): Boolean = runCatch
   RuntimeEffect.makeForShader(source).close()
 }
   .isSuccess
+
+internal actual val rcChildLayersMissModulatedAlpha: Boolean = true

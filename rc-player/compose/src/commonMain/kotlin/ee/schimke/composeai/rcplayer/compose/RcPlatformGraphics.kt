@@ -184,3 +184,11 @@ internal fun rcConicAsQuads(
     quad,
   )
 }
+
+/**
+ * Whether a `CompositingStrategy.ModulateAlpha` graphics layer leaves its child layers at full
+ * alpha. Skiko fades only the layer's own draw calls (`GraphicsLayer.record` sets the recording
+ * canvas's `alphaMultiplier`) and draws a child layer into the raw Skia canvas; Android's render
+ * nodes pass the alpha on to their children.
+ */
+internal expect val rcChildLayersMissModulatedAlpha: Boolean
