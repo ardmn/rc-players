@@ -1,10 +1,20 @@
 package ee.schimke.composeai.rcplayer.compose
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.ImageComposeScene
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import ee.schimke.composeai.rcplayer.protocol.RcBackgroundModifier
 import ee.schimke.composeai.rcplayer.protocol.RcBoxLayout
 import ee.schimke.composeai.rcplayer.protocol.RcCanvasLayout
+import ee.schimke.composeai.rcplayer.protocol.RcClipRectModifier
 import ee.schimke.composeai.rcplayer.protocol.RcDimensionType
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
 import ee.schimke.composeai.rcplayer.protocol.RcDraw4
@@ -98,6 +108,8 @@ class RcGraphicsLayerCompositingRenderTest {
    * Compose's lambda `Modifier.offset` places its child with a layer of its own, and on Skiko a
    * `ModulateAlpha` layer fades only its own draw calls: a child layer is drawn into the raw canvas
    * at full alpha. So the offset child of a half-alpha `ModulateAlpha` layer used to be opaque.
+   * `Auto` and `Offscreen` fade the layer as one image and were never affected; they are here as
+   * parity guards, so that placing the child differently cannot break them.
    */
   @Test
   fun anOffsetChildIsFadedWithItsParentLayer() {
@@ -109,13 +121,75 @@ class RcGraphicsLayerCompositingRenderTest {
       )) {
       val image = render(offsetChildDocument(strategy))
       // The child without an offset, for comparison, then the offset one beside it.
-      assertEquals(HALF_BLUE, image.getColor(RED_ONLY_X, MID_Y), "strategy $strategy: still child")
+      assertEquals(
+        HALF_BLUE,
+        image.getColor(STILL_CHILD_X, MID_Y),
+        "strategy $strategy: still child",
+      )
       assertEquals(
         HALF_RED,
         image.getColor(OFFSET_CHILD_X, MID_Y),
         "strategy $strategy: offset child",
       )
     }
+  }
+
+  /**
+   * Outside a `ModulateAlpha` layer an offset keeps the layer Compose's lambda `Modifier.offset`
+   * gives it, so an animated offset still moves without redrawing what is around it. Skiko's own
+   * quirk is the probe: a child layer under a plain Compose `ModulateAlpha` layer stays opaque, so
+   * an opaque child shows the layer is there, and a faded one that it is not.
+   */
+  @Test
+  fun anOffsetKeepsItsLayerOutsideAModulateAlphaLayer() {
+    assertTrue(rcOffsetWithLayer(underModulateAlpha = false), "the default keeps the layer")
+    assertTrue(!rcOffsetWithLayer(underModulateAlpha = true), "Skiko drops it under ModulateAlpha")
+    fun probe(withLayer: Boolean): Int {
+      val scene =
+        ImageComposeScene(width = WIDTH, height = HEIGHT, density = Density(1f)) {
+          Box(
+            Modifier.size(WIDTH.dp, HEIGHT.dp).graphicsLayer {
+              alpha = 0.5f
+              compositingStrategy = CompositingStrategy.ModulateAlpha
+            },
+          ) {
+            Box(
+              Modifier.rcOffset(withLayer) { IntOffset(OFFSET_CHILD_SHIFT.toInt(), 0) }
+                .size(HEIGHT.dp)
+                .background(ComposeColor.Red),
+            )
+          }
+        }
+      try {
+        val bitmap = Bitmap().apply { allocN32Pixels(WIDTH, HEIGHT) }
+        check(scene.render(0L).readPixels(bitmap))
+        return bitmap.getColor(OFFSET_CHILD_X, MID_Y)
+      } finally {
+        scene.close()
+      }
+    }
+    assertEquals(RED, probe(withLayer = true), "placed with a layer, the child misses the alpha")
+    assertEquals(HALF_RED, probe(withLayer = false), "placed without one, it is faded")
+  }
+
+  /**
+   * **Known limitation, pinned.** Any other child that has a layer of its own still misses a
+   * `ModulateAlpha` parent's alpha on Skiko: a clipped child (`Modifier.clip` is a layer), a scroll
+   * container, a nested graphics layer, a component offscreen buffer, a visibility transition. Only
+   * the offset is placed without one. This pins the clip case as it is drawn today, opaque, where
+   * AndroidX fades it; when it is fixed, flip the expectation to [HALF_RED].
+   */
+  @Test
+  fun aClippedChildOfAModulateAlphaLayerStillMissesItsAlpha() {
+    val image =
+      render(
+        offsetChildDocument(
+          RcGraphicsLayerModifier.COMPOSITING_STRATEGY_MODULATE_ALPHA,
+          clipOffsetChild = true,
+        ),
+      )
+    assertEquals(HALF_BLUE, image.getColor(STILL_CHILD_X, MID_Y))
+    assertEquals(RED, image.getColor(OFFSET_CHILD_X, MID_Y), "known limitation: still opaque")
   }
 
   /**
@@ -222,13 +296,17 @@ class RcGraphicsLayerCompositingRenderTest {
 
   /**
    * A 60x20 box with a half-alpha layer of [strategy] and two 20x20 children: a blue one where the
-   * box puts it, and a red one the box puts there too and `offset` moves 40 to the right.
+   * box puts it, and a red one the box puts there too and `offset` moves 40 to the right, clipped
+   * to its bounds when [clipOffsetChild] is set.
    */
-  private fun offsetChildDocument(strategy: Int): RcDocument {
+  private fun offsetChildDocument(strategy: Int, clipOffsetChild: Boolean = false): RcDocument {
     val end = RcNoArg(RcOpcodes.CONTAINER_END)
     fun child(id: Int, red: Float, blue: Float, offsetX: Float?) = buildList {
       add(RcBoxLayout(id, 30 + id, 1, 1))
-      offsetX?.let { add(RcOffsetModifier(RcFloatWord.literal(it), RcFloatWord.literal(0f))) }
+      offsetX?.let {
+        add(RcOffsetModifier(RcFloatWord.literal(it), RcFloatWord.literal(0f)))
+        if (clipOffsetChild) add(RcClipRectModifier)
+      }
       add(RcWidthModifier(RcDimensionType.EXACT, RcFloatWord.literal(HEIGHT.toFloat())))
       add(RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(HEIGHT.toFloat())))
       add(
@@ -341,6 +419,7 @@ class RcGraphicsLayerCompositingRenderTest {
     const val HOLE_X = 30
     const val OFFSET_CHILD_SHIFT = 40f
     const val OFFSET_CHILD_X = 50
+    const val STILL_CHILD_X = 10
     const val RED = 0xffff0000.toInt()
     const val HALF_RED = 0x80ff0000.toInt()
     const val HALF_BLUE = 0x800000ff.toInt()
