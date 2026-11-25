@@ -1,5 +1,7 @@
 // Usage: node wasm-shot.mjs <distDir> <outDir> <id>...  — renders <distDir>/<id>.rc in the Wasm player.
-// Exits non-zero, without a screenshot, when a document ends in the player's error state.
+// Every id is tried and reported. One that does not settle in the player's ready state (it times
+// out, ends in the error state, or leaves ready while it settles) gets no screenshot, and the
+// script then exits non-zero after listing them all.
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { createReadStream, statSync, mkdirSync } from 'node:fs';
@@ -26,12 +28,18 @@ const failed = [];
 try {
   const page = await browser.newPage({ viewport: { width: 300, height: 160 } });
   for (const id of ids) {
-    await page.goto(`http://127.0.0.1:${port}/index.html?src=${encodeURIComponent(id)}.rc&handoffDelayMs=0`);
-    await page.waitForSelector('[data-rc-player-state="ready"],[data-rc-player-state="error"]', { timeout: 90000 });
-    const state = await page.evaluate(() => document.querySelector('[data-rc-player-state]')?.getAttribute('data-rc-player-state'));
+    let state;
+    try {
+      await page.goto(`http://127.0.0.1:${port}/index.html?src=${encodeURIComponent(id)}.rc&handoffDelayMs=0`);
+      await page.waitForSelector('[data-rc-player-state="ready"],[data-rc-player-state="error"]', { state: 'attached', timeout: 90000 });
+      // Let the first frames settle, then read the state the screenshot would show.
+      await page.waitForTimeout(500);
+      state = await page.evaluate(() => document.querySelector('[data-rc-player-state]')?.getAttribute('data-rc-player-state'));
+    } catch (error) {
+      state = `failed: ${error.message.split('\n')[0]}`;
+    }
     console.log(id, state);
-    if (state !== 'ready') { failed.push(id); continue; }
-    await page.waitForTimeout(500);
+    if (state !== 'ready') { failed.push(`${id} (${state})`); continue; }
     await page.screenshot({ path: join(out, `${id}.png`), omitBackground: true });
   }
 } finally {

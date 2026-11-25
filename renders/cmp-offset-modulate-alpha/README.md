@@ -53,13 +53,22 @@ parent's alpha on Skiko and is drawn opaque:
 - a marquee, because `basicMarquee` places its content with a layer.
 
 `RcGraphicsLayerCompositingRenderTest.aClippedChildOfAModulateAlphaLayerStillMissesItsAlpha` pins
-the clip case as it is drawn today.
+the clip case as it is drawn today, and
+`anOffsetChildOfANestedModulateAlphaLayerIsFadedByTheInnerOne` the nested layer: the inner layer
+misses the outer alpha, so its offset child is faded by the inner one alone.
 
 With a blur on the `ModulateAlpha` layer, Skiko fades the layer's own draws twice (to a quarter
 at half alpha) where AndroidX fades them once. The offset child is faded once, as in AndroidX.
 `anOffsetChildOfABlurredModulateAlphaLayerIsFadedOnce` pins both.
 
 All of these come from Compose Multiplatform's Skiko `GraphicsLayer`, not from this player.
+
+An embedded document inherits the host's `ModulateAlpha` layer (`RcEmbeddedDocuments.kt` provides
+no new one around `RcComposePlayerResolved`), although its player is wrapped in `clipToBounds()`
+and so drawn into a child layer that misses that alpha. An offset in the embedded document is then
+placed without a layer for an alpha that never reaches it. It is drawn opaque either way, so the
+pixels match the list above; only the offset's own layer is lost. This one is the player's, it
+predates the second review round, and it is left as it is.
 
 ## Reproducing
 
@@ -103,5 +112,9 @@ The regression tests are in `RcGraphicsLayerCompositingRenderTest`:
 `anOffsetChildStaysFadedOnceWhileTheBlurChanges` cover a blurred layer, and
 `thePressHandlerOffsetsOfAModulateAlphaChildAreFaded` and
 `anOffsetThatMovesAfterTheFirstFrameIsStillFaded` cover the press handlers' offsets and a moving
-offset. `anOffsetKeepsItsLayerOutsideAModulateAlphaLayer` checks, through the player, that an
-offset outside one keeps its layer.
+offset. `anOffsetChildFollowsTheNextDocumentsAlpha` covers a host's next document with an equal
+layer. `anOffsetKeepsItsLayerOutsideAModulateAlphaLayer`
+checks, through the player, that an offset outside one keeps its layer. `RcModulateAlphaLayerTest`
+pins what pixels cannot show: an alpha of 1 keeps the offset's layer, which layer an offset before
+or after the component's own is drawn into, and that placement is redone when new readers are bound
+or the decision flips, not on every frame of a moving alpha.
