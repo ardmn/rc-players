@@ -7,7 +7,9 @@ output="${RC_APPLE_PLAYER_BENCHMARK_OUTPUT:-$repo_root/build/apple-player-benchm
 app="${RC_MACOS_PLAYER_BUILD_DIR:-$repo_root/build/macos-player}/Remote Compose Player.app"
 binary="$app/Contents/MacOS/RemoteComposePlayer"
 fixture="$repo_root/third_party/rc-embedded-player/src/test/resources/rc-fixtures/TitleCardRemote-640x480.rc"
-animated_fixture="$repo_root/third_party/rc-embedded-player/src/test/resources/rc-fixtures/IndeterminateCircularProgress-400x400.rc"
+# The vendored third_party fixtures have no animated document; this is the one package-macos-player.sh
+# and the sample project use.
+animated_fixture="$repo_root/rc-player/compose/src/jvmTest/resources/rc-fixtures/IndeterminateCircularProgress-400x400.rc"
 native="$repo_root/build/native-appkit-evidence.json"
 native_animated="$repo_root/build/native-appkit-animated-evidence.json"
 native_startup="$repo_root/build/native-appkit-startup-evidence.json"
