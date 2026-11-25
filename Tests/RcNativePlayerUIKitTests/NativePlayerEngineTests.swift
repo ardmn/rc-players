@@ -2,9 +2,54 @@ import Foundation
 import Testing
 
 @testable import RcNativePlayerCore
-@testable import RcNativePlayerUIKit
+@_spi(RemoteComposeController) @testable import RcNativePlayerUIKit
 
 @Suite struct NativePlayerEngineTests {
+  /// `signalOne` releases the longest waiter only, skipping one that was cancelled; a later
+  /// `signal` releases the rest.
+  @Test func inputAvailabilityWakesOneWaiterInArrivalOrder() async {
+    let availability = RemoteComposeNativeInputAvailability()
+    let released = NativeTestLog()
+    func waiter(_ name: String) -> Task<Void, Never> {
+      let mark = availability.mark
+      return Task {
+        await availability.wait(after: mark)
+        released.append(name)
+      }
+    }
+    func settle() async {
+      for _ in 0..<200 { await Task.yield() }
+      try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+    let first = waiter("first")
+    await settle()
+    let cancelled = waiter("cancelled")
+    await settle()
+    let third = waiter("third")
+    await settle()
+    let fourth = waiter("fourth")
+    await settle()
+    #expect(released.entries.isEmpty)
+
+    cancelled.cancel()
+    await cancelled.value
+    #expect(released.entries == ["cancelled"])
+
+    availability.signalOne()
+    await first.value
+    await settle()
+    #expect(released.entries == ["cancelled", "first"])
+
+    availability.signalOne()
+    await third.value
+    await settle()
+    #expect(released.entries == ["cancelled", "first", "third"])
+
+    availability.signal()
+    await fourth.value
+    #expect(released.entries == ["cancelled", "first", "third", "fourth"])
+  }
+
   @Test func boundedQueueIsFirstInFirstOutAndRefusesOverflow() {
     var queue = NativeBoundedQueue<Int>(capacity: 3)
     #expect(queue.isEmpty)
@@ -68,5 +113,23 @@ import Testing
     #expect(presented.timeSeconds == 2.5)
     let frameTime = await engine.frameTime
     #expect(frameTime == 2.5)
+  }
+}
+
+/// A thread-safe record of what concurrent tasks did, in order.
+private final class NativeTestLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: [String] = []
+
+  func append(_ entry: String) {
+    lock.lock()
+    storage.append(entry)
+    lock.unlock()
+  }
+
+  var entries: [String] {
+    lock.lock()
+    defer { lock.unlock() }
+    return storage
   }
 }

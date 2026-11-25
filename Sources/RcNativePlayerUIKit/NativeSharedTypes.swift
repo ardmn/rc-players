@@ -34,8 +34,9 @@ public enum RemoteComposeNativeInputAdmission: Equatable, Sendable {
 }
 
 /// Tells a caller holding a deferred write when to offer it again: the player signals each time it
-/// may take input it could not before — its scene became active, its queue gave up an input, or a
-/// session opened or failed — and opens for good when it goes away, so no waiter outlives it.
+/// may take input it could not before — its scene became active, a session opened or failed, or its
+/// queue emptied — wakes the longest waiter when its queue gives up one input, and opens for good
+/// when it goes away, so no waiter outlives it.
 ///
 /// Thread-safe, and holds no reference to the player, so a waiter does not keep it alive.
 @_spi(RemoteComposeController)
@@ -45,6 +46,10 @@ public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
   private var isClosed = false
   private var nextWaiter: UInt64 = 0
   private var waiters: [UInt64: CheckedContinuation<Void, Never>] = [:]
+  /// Waiter ids in arrival order, from `orderHead` on; an id no longer in `waiters` (cancelled) is
+  /// skipped when reached.
+  private var order: [UInt64] = []
+  private var orderHead = 0
 
   public init() {}
 
@@ -63,6 +68,7 @@ public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
         let resumeNow = locked { () -> Bool in
           if epoch != mark || isClosed || Task.isCancelled { return true }
           waiters[id] = continuation
+          order.append(id)
           return false
         }
         if resumeNow { continuation.resume() }
@@ -76,11 +82,36 @@ public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
   func signal() {
     for waiter in locked({ () -> [CheckedContinuation<Void, Never>] in
       epoch &+= 1
-      defer { waiters.removeAll() }
+      defer {
+        waiters.removeAll()
+        order.removeAll()
+        orderHead = 0
+      }
       return Array(waiters.values)
     }) {
       waiter.resume()
     }
+  }
+
+  /// Releases the longest-waiting waiter: there is room for one more input. A caller that read
+  /// its mark before this and has not started waiting yet returns at once, as after `signal()`.
+  func signalOne() {
+    locked { () -> CheckedContinuation<Void, Never>? in
+      epoch &+= 1
+      var next: CheckedContinuation<Void, Never>?
+      while next == nil, orderHead < order.count {
+        next = waiters.removeValue(forKey: order[orderHead])
+        orderHead += 1
+      }
+      if orderHead == order.count {
+        order.removeAll(keepingCapacity: true)
+        orderHead = 0
+      } else if orderHead > order.count / 2 {
+        order.removeFirst(orderHead)
+        orderHead = 0
+      }
+      return next
+    }?.resume()
   }
 
   /// Releases every waiter, present and future: the player is gone.

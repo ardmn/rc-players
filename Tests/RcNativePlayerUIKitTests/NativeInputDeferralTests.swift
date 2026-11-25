@@ -65,6 +65,28 @@
       #expect(view.inputAvailability.mark != mark)
     }
 
+    /// Writes waiting on a full queue are woken one per freed slot, not all of them for every slot:
+    /// waking them all made `n` waiting writes cost about `n²/2` offers.
+    @Test func aFullQueueWakesOneWaitingWritePerFreedSlot() async throws {
+      let view = try await openedView()
+      let writes = 600
+      var offers = 0
+      let deliveries = (0..<writes).map { index in
+        Task { @MainActor in
+          while true {
+            let mark = view.inputAvailability.mark
+            offers += 1
+            let value = index % 2 == 0 ? Self.visible : Self.gone
+            guard await view.submit(.integer(value), for: "shown") == .deferred else { return }
+            await view.inputAvailability.wait(after: mark)
+          }
+        }
+      }
+      for delivery in deliveries { await delivery.value }
+      // Each write is offered once, plus about once more per wait: well under twice in all.
+      #expect(offers < 2 * writes, "\(offers) offers for \(writes) writes")
+    }
+
     /// A write the session is applying as the scene goes to the background is lost with that
     /// session — the bytes are reopened on activation — so it is deferred, not accepted.
     @Test func anInputInFlightWhenTheSceneGoesToTheBackgroundIsDeferred() async throws {

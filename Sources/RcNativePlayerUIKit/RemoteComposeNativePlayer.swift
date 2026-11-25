@@ -801,8 +801,14 @@
           if scheduledFramePending { requestScheduledFrame() }
         } else if let pending = presentation.inputs.popFirst() {
           presentation.activity = .input
-          // The queue has room again.
-          inputAvailability.signal()
+          // The queue has room for one more input: wake one write waiting for it, not every one,
+          // or `n` waiting writes would cost about `n²/2` offers. Once it is empty, wake them all,
+          // so a woken write that gave up instead cannot leave the others waiting.
+          if presentation.inputs.isEmpty {
+            inputAvailability.signal()
+          } else {
+            inputAvailability.signalOne()
+          }
           await applyInput(pending, to: presentation, generation: generation)
         } else if presentation.activity == .input {
           // The last input is done: take the frame that waited for it.
