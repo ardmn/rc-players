@@ -2,7 +2,10 @@ package ee.schimke.composeai.rcplayer.compose
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.ImageComposeScene
@@ -160,8 +163,13 @@ class RcGraphicsLayerCompositingRenderTest {
           blur = RcFloatWord.literal(1f),
         ),
       )
-    assertAlpha(0x80, image.getColor(OFFSET_CHILD_X, MID_Y), "offset child")
-    assertAlpha(0x40, image.getColor(STILL_CHILD_X, MID_Y), "still child, Skiko's own quirk")
+    assertFaded(RED, 0x80, image.getColor(OFFSET_CHILD_X, MID_Y), "offset child")
+    assertFaded(
+      BLUE,
+      0x40,
+      image.getColor(STILL_CHILD_X, MID_Y),
+      "still child, Skiko's own quirk",
+    )
   }
 
   /**
@@ -178,14 +186,14 @@ class RcGraphicsLayerCompositingRenderTest {
         blur = variable(BLUR_ID),
       )
     scene(document, namedValues) {
-      assertAlpha(0x80, pixel(0L, OFFSET_CHILD_X), "before the blur")
+      assertFaded(RED, 0x80, pixel(0L, OFFSET_CHILD_X), "before the blur")
       var nanos = 0L
       for (blur in listOf(1f, 0f)) {
         namedValues["USER:blur"] = RcNamedValue.FloatValue(blur)
         Snapshot.sendApplyNotifications()
         repeat(STEPS) {
           nanos += FRAME
-          assertAlpha(0x80, pixel(nanos, OFFSET_CHILD_X), "blur -> $blur, frame at $nanos")
+          assertFaded(RED, 0x80, pixel(nanos, OFFSET_CHILD_X), "blur -> $blur, frame at $nanos")
         }
       }
     }
@@ -241,6 +249,54 @@ class RcGraphicsLayerCompositingRenderTest {
       assertEquals(HALF_RED, pixel(settled, MOVED_CHILD_X), "moved to 20..40")
       assertEquals(0, pixel(settled, OFFSET_CHILD_X), "gone from 40..60")
     }
+  }
+
+  /**
+   * A host's next document whose layer is equal to the last one's keeps the layer's holder in
+   * `RenderLayoutNode` (`remember` compares with `==`), and its layer reads its alpha from the next
+   * document's state: here a host value written with the swap, which that state starts from while
+   * the last document's stays at 1. The offset follows the new alpha only if the next chain finds
+   * the kept holder and binds the new reader to it.
+   */
+  @Test
+  fun anOffsetChildFollowsTheNextDocumentsAlpha() {
+    val strategy = RcGraphicsLayerModifier.COMPOSITING_STRATEGY_MODULATE_ALPHA
+    val namedValues = mutableStateMapOf<String, RcNamedValue>()
+    var document by mutableStateOf(offsetChildDocument(strategy, alpha = variable(ALPHA_ID)))
+    val scene =
+      ImageComposeScene(width = WIDTH, height = HEIGHT, density = Density(1f)) {
+        RcComposePlayer(document, namedValues = namedValues)
+      }
+    try {
+      assertEquals(RED, scene.pixel(0L, OFFSET_CHILD_X), "alpha 1")
+      Snapshot.withMutableSnapshot {
+        namedValues["USER:alpha"] = RcNamedValue.FloatValue(0.5f)
+        document = offsetChildDocument(strategy, alpha = variable(ALPHA_ID), stillChildGreen = true)
+      }
+      Snapshot.sendApplyNotifications()
+      assertEquals(HALF_GREEN, scene.pixel(FRAME, STILL_CHILD_X), "the next document at alpha 0.5")
+      assertEquals(HALF_RED, scene.pixel(2 * FRAME, OFFSET_CHILD_X), "its offset child")
+    } finally {
+      scene.close()
+    }
+  }
+
+  /**
+   * A `ModulateAlpha` layer inside another: the inner layer is a child layer of the outer one, so
+   * on Skiko it misses the outer alpha (a known limitation, see the README), and an offset in it is
+   * faded by the inner layer alone, once. AndroidX fades it by both, to a quarter.
+   */
+  @Test
+  fun anOffsetChildOfANestedModulateAlphaLayerIsFadedByTheInnerOne() {
+    val image =
+      render(
+        offsetChildDocument(
+          RcGraphicsLayerModifier.COMPOSITING_STRATEGY_MODULATE_ALPHA,
+          outerModulateAlpha = true,
+        ),
+      )
+    assertEquals(HALF_BLUE, image.getColor(STILL_CHILD_X, MID_Y))
+    assertEquals(HALF_RED, image.getColor(OFFSET_CHILD_X, MID_Y), "known limitation: not a quarter")
   }
 
   /**
@@ -374,7 +430,9 @@ class RcGraphicsLayerCompositingRenderTest {
    * [offsetX] to the right, clipped to its bounds when [clipOffsetChild] is set. With
    * [pressHandlers] the red one has a padding before its offset and a click, so its press handlers
    * are wrapped in offsets of their own. The box has no layer when [strategy], [alpha] and [blur]
-   * are all null. `USER:offset` ([OFFSET_ID], 40) and `USER:blur` ([BLUR_ID], 0) are declared for
+   * are all null. The blue child is green instead with [stillChildGreen], and the box sits in a
+   * half-alpha `ModulateAlpha` box of the same size with [outerModulateAlpha]. `USER:offset`
+   * ([OFFSET_ID], 40), `USER:blur` ([BLUR_ID], 0) and `USER:alpha` ([ALPHA_ID], 1) are declared for
    * [variable].
    */
   private fun offsetChildDocument(
@@ -384,9 +442,11 @@ class RcGraphicsLayerCompositingRenderTest {
     blur: RcFloatWord? = null,
     offsetX: RcFloatWord = RcFloatWord.literal(OFFSET_CHILD_SHIFT),
     pressHandlers: Boolean = false,
+    stillChildGreen: Boolean = false,
+    outerModulateAlpha: Boolean = false,
   ): RcDocument {
     val end = RcNoArg(RcOpcodes.CONTAINER_END)
-    fun child(id: Int, red: Float, blue: Float, offset: Boolean) = buildList {
+    fun child(id: Int, red: Float, blue: Float, offset: Boolean, green: Float = 0f) = buildList {
       add(RcBoxLayout(id, 30 + id, 1, 1))
       if (offset) {
         if (pressHandlers) {
@@ -405,7 +465,7 @@ class RcGraphicsLayerCompositingRenderTest {
           reserved1 = 0,
           reserved2 = 0,
           red = RcFloatWord.literal(red),
-          green = RcFloatWord.literal(0f),
+          green = RcFloatWord.literal(green),
           blue = RcFloatWord.literal(blue),
           alpha = RcFloatWord.literal(1f),
           shapeType = RcBackgroundModifier.SHAPE_RECTANGLE,
@@ -436,16 +496,40 @@ class RcGraphicsLayerCompositingRenderTest {
         add(RcNamedVariable(OFFSET_ID, RcNamedVariable.FLOAT_TYPE, "USER:offset"))
         add(RcFloatConstant(BLUR_ID, RcFloatWord.literal(0f)))
         add(RcNamedVariable(BLUR_ID, RcNamedVariable.FLOAT_TYPE, "USER:blur"))
+        add(RcFloatConstant(ALPHA_ID, RcFloatWord.literal(1f)))
+        add(RcNamedVariable(ALPHA_ID, RcNamedVariable.FLOAT_TYPE, "USER:alpha"))
         add(RcRootLayout(1))
         add(RcLayoutContent(2))
+        if (outerModulateAlpha) {
+          add(RcBoxLayout(5, 35, 1, 1))
+          add(
+            RcGraphicsLayerModifier(
+              listOf(
+                RcGraphicsLayerAttribute.FloatValue(
+                  RcGraphicsLayerModifier.ALPHA,
+                  RcFloatWord.literal(0.5f),
+                ),
+                RcGraphicsLayerAttribute.IntValue(
+                  RcGraphicsLayerModifier.COMPOSITING_STRATEGY,
+                  RcGraphicsLayerModifier.COMPOSITING_STRATEGY_MODULATE_ALPHA,
+                ),
+              ),
+            ),
+          )
+          add(RcWidthModifier(RcDimensionType.EXACT, RcFloatWord.literal(WIDTH.toFloat())))
+          add(RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(HEIGHT.toFloat())))
+          add(RcLayoutContent(6))
+        }
         add(RcBoxLayout(3, 30, 1, 1))
         if (layer.isNotEmpty()) add(RcGraphicsLayerModifier(layer))
         add(RcWidthModifier(RcDimensionType.EXACT, RcFloatWord.literal(WIDTH.toFloat())))
         add(RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(HEIGHT.toFloat())))
         add(RcLayoutContent(4))
-        addAll(child(10, red = 0f, blue = 1f, offset = false))
+        if (stillChildGreen) addAll(child(10, red = 0f, blue = 0f, offset = false, green = 1f))
+        else addAll(child(10, red = 0f, blue = 1f, offset = false))
         addAll(child(20, red = 1f, blue = 0f, offset = true))
         repeat(4) { add(end) }
+        if (outerModulateAlpha) repeat(2) { add(end) }
       }
     return RcDocument(
       RcHeader(RcVersion(1, 0, 0), legacyWidth = WIDTH, legacyHeight = HEIGHT, modern = false),
@@ -495,11 +579,19 @@ class RcGraphicsLayerCompositingRenderTest {
     return bitmap.getColor(x, MID_Y)
   }
 
-  /** [color] is opaque-red-or-blue at [expected] alpha, give or take one step of rounding. */
-  private fun assertAlpha(expected: Int, color: Int, message: String) {
+  /**
+   * [color] is the opaque [rgb] at [alpha], give or take one step of rounding in the alpha and two
+   * in each colour channel (they are unpremultiplied from a fainter pixel).
+   */
+  private fun assertFaded(rgb: Int, alpha: Int, color: Int, message: String) {
+    val channels =
+      listOf(Color::getA, Color::getR, Color::getG, Color::getB).map { it(color) to it(rgb) }
+    val (actualAlpha, _) = channels[0]
+    val colourMatches = channels.drop(1).all { (actual, expected) -> abs(actual - expected) <= 2 }
     assertTrue(
-      abs(Color.getA(color) - expected) <= 1,
-      "$message: alpha ${Color.getA(color)}, expected $expected (${color.toUInt().toString(16)})",
+      abs(actualAlpha - alpha) <= 1 && colourMatches,
+      "$message: ${color.toUInt().toString(16)}, expected ${rgb.toUInt().toString(16)} at alpha " +
+        alpha.toString(16),
     )
   }
 
@@ -568,11 +660,13 @@ class RcGraphicsLayerCompositingRenderTest {
     const val MOVED_CHILD_X = 30
     const val OFFSET_ID = 42
     const val BLUR_ID = 43
+    const val ALPHA_ID = 61
     const val FRAME = 16_000_000L
     const val STEPS = 30
     const val RED = 0xffff0000.toInt()
     const val HALF_RED = 0x80ff0000.toInt()
     const val HALF_BLUE = 0x800000ff.toInt()
+    const val HALF_GREEN = 0x8000ff00.toInt()
     const val BLUE = 0xff0000ff.toInt()
 
     /** `PaintBundle` tags: a colour word follows 4; 18 packs the blend mode in its high bits. */

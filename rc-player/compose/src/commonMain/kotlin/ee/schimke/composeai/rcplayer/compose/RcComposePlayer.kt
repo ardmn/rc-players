@@ -65,6 +65,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -1385,14 +1386,16 @@ private val LocalRcModulateAlphaLayer = staticCompositionLocalOf<RcModulateAlpha
  * layer block does ([bind], from `applyGraphicsLayer`), and is read where an offset is placed: a
  * change re-places the offset without recomposing anything. Until it is bound it fades nothing.
  */
-private class RcModulateAlphaLayer(
+internal class RcModulateAlphaLayer(
   val operation: RcGraphicsLayerModifier,
   /** The `ModulateAlpha` layer this one is drawn into, if any. */
   val enclosing: RcModulateAlphaLayer?,
 ) {
-  private var alpha: () -> Float = { 1f }
-  private var blurX: () -> Float = { 0f }
-  private var blurY: () -> Float = { 0f }
+  // Snapshot state, so that an offset placed with the readers a component bound before is placed
+  // again when it binds new ones, even if the offset's own component skipped recomposition.
+  private var alpha by mutableStateOf<() -> Float>({ 1f }, referentialEqualityPolicy())
+  private var blurX by mutableStateOf<() -> Float>({ 0f }, referentialEqualityPolicy())
+  private var blurY by mutableStateOf<() -> Float>({ 0f }, referentialEqualityPolicy())
 
   fun bind(alpha: () -> Float, blurX: () -> Float, blurY: () -> Float) {
     this.alpha = alpha
@@ -1400,9 +1403,42 @@ private class RcModulateAlphaLayer(
     this.blurY = blurY
   }
 
+  // Derived, so that an alpha or blur that moves each frame (a clock, a tween) re-places the
+  // offsets only when the answer flips, not on every frame.
+  private val missAlpha = derivedStateOf { alpha() < 1f && !rcLayerBlurs(blurX(), blurY()) }
+
   /** Whether a child layer drawn into this layer now misses its alpha. Reads snapshot state. */
   val childLayersMissAlpha: Boolean
-    get() = alpha() < 1f && !rcLayerBlurs(blurX(), blurY())
+    get() = missAlpha.value
+}
+
+/**
+ * The component's own `ModulateAlpha` layer when [this], the provided [LocalRcModulateAlphaLayer],
+ * is the one `RenderLayoutNode` made for the component whose graphics layer is [layer]; null
+ * otherwise.
+ */
+internal fun RcModulateAlphaLayer?.ownedBy(layer: RcGraphicsLayerModifier?): RcModulateAlphaLayer? =
+  // `==`, as `RenderLayoutNode`'s `remember` compares: a new document with an equal layer keeps the
+  // holder made for the last one. Every chain is its own node's (`node.modifiers`), so an equal
+  // layer here is that node's.
+  this?.takeIf { it.operation == layer }
+
+/**
+ * The `ModulateAlpha` layer an offset is drawn into, given [this], the provided
+ * [LocalRcModulateAlphaLayer], and the component's graphics [layer]: before that layer
+ * ([afterLayer] false) the enclosing one, after it the component's own, or none when it has another
+ * strategy.
+ */
+internal fun RcModulateAlphaLayer?.drawnIntoOffset(
+  layer: RcGraphicsLayerModifier?,
+  afterLayer: Boolean,
+): RcModulateAlphaLayer? {
+  val own = ownedBy(layer)
+  return when {
+    afterLayer -> own
+    own != null -> own.enclosing
+    else -> this
+  }
 }
 
 /**
@@ -3367,14 +3403,12 @@ private fun Modifier.applyComponentModifiers(
   // The `ModulateAlpha` layer an offset is drawn into depends on where it is in the chain: before
   // the component's own graphics layer it is the enclosing one, after it the component's own, or
   // none when that layer has another strategy (see [RcModulateAlphaLayer]). `RenderLayoutNode`
-  // provides the component's own as the local; a chain whose layer is not that one's sits inside
-  // it.
+  // provides as the local the component's own holder when its layer is `ModulateAlpha`, none when
+  // it is `Auto` or `Offscreen` (an offset after it is drawn into that layer, and one before it
+  // wraps that layer, a child layer that misses an enclosing alpha whatever the offset does), and
+  // the enclosing holder when it has no layer.
   val modulateAlphaLayer = LocalRcModulateAlphaLayer.current
-  val ownModulateAlphaLayer = modulateAlphaLayer?.takeIf {
-    it.operation === modifiers.graphicsLayer
-  }
-  val enclosingModulateAlphaLayer =
-    if (ownModulateAlphaLayer != null) ownModulateAlphaLayer.enclosing else modulateAlphaLayer
+  val ownModulateAlphaLayer = modulateAlphaLayer.ownedBy(modifiers.graphicsLayer)
   // The paddings applied so far, in the whole pixels the chain applies them in: the canvas stream
   // undoes them (see [applyCanvasOperations]).
   var insetStart = 0
@@ -3514,7 +3548,7 @@ private fun Modifier.applyComponentModifiers(
 
   /** The `ModulateAlpha` layer an offset appended now is drawn into, if any. */
   fun offsetDrawnInto(): RcModulateAlphaLayer? =
-    if (graphicsLayerApplied) ownModulateAlphaLayer else enclosingModulateAlphaLayer
+    modulateAlphaLayer.drawnIntoOffset(modifiers.graphicsLayer, afterLayer = graphicsLayerApplied)
 
   var scrollApplied = false
   var operationIndex = 0
