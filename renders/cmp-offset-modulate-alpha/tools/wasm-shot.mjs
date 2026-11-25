@@ -1,27 +1,44 @@
 // Usage: node wasm-shot.mjs <distDir> <outDir> <id>...  — renders <distDir>/<id>.rc in the Wasm player.
+// Exits non-zero, without a screenshot, when a document ends in the player's error state.
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { createReadStream, statSync, mkdirSync } from 'node:fs';
-import { join, extname } from 'node:path';
+import { join, extname, resolve, sep } from 'node:path';
 const require = createRequire(new URL('../../../scripts/wasm-smoke/package.json', import.meta.url));
 const { chromium } = require('playwright');
 const [dist, out, ...ids] = process.argv.slice(2);
+const root = resolve(dist);
 mkdirSync(out, { recursive: true });
 const types = { '.html': 'text/html', '.mjs': 'text/javascript', '.js': 'text/javascript', '.json': 'application/json', '.wasm': 'application/wasm', '.ttf': 'font/ttf' };
 const server = createServer((req, res) => {
-  const p = join(dist, decodeURIComponent(new URL(req.url, 'http://x').pathname));
+  let p;
+  try { p = resolve(root, '.' + decodeURIComponent(new URL(req.url, 'http://x').pathname)); } catch { res.writeHead(400).end(); return; }
+  // Serve only files under the dist directory: `..` segments, encoded or not, are refused.
+  if (p !== root && !p.startsWith(root + sep)) { res.writeHead(403).end(); return; }
   try { if (!statSync(p).isFile()) throw 0; } catch { res.writeHead(404).end(); return; }
   res.writeHead(200, { 'content-type': types[extname(p)] ?? 'application/octet-stream' });
   createReadStream(p).pipe(res);
-}).listen(0);
+}).listen(0, '127.0.0.1');
+await new Promise(r => server.once('listening', r));
 const port = server.address().port;
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 300, height: 160 } });
-for (const id of ids) {
-  await page.goto(`http://127.0.0.1:${port}/index.html?src=${id}.rc&handoffDelayMs=0`);
-  await page.waitForSelector('[data-rc-player-state="ready"],[data-rc-player-state="error"]', { timeout: 90000 });
-  await page.waitForTimeout(500);
-  await page.screenshot({ path: join(out, `${id}.png`), omitBackground: true });
-  console.log(id, await page.evaluate(() => document.querySelector('[data-rc-player-state]')?.getAttribute('data-rc-player-state')));
+const failed = [];
+try {
+  const page = await browser.newPage({ viewport: { width: 300, height: 160 } });
+  for (const id of ids) {
+    await page.goto(`http://127.0.0.1:${port}/index.html?src=${encodeURIComponent(id)}.rc&handoffDelayMs=0`);
+    await page.waitForSelector('[data-rc-player-state="ready"],[data-rc-player-state="error"]', { timeout: 90000 });
+    const state = await page.evaluate(() => document.querySelector('[data-rc-player-state]')?.getAttribute('data-rc-player-state'));
+    console.log(id, state);
+    if (state !== 'ready') { failed.push(id); continue; }
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: join(out, `${id}.png`), omitBackground: true });
+  }
+} finally {
+  await browser.close();
+  server.close();
 }
-await browser.close(); server.close();
+if (failed.length) {
+  console.error(`not ready, no screenshot: ${failed.join(', ')}`);
+  process.exit(1);
+}
