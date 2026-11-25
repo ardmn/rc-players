@@ -12,8 +12,16 @@ the offset child came out opaque on the JVM and in the browser. Android's render
 alpha on, so AndroidX's player fades it.
 
 The player still places an offset with a layer by default, so an animated offset moves without
-redrawing its ancestors. Only under a `ModulateAlpha` layer on Skiko (JVM, Wasm, Apple) is it placed
-without one; on Android it always keeps the layer.
+redrawing its ancestors. Only an offset drawn into a `ModulateAlpha` layer on Skiko (JVM, Wasm,
+Apple) is placed without one, and only while that layer's alpha is below 1 and it has no blur: a
+blurred layer composites through a paint that carries its alpha, so a child layer gets the alpha
+once there, and a child placed without a layer would get it twice. The player decides this each
+time the offset is placed, so an alpha or blur that animates is followed. On Android it always
+keeps the layer.
+
+Without that layer, a child placed with an offset inside a fading layer is part of the layer's
+recording: if it redraws often (a clock-driven canvas, say), the whole `ModulateAlpha` layer is
+recorded again each time.
 
 | lane | strip |
 | --- | --- |
@@ -29,15 +37,29 @@ own, so the blue shows through the red, as in `renders/cmp-compositing-strategy/
 lane draws that overlap as `Offscreen` would. That is a separate divergence, and this change does
 not touch it.
 
-## Known limitation
+## Known limitations
 
-Only the offset is fixed. Any other child that gets a layer of its own still misses a `ModulateAlpha`
-parent's alpha on Skiko and is drawn opaque: a clipped child (`RcClipRectModifier`,
-`RcRoundedClipRectModifier`), a scroll container, a nested `RcGraphicsLayerModifier`, a component
-offscreen buffer (`RcComponentOffscreen.kt`) and a visibility transition (`RcVisibilityTransition.kt`).
+Only offsets are fixed. Any other child that gets a layer of its own still misses a `ModulateAlpha`
+parent's alpha on Skiko and is drawn opaque:
+
+- a clipped child (`RcClipRectModifier`, `RcRoundedClipRectModifier`);
+- a scroll container;
+- a nested `RcGraphicsLayerModifier`;
+- a component offscreen buffer (`RcComponentOffscreen.kt`);
+- a visibility transition (`RcVisibilityTransition.kt`);
+- an image, which is drawn inside `clipToBounds()`;
+- a component with a `MEASURE` layout compute, which is wrapped in `clipToBounds()`;
+- an embedded document, whose player is wrapped in `clipToBounds()` (`RcEmbeddedDocuments.kt`);
+- a marquee, because `basicMarquee` places its content with a layer.
+
 `RcGraphicsLayerCompositingRenderTest.aClippedChildOfAModulateAlphaLayerStillMissesItsAlpha` pins
-the clip case as it is drawn today. The cause is in Compose Multiplatform's Skiko `GraphicsLayer`,
-not in this player.
+the clip case as it is drawn today.
+
+With a blur on the `ModulateAlpha` layer, Skiko fades the layer's own draws twice (to a quarter
+at half alpha) where AndroidX fades them once. The offset child is faded once, as in AndroidX.
+`anOffsetChildOfABlurredModulateAlphaLayerIsFadedOnce` pins both.
+
+All of these come from Compose Multiplatform's Skiko `GraphicsLayer`, not from this player.
 
 ## Reproducing
 
@@ -76,5 +98,10 @@ backends to anti-alias differently. Only the PNG encoding of the raw captures di
 Playwright captures are in `raw/`.
 
 The regression tests are in `RcGraphicsLayerCompositingRenderTest`:
-`anOffsetChildIsFadedWithItsParentLayer` covers the fix, and
-`anOffsetKeepsItsLayerOutsideAModulateAlphaLayer` checks that the default keeps the layer.
+`anOffsetChildIsFadedWithItsParentLayer` covers the fix.
+`anOffsetChildOfABlurredModulateAlphaLayerIsFadedOnce` and
+`anOffsetChildStaysFadedOnceWhileTheBlurChanges` cover a blurred layer, and
+`thePressHandlerOffsetsOfAModulateAlphaChildAreFaded` and
+`anOffsetThatMovesAfterTheFirstFrameIsStillFaded` cover the press handlers' offsets and a moving
+offset. `anOffsetKeepsItsLayerOutsideAModulateAlphaLayer` checks, through the player, that an
+offset outside one keeps its layer.
