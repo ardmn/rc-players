@@ -186,9 +186,16 @@ internal fun rcConicAsQuads(
 }
 
 /**
- * Whether a `CompositingStrategy.ModulateAlpha` graphics layer leaves its child layers at full
- * alpha. Skiko fades only the layer's own draw calls (`GraphicsLayer.record` sets the recording
- * canvas's `alphaMultiplier`) and draws a child layer into the raw Skia canvas; Android's render
- * nodes pass the alpha on to their children.
+ * Whether a `CompositingStrategy.ModulateAlpha` graphics layer can leave its child layers at full
+ * alpha. On Skiko it does whenever it has no paint of its own: `GraphicsLayer.record` fades only
+ * the layer's own draw calls (it sets the recording canvas's `alphaMultiplier`), and a child layer
+ * is drawn into the raw Skia canvas. A layer that `requiresLayer` (in this player, a blur) also
+ * composites the recording through a paint carrying the alpha, and then a child layer gets it once
+ * while the layer's own draws get it twice. `RcModulateAlphaLayer` decides per frame which case
+ * holds.
+ *
+ * `false` on Android: AndroidX's embedded player fades the offset child of such a layer
+ * (`renders/cmp-offset-modulate-alpha/`), and this player keeps its Android behaviour unchanged.
+ * This player's own Android rendering of that case has not been captured.
  */
 internal expect val rcChildLayersMissModulatedAlpha: Boolean
