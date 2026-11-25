@@ -156,7 +156,7 @@ tasks.register<Sync>("wasmPlayerDist") {
 }
 
 tasks.register<Sync>("wasmPlayerTestDist") {
-  description = "Assemble the Wasm player with an AndroidX-generated browser smoke fixture."
+  description = "Assemble the Wasm player with the browser smoke fixtures."
   group = "verification"
   dependsOn(
     "wasmPlayerDist",
@@ -182,6 +182,12 @@ tasks.register<Sync>("wasmPlayerTestDist") {
       .layout
       .projectDirectory
       .file("src/jvmTest/resources/rc-fixtures/ImageBackgroundRemoteButton-454x200.rc"),
+  )
+  // A document with a named colour variable (`WearM3.primary`), for the `namedValues` colour case.
+  from(
+    rootProject.layout.projectDirectory.file(
+      "Tests/RcNativePlayerCoreTests/Fixtures/CircularProgressRemote-384x384.rc",
+    ),
   )
   // A document using the draft 3D operations, for the `?extensions=3d` cases; written by
   // `Rc3DDocumentBuilder` and held current by `:rc-player-3d`'s `Rc3DFixtureTest`.

@@ -4,7 +4,8 @@
  *
  * `:rc-player-wasm:wasmPlayerTestDist` stages the optimized distribution next to four `.rc`
  * documents written by the *authoritative AndroidX writer* (`:rc-player-compat-tests`' fixture
- * generators) plus one committed image fixture — it was built that way so a browser smoke test
+ * generators) plus committed fixtures: an image button, a 3D scene, and the Swift core's circular
+ * progress document for the `namedValues` colour case — it was built that way so a browser smoke test
  * could run against real writer output, and then nothing opened it (#77). This is the thing that
  * opens it.
  *
@@ -68,7 +69,7 @@ const COMMON_QUERY = 'handoffDelayMs=0';
  * changed — so it should be a deliberate edit here too, in the same commit, rather than something
  * a presence check waves through.
  */
-const EXPECTED_CONTRACT_VERSION = 1;
+const EXPECTED_CONTRACT_VERSION = 2;
 
 const CASES = [
   {
@@ -144,6 +145,23 @@ const CASES = [
     query: `src=androidx-baseline.rc&${COMMON_QUERY}`,
     swapTo: 'androidx-layout.rc',
     swapAsBytes: true,
+  },
+  {
+    // `?namedValues=` colours, end to end through the shipped bundle's `js(...)` flattening, which no
+    // Kotlin test reaches. Each spelling is compared with the others, never with a stored image, so
+    // a Skia or font change cannot fail it; the override must also change the render, or a bundle
+    // that dropped every value would pass.
+    name: 'named-colour-spellings',
+    description: '`?namedValues=` colour as #AARRGGBB, #RRGGBB and an ARGB number draws alike',
+    namedColour: {
+      src: 'CircularProgressRemote-384x384.rc',
+      name: 'WearM3.primary',
+      reference: '#FFFF8800',
+      expectRgb: 0xff8800,
+      // The last three only agree with `parseColor` in the shipped bundle if the Kotlin/Wasm number
+      // and trim paths match JavaScript: numbers that wrap past 32 bits, and JS-only whitespace.
+      sameAs: ['#FF8800', 'FFFF8800', 0xffff8800, -30720, 8589903872, 4294936576.5, '\uFEFF#FF8800\u3000'],
+    },
   },
   {
     // `rc-cmp-player.js`, the library a page includes instead of driving the iframe by hand. It
@@ -387,19 +405,58 @@ function countOffscreenWebGl2() {
   };
 }
 
-/** Render [query] in a fresh page and return its screenshot, for [compareRenders]. */
+/**
+ * Hold the version [settled] read off the page to [EXPECTED_CONTRACT_VERSION].
+ *
+ * The contract version is published before anything is loaded, so it is readable even on the
+ * failure case. Hosts read `window.rcPlayerContractVersion`; a page driving an iframe reads the
+ * `data-rc-player-contract` attribute. Both must exist, agree, and carry the version this revision
+ * of the repository documents — a bundle that published a different one, or only one of the two,
+ * would break a host silently.
+ */
+function assertContractVersion(settled) {
+  if (settled.contractGlobal !== EXPECTED_CONTRACT_VERSION) {
+    throw new Error(
+      `window.rcPlayerContractVersion is ${JSON.stringify(settled.contractGlobal)}, expected ` +
+        `${EXPECTED_CONTRACT_VERSION} (bump EXPECTED_CONTRACT_VERSION here in the same commit ` +
+        'that bumps the contract)',
+    );
+  }
+  if (settled.contractAttribute !== String(EXPECTED_CONTRACT_VERSION)) {
+    throw new Error(
+      `data-rc-player-contract is ${JSON.stringify(settled.contractAttribute)}, expected ` +
+        `"${EXPECTED_CONTRACT_VERSION}"`,
+    );
+  }
+}
+
+/**
+ * Render [query] in a fresh page and return its screenshot, for [compareRenders] and the
+ * `namedColour` case. It is held to what the header promises of every case: the contract version,
+ * no uncaught exception, and nothing written to `console.error`.
+ */
 async function renderOnce(browser, origin, query) {
   const context = await browser.newContext({ viewport: VIEWPORT });
   try {
     const page = await context.newPage();
-    const errors = [];
-    page.on('pageerror', (error) => errors.push(String(error)));
+    const faults = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') faults.push(message.text());
+    });
+    page.on('pageerror', (error) => faults.push(String(error)));
     await page.goto(`${origin}/index.html?${query}`, { waitUntil: 'domcontentloaded' });
-    const settled = await waitForSettled(page, () => errors);
+    const settled = await waitForSettled(page, () => faults);
+    assertContractVersion(settled);
     if (settled.state !== 'ready') {
-      throw new Error(`the comparison render failed: ${settled.error ?? 'unknown error'}`);
+      throw new Error(`the render of ?${query} failed: ${settled.error ?? 'unknown error'}`);
     }
-    return PNG.sync.read(await page.screenshot());
+    const screenshot = PNG.sync.read(await page.screenshot());
+    // One more frame, so an error logged just after the screenshot is still caught.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+    if (faults.length > 0) {
+      throw new Error(`the render of ?${query} reported errors:\n  ${faults.join('\n  ')}`);
+    }
+    return screenshot;
   } finally {
     await context.close();
   }
@@ -445,6 +502,7 @@ function compareRenders(a, b) {
 }
 
 async function runCase(browser, origin, testCase) {
+  if (testCase.namedColour) return runNamedColourCase(browser, origin, testCase.namedColour);
   const context = await browser.newContext({ viewport: VIEWPORT });
   const page = await context.newPage();
   if (testCase.expectWebGl2DepthRenderer) await page.addInitScript(countOffscreenWebGl2);
@@ -478,24 +536,7 @@ async function runCase(browser, origin, testCase) {
     await page.goto(`${origin}/index.html?${testCase.query}`, { waitUntil: 'domcontentloaded' });
     let settled = await waitForSettled(page, watched);
 
-    // The contract version is published before anything is loaded, so it is readable even on the
-    // failure case. Hosts read `window.rcPlayerContractVersion`; a page driving an iframe reads the
-    // `data-rc-player-contract` attribute. Both must exist, agree, and carry the version this
-    // revision of the repository documents — a bundle that published a different one, or only one
-    // of the two, would break a host silently.
-    if (settled.contractGlobal !== EXPECTED_CONTRACT_VERSION) {
-      throw new Error(
-        `window.rcPlayerContractVersion is ${JSON.stringify(settled.contractGlobal)}, expected ` +
-          `${EXPECTED_CONTRACT_VERSION} (bump EXPECTED_CONTRACT_VERSION here in the same commit ` +
-          'that bumps the contract)',
-      );
-    }
-    if (settled.contractAttribute !== String(EXPECTED_CONTRACT_VERSION)) {
-      throw new Error(
-        `data-rc-player-contract is ${JSON.stringify(settled.contractAttribute)}, expected ` +
-          `"${EXPECTED_CONTRACT_VERSION}"`,
-      );
-    }
+    assertContractVersion(settled);
 
     if (expectsError) {
       if (settled.state !== 'error') {
@@ -575,6 +616,79 @@ async function runCase(browser, origin, testCase) {
   } finally {
     await context.close();
   }
+}
+
+/** The query that shows [spec]'s document with its colour variable overridden by [value]. */
+function namedColourQuery(spec, value) {
+  const namedValues = [{ kind: 'color', name: spec.name, value }];
+  return (
+    `src=${spec.src}&namedValues=${encodeURIComponent(JSON.stringify(namedValues))}&` +
+    COMMON_QUERY
+  );
+}
+
+/** How many pixels of [a] and [b] differ; both come from the same fixed viewport. */
+function differingPixels(a, b) {
+  if (a.width !== b.width || a.height !== b.height) {
+    throw new Error(`render sizes differ, ${a.width}x${a.height} and ${b.width}x${b.height}`);
+  }
+  let differ = 0;
+  for (let index = 0; index < a.data.length; index += 4) {
+    if (a.data.readUInt32BE(index) !== b.data.readUInt32BE(index)) differ += 1;
+  }
+  return differ;
+}
+
+/** How many pixels of [png] are within a few levels of the opaque colour `#RRGGBB` [rgb]. */
+function pixelsNear(png, rgb, tolerance = 8) {
+  const target = [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff];
+  let near = 0;
+  for (let index = 0; index < png.data.length; index += 4) {
+    if (target.every((value, channel) => Math.abs(png.data[index + channel] - value) <= tolerance)) {
+      near += 1;
+    }
+  }
+  return near;
+}
+
+/**
+ * The `namedColour` case. The same document under the same renderer draws the same pixels, so
+ * every spelling of one colour must match the reference render exactly; and the reference must
+ * differ from the document's own colour by at least `MINIMUM_INK_PIXELS`, which is what proves the
+ * override was applied at all.
+ */
+async function runNamedColourCase(browser, origin, spec) {
+  const plain = await renderOnce(browser, origin, `src=${spec.src}&${COMMON_QUERY}`);
+  const reference = await renderOnce(browser, origin, namedColourQuery(spec, spec.reference));
+  const changed = differingPixels(plain, reference);
+  if (changed < MINIMUM_INK_PIXELS) {
+    throw new Error(
+      `overriding ${spec.name} with ${spec.reference} changed only ${changed} pixels: the ` +
+        'override was not applied',
+    );
+  }
+  // Changed is not enough: a reference drawn with a zero alpha also differs from the plain render.
+  // The override has to draw its own colour.
+  const drawn = pixelsNear(reference, spec.expectRgb);
+  if (drawn < MINIMUM_INK_PIXELS) {
+    throw new Error(
+      `the ${spec.reference} render has only ${drawn} pixels near ` +
+        `#${spec.expectRgb.toString(16).padStart(6, '0')}: the override did not draw its colour`,
+    );
+  }
+  for (const value of spec.sameAs) {
+    const render = await renderOnce(browser, origin, namedColourQuery(spec, value));
+    const differ = differingPixels(reference, render);
+    if (differ !== 0) {
+      throw new Error(
+        `${JSON.stringify(value)} drew ${differ} pixels differently from ` +
+          `${JSON.stringify(spec.reference)}`,
+      );
+    }
+  }
+  return {
+    note: `${drawn} px drawn in the override's colour; ${spec.sameAs.length} other spellings identical`,
+  };
 }
 
 /** The `embed` case: drive the library from a host page, as a site including it would. */

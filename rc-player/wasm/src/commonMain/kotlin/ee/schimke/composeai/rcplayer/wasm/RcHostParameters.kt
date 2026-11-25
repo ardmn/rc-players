@@ -2,6 +2,7 @@ package ee.schimke.composeai.rcplayer.wasm
 
 import ee.schimke.composeai.rcplayer.runtime.RcHostValueType
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
+import kotlin.math.truncate
 
 /**
  * Pure parsing for the browser host's page parameters, kept out of `Main.kt` so it runs under a JVM
@@ -140,17 +141,81 @@ internal val EMBED_TYPE_NAMES: List<String> =
  * a boolean, mirroring AndroidX, where `setNamedBooleanOverride` is a separate call; the player
  * stores it as the integer 1 or 0. It does not validate: anything but `true` is false, as the embed
  * contract documents.
+ *
+ * [isNumber] says the host passed `value` as a JSON number rather than a string; only `color` reads
+ * the two differently (see [argbFromNumber]).
  */
-internal fun parseNamedValue(typeName: String, value: String): RcNamedValue? =
+internal fun parseNamedValue(
+  typeName: String,
+  value: String,
+  isNumber: Boolean = false,
+): RcNamedValue? =
   when (if (typeName in EMBED_TYPE_NAMES) RcHostValueType.ofName(typeName) else null) {
     RcHostValueType.STRING -> RcNamedValue.Text(value)
     RcHostValueType.FLOAT -> value.toFloatOrNull()?.let(RcNamedValue::FloatValue)
     RcHostValueType.INT -> value.toIntOrNull()?.let(RcNamedValue::Integer)
     RcHostValueType.BOOLEAN -> RcNamedValue.BooleanValue(value == "true")
     RcHostValueType.COLOR ->
-      value.removePrefix("#").toULongOrNull(16)?.toInt()?.let(RcNamedValue::Color)
+      (if (isNumber) argbFromNumber(value) else parseArgbColor(value))?.let(RcNamedValue::Color)
     RcHostValueType.LONG -> value.toLongOrNull()?.let(RcNamedValue::LongValue)
     RcHostValueType.IMAGE,
     RcHostValueType.FLOAT_ARRAY,
     null -> null
   }
+
+/**
+ * A `color` value as ARGB: `RRGGBB`, which is opaque, or `AARRGGBB`, each with or without a leading
+ * `#` and surrounding whitespace as JavaScript's `trim` sees it — the forms
+ * docs/design/RC_PLAYER_EMBED.md lists, read as the web player's `HostApi.parseColor` reads a
+ * string. Null for anything else, so the element is dropped like any other value that does not
+ * parse.
+ */
+internal fun parseArgbColor(value: String): Int? {
+  val hex =
+    ARGB_COLOR_PATTERN.matchEntire(value.trim(Char::isJsWhitespace))?.groupValues?.get(1)
+      ?: return null
+  val argb = hex.toLong(radix = 16)
+  return (if (hex.length == 6) argb or 0xFF000000L else argb).toInt()
+}
+
+/**
+ * A `color` passed as a JSON number, which is the ARGB itself (`0xFFFF8800`), as the web player's
+ * `HostApi.parseColor` reads one with `v | 0`: JavaScript's ToInt32, which truncates a fraction and
+ * wraps the integer modulo 2^32, so `0xFFFF8800` and its signed form `-30720` are the same colour
+ * and `0x1FFFFFFFF` is `-1`. [value] is the number as JavaScript's `String` writes it. Null when it
+ * is not finite (`parseColor` then tries it as hex, which never matches), so the element is
+ * dropped.
+ */
+internal fun argbFromNumber(value: String): Int? {
+  val number = value.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return null
+  // `%` on doubles is exact, and leaves an integer of magnitude below 2^32 whose low 32 bits are
+  // ToInt32's result.
+  return (truncate(number) % 4_294_967_296.0).toLong().toInt()
+}
+
+/**
+ * Whether JavaScript's `String.prototype.trim` removes [this]: its WhiteSpace and LineTerminator
+ * sets, which are tab, U+000B, U+000C, the byte order mark U+FEFF, the space separators (Zs), and
+ * LF, CR, U+2028 and U+2029. Kotlin's `trim()` differs both ways: it keeps U+FEFF and removes the
+ * information separators U+001C-U+001F.
+ */
+private fun Char.isJsWhitespace(): Boolean =
+  when (this) {
+    '\t',
+    '\n',
+    '\u000B',
+    '\u000C',
+    '\r',
+    ' ',
+    '\u00A0',
+    '\u1680',
+    '\u2028',
+    '\u2029',
+    '\u202F',
+    '\u205F',
+    '\u3000',
+    '\uFEFF' -> true
+    else -> this in '\u2000'..'\u200A'
+  }
+
+private val ARGB_COLOR_PATTERN = Regex("#?([0-9a-fA-F]{6}|[0-9a-fA-F]{8})")
