@@ -131,7 +131,10 @@ a type mismatch, and before the player view has loaded a document — the contro
 declared names when the player is built, so `names` is empty until then. The Kotlin player and the
 native Swift fallback answer alike: the fallback checks each write against the document's
 declarations up front, so a `false` is never queued and a `true` is applied once the native session
-opens, however long its resources take. The fallback reads those declarations off the main thread,
+opens, however long its resources take, or, while the scene is in the background or the input queue
+is full, once the session takes input again. The fallback reopens its document after a background
+with input outstanding and on density or configuration changes; each reopened session is seeded
+with every stored value before its first frame. The fallback reads those declarations off the main thread,
 so its `names` fill in, and its writes start being accepted, shortly after the view loads rather
 than at once. Values already accepted survive a document change when the new document declares the
 same variable with the same type (under the name it resolves to), and are kept while the fallback is
