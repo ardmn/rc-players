@@ -351,11 +351,12 @@ self-contained, pure-Swift local package containing the native sources with no b
 gives evaluators a small pinned, offline-resolvable artifact without changing the supported CMP
 product.
 
-The native player's tests are two SwiftPM test targets written with swift-testing:
-`RcNativePlayerCoreTests` for the pure-Swift document core and `RcNativePlayerUIKitTests` for the
-platform layer. Run them on the Mac with `RC_COMPOSE_PLAYER_NATIVE_ONLY=1 swift test` — native-only
-mode keeps the Kotlin binary target out of the package graph — and on an iOS simulator with
-`scripts/check-native-swift-ios-tests.sh`. On Linux the manifest declares only the core and its
+The package's tests are three SwiftPM test targets written with swift-testing:
+`RcNativePlayerCoreTests` for the pure-Swift document core, `RcNativePlayerUIKitTests` for the
+platform layer and `RcComposePlayerSwiftUITests` for the SwiftUI overlay's controller backend for
+the native fallback. Run them on the Mac with `RC_COMPOSE_PLAYER_NATIVE_ONLY=1 swift test` —
+native-only mode keeps the Kotlin binary target out of the package graph — and on an iOS simulator
+with `scripts/check-native-swift-ios-tests.sh`. On Linux the manifest declares only the core and its
 tests, so `swift test --filter RcNativePlayerCoreTests` runs there too.
 
 [`samples/apple-player`](samples/apple-player/) is the full application check: a SwiftUI document
@@ -637,7 +638,7 @@ rather than by what the change touched:
 | `iosArm64` — device | | compiled only; a hosted runner has no device to run it on |
 | The shipped Wasm bundle, in a real browser | ✅ `scripts/wasm-smoke` | |
 | ABI gate (`checkKotlinAbi`), Apple klibs included — Kotlin/Native cross-compiles them on Linux | ✅ | ✅ |
-| Native Swift player tests (`RC_COMPOSE_PLAYER_NATIVE_ONLY=1 swift test`, and the same target on an iOS simulator) | | ✅, path-gated with the row below |
+| Swift package tests (`RC_COMPOSE_PLAYER_NATIVE_ONLY=1 swift test`, and the same targets on an iOS simulator) | | ✅, path-gated with the row below |
 | XCFramework link, Swift type check, Xcode packaging | | ✅, and **only** when the change can affect them |
 
 The Linux lane runs on every pull request and every push. The macOS lane runs on every push to

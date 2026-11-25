@@ -1,7 +1,7 @@
 [versions]
 # Keep Coil's Compose/Skiko requirements aligned with the player's CMP line.
 coil = "3.6.3"
-ktor = "3.6.1"
+ktor = "3.6.2"
 # Held at 2.4.0: CodeQL's Kotlin extractor doesn't support 2.4.10 yet — it aborts with
 # `Kotlin version too new`, which fails the `Analyze (java-kotlin)` job as a configuration error
 # and leaves the repo's main language unscanned. Bump once the CodeQL bundle catches up (the
@@ -21,7 +21,7 @@ kotlin = "2.4.21"
 # `configureKotlinCompatibility(...)`; remove the flag (and bump this to
 # `2.1.x`) when the removal lands and we're ready to drop 2.0.x consumers.
 kotlinCoreLibraries = "2.0.21"
-agp = "9.5.2"
+agp = "9.5.3"
 # Android levels for the published CMP player stack (`rc-player/*`). compileSdk follows the SDK the
 # stack's Compose artifacts compile against; minSdk is Compose's own floor, so the player adds none.
 rc-player-compileSdk = "37"
@@ -192,7 +192,7 @@ maven-publish = "0.37.0"
 # exist at the release version: `common-io` is published at 3.13.0 and absent at 3.15.0 and
 # 3.17.0, whose BOMs still map it to 3.13.0. Bumping this ref moves the BOM; the BOM moves the
 # modules.
-composeai-contracts = "3.46.0"
+composeai-contracts = "3.47.0"
 
 # compose-preview-daemon, for the two modules this build consumes from it: `data-fonts-google`
 # (the `(family, weight, italic) -> File` downloadable-font cache both vendored players share) and
@@ -207,7 +207,7 @@ composeai-contracts = "3.46.0"
 # that changed, so a coordinate is not guaranteed to exist at the release version: 3.13.0 ships
 # `data-layoutinspector-connector:3.13.0` but `data-fonts-google` is still at 3.12.0. The BOM maps
 # every module to the version it is actually published at for that release.
-composeai-preview-daemon = "3.29.0"
+composeai-preview-daemon = "3.29.1"
 
 [libraries]
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }

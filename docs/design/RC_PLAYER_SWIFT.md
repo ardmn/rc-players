@@ -125,20 +125,20 @@ struct LivePlayer: View {
 }
 ```
 
-Bare names resolve in the `USER:` namespace; explicitly namespaced declarations are accepted as
-written. Each setter returns `false` for an absent name or a type mismatch, and before the player
-view has loaded a document — the controller learns the declared names when the player is built, so
-`names` is empty until then. The Kotlin player and the native Swift fallback answer alike: the
-fallback checks each write against the document's declarations up front, so a `false` is never
-queued and a `true` is applied once the native session opens, however long its resources take.
-The fallback reads those declarations off the main thread, so its `names` fill in, and its writes
-start being accepted, shortly after the view loads rather than at once. Values already accepted
-survive a document change when the new document declares the same variable with the same type
-(under the name it resolves to), and are kept while the fallback is not showing a document. `setInteger` and `setBoolean` both
-target an integer variable: a Remote Compose boolean is an integer holding 1 or 0, as AndroidX's
-`setNamedBooleanOverride` stores it, and an integer outside the 32-bit range is refused. Metadata
-actions and
-text-valued named actions also expose a pre-parsed `event.url` convenience property.
+A bare name resolves to its `USER:` declaration when the document has one, and otherwise as written;
+an explicitly namespaced name is used as written. Each setter returns `false` for an absent name or
+a type mismatch, and before the player view has loaded a document — the controller learns the
+declared names when the player is built, so `names` is empty until then. The Kotlin player and the
+native Swift fallback answer alike: the fallback checks each write against the document's
+declarations up front, so a `false` is never queued and a `true` is applied once the native session
+opens, however long its resources take. The fallback reads those declarations off the main thread,
+so its `names` fill in, and its writes start being accepted, shortly after the view loads rather
+than at once. Values already accepted survive a document change when the new document declares the
+same variable with the same type (under the name it resolves to), and are kept while the fallback is
+not showing a document. `setInteger` and `setBoolean` both target an integer variable: a Remote
+Compose boolean is an integer holding 1 or 0, as AndroidX's `setNamedBooleanOverride` stores it, and
+an integer outside the 32-bit range is refused. Metadata actions and text-valued named actions also
+expose a pre-parsed `event.url` convenience property.
 
 ### Downloadable Google Fonts
 
