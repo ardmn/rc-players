@@ -143,6 +143,22 @@
       #expect(await eventually { isBoxShown(in: native.playerView) == true })
     }
 
+    /// The session a reopen opens shows the host's values in its very first frame, as the Kotlin
+    /// player seeds a new state with them, rather than the document's own values first.
+    @Test func theFirstFrameAfterAReopenAlreadyHasTheValues() async throws {
+      let player = try await player()
+      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(await eventually { isBoxShown(in: player.view) == true })
+
+      var firstFrames: [Bool?] = []
+      player.view.onSessionOpened = { [view = player.view] in
+        firstFrames.append(isBoxShown(in: view))
+      }
+      player.view.configureHostDensity(2)
+      #expect(await eventually { !player.view.isOpeningDocument })
+      #expect(firstFrames == [true])
+    }
+
     /// A new density reopens the session from the bytes; the values written before survive it.
     @Test func aReopenForANewDensityKeepsTheValues() async throws {
       let player = try await player()

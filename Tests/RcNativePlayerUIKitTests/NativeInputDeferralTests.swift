@@ -97,32 +97,56 @@
       for write in busy { #expect(await write.value == .accepted) }
     }
 
-    /// Every session opened after the first — here for a new density — is announced, so a host
-    /// can set its values again; the first one is not.
-    @Test func aReopenedSessionIsAnnounced() async throws {
+    /// Whether the document's box is on screen, or nil before the document has a view.
+    private func isBoxShown(in view: UIView) -> Bool? {
+      var pending: [UIView] = [view]
+      while !pending.isEmpty {
+        let next = pending.removeFirst()
+        if let component = next as? NativeComponentView,
+          let box = component.descendant(withID: NativeTestDocuments.boxID)
+        {
+          return !box.isHidden
+        }
+        pending.append(contentsOf: next.subviews)
+      }
+      return nil
+    }
+
+    /// A session reopened — here for a new density — starts from the seed, read as it opens, and
+    /// its first frame shows it; the opening releases waiting writes.
+    @Test func aReopenedSessionStartsFromTheSeedInItsFirstFrame() async throws {
       let view = try await openedView()
-      var reopened = 0
-      view.onSessionReopened = { reopened += 1 }
-      #expect(reopened == 0)
+      #expect(isBoxShown(in: view) == false)
+      var seedReads = 0
+      view.namedValueSeed = {
+        seedReads += 1
+        return [
+          (name: "shown", value: .integer(Self.visible)),
+          (name: "missing", value: .integer(1)),
+        ]
+      }
+      var firstFrames: [Bool?] = []
+      view.onSessionOpened = { [unowned view] in firstFrames.append(isBoxShown(in: view)) }
       let mark = view.inputAvailability.mark
       view.configureHostDensity(2)
       #expect(view.isOpeningDocument)
       for _ in 0..<1_000 where view.isOpeningDocument {
         try await Task.sleep(nanoseconds: 10_000_000)
       }
-      #expect(reopened == 1)
+      #expect(seedReads == 1)
+      // The undeclared "missing" is skipped, as a declined write is, and does not fail the open.
+      #expect(firstFrames == [true])
       #expect(view.inputAvailability.mark != mark)
     }
 
-    /// A first open that fails counts as an earlier session: the writes answered `.refused` while
-    /// it was failed are owed to the next session that opens, so that one is announced as a reopen.
-    @Test func anOpenAfterAFailedFirstOpenIsAnnouncedAsAReopen() async throws {
+    /// A session that opens after a failed first open starts from the seed too, so a write
+    /// answered `.refused` while the document was failed is shown once an open succeeds.
+    @Test func anOpenAfterAFailedFirstOpenStartsFromTheSeed() async throws {
       var errors: [RemoteComposeNativePlayerError] = []
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.shownBox(), resourceResolver: nil,
         onError: { errors.append($0) })
-      var reopened = 0
-      view.onSessionReopened = { reopened += 1 }
+      view.namedValueSeed = { [(name: "shown", value: .integer(Self.visible))] }
       // Invalid limits fail the open before it starts, so the first session never opens.
       var invalid = RemoteComposeNativeExecutionLimits.default
       invalid.maximumFrameWork = 0
@@ -130,12 +154,14 @@
       #expect(!view.isOpeningDocument && errors.count == 1)
       #expect(await view.submit(.integer(Self.visible), for: "shown") == .refused)
 
+      var firstFrames: [Bool?] = []
+      view.onSessionOpened = { [unowned view] in firstFrames.append(isBoxShown(in: view)) }
       view.configureExecutionLimits(.default)
       for _ in 0..<1_000 where view.isOpeningDocument {
         try await Task.sleep(nanoseconds: 10_000_000)
       }
       #expect(errors.count == 1)
-      #expect(reopened == 1)
+      #expect(firstFrames == [true])
     }
 
     /// A waiter is released when the player goes away, so nothing waits for a scene that will

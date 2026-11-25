@@ -270,8 +270,8 @@ also lives only as long as the session it was applied to. The player reopens its
 it returns from the background with input outstanding and when its density, compatibility policy,
 limits, resolvers, custom components or document change; the new session starts from the document's
 own values. A host driving the view directly writes its values again after such a change.
-`RemoteComposePlayerController` in the SwiftUI overlay keeps its values and replays them into every
-new session itself.
+`RemoteComposePlayerController` in the SwiftUI overlay keeps its values and seeds every new session
+with them before its first frame. A reopen still loses what the document's own actions changed.
 
 The default `.compatible` policy renders the supported subset and reports all known differences.
 `.strict` refuses to install a document view when any diagnostic is present, including a known

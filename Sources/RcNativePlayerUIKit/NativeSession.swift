@@ -97,9 +97,12 @@
     ///   - wallClock: the host's absolute time, for the first frame. See `NativeSwiftWallClock`.
     ///   - visibilityAnimations: whether custom visibility animations play; see
     ///     `NativeSwiftDocumentSession.setVisibilityAnimationsEnabled`.
+    ///   - namedValues: host values applied before the first frame is resolved, so that frame
+    ///     already shows them. One the document declines is skipped, as a declined write is.
     static func open(
       data: Data, maximumDocumentBytes: Int, hostDensity: Float = 1, hostFontScale: Float = 1,
-      wallClock: NativeSwiftWallClock? = nil, visibilityAnimations: Bool = true
+      wallClock: NativeSwiftWallClock? = nil, visibilityAnimations: Bool = true,
+      namedValues: [(name: String, value: RemoteComposeNativeNamedValue)] = []
     ) async throws -> (NativePlayerEngine, Frame) {
       guard data.count <= maximumDocumentBytes, data.count <= Int(Int32.max) else {
         throw RemoteComposeNativeLimitError.documentTooLarge(
@@ -110,6 +113,14 @@
         let session = try NativeSwiftDocumentSession.open(data: data)
         session.setHostDensity(hostDensity, fontScale: hostFontScale)
         session.setVisibilityAnimationsEnabled(visibilityAnimations)
+        for (name, value) in namedValues {
+          switch value {
+          case .float(let value): _ = session.setFloat(value, for: name)
+          case .text(let value): _ = session.setString(value, for: name)
+          case .color(let argb): _ = session.setColor(argb, for: name)
+          case .integer(let value): _ = session.setInteger(value, for: name)
+          }
+        }
         let frame = Frame(
           session: session,
           snapshot: try session.snapshot(wallClock: wallClock), wallClock: wallClock)

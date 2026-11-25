@@ -313,15 +313,14 @@
     /// Signals a caller holding a deferred write when to offer it again.
     @_spi(RemoteComposeController)
     public let inputAvailability = RemoteComposeNativeInputAvailability()
-    /// Called each time a session opens after an earlier open finished — the bytes were reopened
-    /// for the foreground, a new density, policy or resolver, or a new document, or the earlier
-    /// open failed. The new session starts from the document's own values, so a host that set
-    /// named variables, or had them refused while the document was failed, sets them again here.
+    /// The named values every session this player opens starts from, read as each open starts and
+    /// applied before its first frame is resolved — as the Kotlin player seeds a new state with its
+    /// host's values — so a reopen (for the foreground, a new density, policy, limits, resolver or
+    /// custom components) never shows the document's own values first. A value the document
+    /// declines is skipped silently, as a declined write is. Nil, or empty, opens with the
+    /// document's own values; a value written while the session opens goes through `submit`.
     @_spi(RemoteComposeController)
-    public var onSessionReopened: (() -> Void)?
-    /// Whether an open has finished before — a session opened, or the document failed without
-    /// one — so the next session to open is a reopen.
-    private var hasFinishedOpen = false
+    public var namedValueSeed: (() -> [(name: String, value: RemoteComposeNativeNamedValue)])?
     private let clock: any RemoteComposeNativePlayerClock
     private var animationTimeline = NativeAnimationTimeline()
     private var frameSchedule = NativeFrameSchedule.idle
@@ -488,9 +487,10 @@
     }
 
     /// Whether a document is on its way to an open session: it is being opened, or will be once the
-    /// application returns to the foreground. While this holds, a named-variable write refused for
-    /// want of a session may yet be accepted; once it does not, the session is open (and accepts
-    /// input) or the document failed.
+    /// application returns to the foreground. While this holds, a named-variable write has no
+    /// session to reach and is answered `.deferred` (`set*` returns `false`): it may be accepted
+    /// once the session opens. Once this is false, the session is open (and accepts input) or the
+    /// document failed, and a write with no session is `.refused`.
     public var isOpeningDocument: Bool {
       switch state {
       case .loading, .awaitingForeground: return true
@@ -501,6 +501,11 @@
     /// Whether the open session is applying an input right now. A test hook: the input-deferral
     /// tests use it to move the scene to the background while an input is in flight.
     var isApplyingInput: Bool { openPresentation?.activity == .input }
+
+    /// Called as each session opens, right after its first frame is installed and before anything
+    /// else runs on the main actor. A test hook: it lets a test read the first frame a session
+    /// shows rather than a later one.
+    var onSessionOpened: (() -> Void)?
 
     /// The open session that accepts input, whether or not an error is showing.
     private var openPresentation: NativePlayerPresentation? {
@@ -566,6 +571,7 @@
       let downloadableFontResolver = downloadableFontResolver
       let resourceCache = resourceCache
       let wallClock = clock.wallClock()
+      let namedValues = namedValueSeed?() ?? []
       // Reduce Motion stops the frames a visibility animation needs, so it lands at once instead.
       let visibilityAnimations = !UIAccessibility.isReduceMotionEnabled
       let task = Task { [weak self] in
@@ -573,7 +579,8 @@
           let (engine, frame) = try await NativePlayerEngine.open(
             data: data, maximumDocumentBytes: executionLimits.maximumDocumentBytes,
             hostDensity: hostDensity, hostFontScale: hostFontScale,
-            wallClock: wallClock, visibilityAnimations: visibilityAnimations)
+            wallClock: wallClock, visibilityAnimations: visibilityAnimations,
+            namedValues: namedValues)
           try Task.checkCancellation()
           let model = try NativeDocument(
             frame: frame, timeSeconds: 0, limits: executionLimits,
@@ -623,11 +630,9 @@
       if scheduledFramePending { requestScheduledFrame() }
     }
 
-    /// A session has opened: tell the host when it replaces an earlier one, and release the writes
-    /// that waited for it.
+    /// A session has opened: release the writes that waited for it.
     private func announceOpened() {
-      if hasFinishedOpen { onSessionReopened?() }
-      hasFinishedOpen = true
+      onSessionOpened?()
       inputAvailability.signal()
     }
 
@@ -1009,8 +1014,7 @@
       state = .failed(presentation)
       if presentation == nil {
         // The open failed. A write waiting for it gets its answer, `.refused`, from the failed
-        // state, and the next session to open is announced as a reopen so it gets them again.
-        hasFinishedOpen = true
+        // state; the next session to open starts from `namedValueSeed` again.
         inputAvailability.signal()
       }
       scheduledFramePending = false

@@ -160,26 +160,24 @@ import Testing
   }
 
   /// A native player that opens its document anew — back from the background, or for a new
-  /// density — starts from the document's own values, so every value written so far is handed to
-  /// the update handler again, as the Kotlin player re-applies its values when it is rebuilt.
-  @Test func replayHandsEveryStoredValueToTheUpdateHandlerAgain() {
+  /// density — seeds the new session with every value written so far, by the name the document
+  /// declares and as the native player takes it (a boolean is the integer 1 or 0).
+  @Test func seedValuesAreEveryStoredValueOnceAHandlerIsInstalled() {
     let controller = RemoteComposePlayerController()
-    controller.backend.replay()  // Nothing attached or installed: nothing to hand over.
+    #expect(controller.backend.seedValues.isEmpty)  // Nothing attached or installed.
     controller.backend.attach(Self.declarations)
     #expect(controller.setInteger(5, for: "count"))
     #expect(controller.setBoolean(true, for: "enabled"))
+    #expect(controller.backend.seedValues.isEmpty, "not yet handed to a player")
 
-    var applied: [String: Value] = [:]
-    controller.backend.installUpdateHandler { applied[$0] = $1 }
-    applied.removeAll()
-    controller.backend.replay()
-    #expect(applied == ["USER:count": .integer(5), "USER:enabled": .boolean(true)])
+    controller.backend.installUpdateHandler { _, _ in }
+    let seeded = controller.backend.seedValues
+    #expect(seeded.map(\.name) == ["USER:count", "USER:enabled"])
+    #expect(seeded.map(\.value) == [.integer(5), .integer(1)])
 
     // Without a handler — the player is being rebuilt — the values wait for the next one.
     controller.backend.installUpdateHandler(nil)
-    applied.removeAll()
-    controller.backend.replay()
-    #expect(applied.isEmpty)
+    #expect(controller.backend.seedValues.isEmpty)
   }
 
   /// A deferred value — the document is still opening, the scene is in the background, or the

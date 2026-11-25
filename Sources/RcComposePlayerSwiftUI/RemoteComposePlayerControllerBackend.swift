@@ -74,8 +74,10 @@ protocol ControllerBackendProtocol: AnyObject {
   }
 #elseif canImport(RcNativePlayerUIKit)
   /// Checks each write against the attached document's declarations — the same check the native
-  /// session makes — and hands an accepted value to the native player, which applies it once its
-  /// asynchronous session opens.
+  /// session makes — and hands an accepted value to the native player, which applies it once it can:
+  /// after its asynchronous session opens, its scene returns from the background, or its input
+  /// queue has room. Every session the player opens again starts from the values held here
+  /// (`seedValues`).
   @MainActor
   final class NativeControllerBackend: ControllerBackendProtocol {
     /// The attached document's declarations; none until a native player has loaded a document.
@@ -125,19 +127,25 @@ protocol ControllerBackendProtocol: AnyObject {
     /// removes it with `nil`.
     func installUpdateHandler(_ handler: ((String, ControllerNamedValue) -> Void)?) {
       updateHandler = handler
-      replay()
-    }
-
-    /// Hands every value written so far to the installed update handler again, as the Kotlin
-    /// player re-applies its values when it is rebuilt: the native player opened its document
-    /// anew, and its new session holds only the document's own values. That includes values an
-    /// earlier session refused, which the new session judges afresh. Does nothing while no
-    /// handler is installed.
-    func replay() {
-      guard let updateHandler else { return }
+      guard let handler else { return }
       for name in values.keys.sorted() {
         guard let value = values[name] else { continue }
-        updateHandler(name, value)
+        handler(name, value)
+      }
+    }
+
+    /// The values written so far, as a session the native player opens again starts from them —
+    /// including values an earlier session refused, which the new session judges afresh. Empty
+    /// while no update handler is installed: the values are not yet re-keyed for the player's
+    /// document.
+    ///
+    /// The Kotlin player builds its state once per document, seeded with the host's values, and
+    /// keeps it through the background and a density change. The native player reopens its bytes
+    /// for those, and its new session would otherwise start from the document's own values.
+    var seedValues: [(name: String, value: RemoteComposeNativeNamedValue)] {
+      guard updateHandler != nil else { return [] }
+      return values.keys.sorted().compactMap { name in
+        values[name].map { (name: name, value: $0.nativeValue) }
       }
     }
   }
@@ -172,11 +180,11 @@ protocol ControllerBackendProtocol: AnyObject {
     /// takes. Nothing polls while it waits. A refusal is the session's final answer — the document
     /// is failed, declines the value (which reports nothing), or failed applying it (reported
     /// through `onError`) — and is not offered to that session again. The value stays with the
-    /// controller, as on the Kotlin player, and the replay offers it to each new session the player
-    /// opens, which judges it afresh: a value that fails an execution limit is reported once per
-    /// session, not once per retry. It stops as soon as the player is gone,
-    /// the task is cancelled, or `isCurrent` says a newer value for this name has started or the
-    /// player was rebuilt.
+    /// controller, as on the Kotlin player, and each new session the player opens starts from it
+    /// (`seedValues`) and judges it afresh: a value that fails an execution limit is reported once
+    /// per session, not once per retry. It stops as soon as the player is gone, the task is
+    /// cancelled, or `isCurrent` says a newer value for this name has started or the player was
+    /// rebuilt.
     @MainActor
     func deliver<Target: NativeNamedValueTarget>(
       for name: String, to target: () -> Target?, isCurrent: () -> Bool
