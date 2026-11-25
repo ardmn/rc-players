@@ -6,11 +6,11 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.window.ComposeUIViewController
-import ee.schimke.composeai.rcplayer.protocol.RcNamedVariable
 import ee.schimke.composeai.rcplayer.protocol.RcOperationProfiles
 import ee.schimke.composeai.rcplayer.runtime.RcDocumentCapabilities
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
 import ee.schimke.composeai.rcplayer.runtime.RcPlayerEvent
+import ee.schimke.composeai.rcplayer.runtime.fitsWireType
 import platform.Foundation.NSBundle
 import platform.Foundation.NSLog
 import platform.Foundation.NSNumber
@@ -40,21 +40,18 @@ public class RcComposePlayerController {
 
   /** Sets a float variable, returning false when [name] is absent or has a different type. */
   public fun setFloat(name: String, value: Float): Boolean =
-    set(name, RcNamedVariable.FLOAT_TYPE, RcNamedValue.FloatValue(value))
+    set(name, RcNamedValue.FloatValue(value))
 
   /** Sets a string variable, returning false when [name] is absent or has a different type. */
-  public fun setString(name: String, value: String): Boolean =
-    set(name, RcNamedVariable.STRING_TYPE, RcNamedValue.Text(value))
+  public fun setString(name: String, value: String): Boolean = set(name, RcNamedValue.Text(value))
 
   /**
    * Sets an ARGB colour variable, returning false when [name] is absent or has a different type.
    */
-  public fun setColor(name: String, argb: Int): Boolean =
-    set(name, RcNamedVariable.COLOR_TYPE, RcNamedValue.Color(argb))
+  public fun setColor(name: String, argb: Int): Boolean = set(name, RcNamedValue.Color(argb))
 
   /** Sets an integer variable, returning false when [name] is absent or has a different type. */
-  public fun setInteger(name: String, value: Int): Boolean =
-    set(name, RcNamedVariable.INT_TYPE, RcNamedValue.Integer(value))
+  public fun setInteger(name: String, value: Int): Boolean = set(name, RcNamedValue.Integer(value))
 
   /**
    * Sets a boolean variable, returning false when [name] is absent or has a different type.
@@ -63,7 +60,7 @@ public class RcComposePlayerController {
    * `setNamedBooleanOverride` writes it, so [name] must be declared with the integer type.
    */
   public fun setBoolean(name: String, value: Boolean): Boolean =
-    set(name, RcNamedVariable.INT_TYPE, RcNamedValue.BooleanValue(value))
+    set(name, RcNamedValue.BooleanValue(value))
 
   /**
    * Attaches a new document's declarations. Each stored value is re-keyed under the name the new
@@ -76,7 +73,7 @@ public class RcComposePlayerController {
     types = capabilities.namedValues
     for ((key, value) in values.toMap()) {
       val resolved = declaredName(key)
-      if (resolved == null || !value.matchesType(types[resolved])) {
+      if (resolved == null || !value.fitsWireType(types[resolved])) {
         values.remove(key)
       } else if (resolved != key) {
         values.remove(key)
@@ -85,9 +82,9 @@ public class RcComposePlayerController {
     }
   }
 
-  private fun set(name: String, expectedType: Int, value: RcNamedValue): Boolean {
+  private fun set(name: String, value: RcNamedValue): Boolean {
     val declaredName = declaredName(name) ?: return false
-    if (types[declaredName] != expectedType) return false
+    if (!value.fitsWireType(types[declaredName])) return false
     values[declaredName] = value
     return true
   }
@@ -107,17 +104,6 @@ public class RcComposePlayerController {
     return resolved.takeIf { it in types }
   }
 }
-
-private fun RcNamedValue.matchesType(type: Int?): Boolean =
-  when (this) {
-    is RcNamedValue.Text -> type == RcNamedVariable.STRING_TYPE
-    is RcNamedValue.FloatValue -> type == RcNamedVariable.FLOAT_TYPE
-    is RcNamedValue.Color -> type == RcNamedVariable.COLOR_TYPE
-    is RcNamedValue.Integer -> type == RcNamedVariable.INT_TYPE
-    is RcNamedValue.LongValue -> type == RcNamedVariable.LONG_TYPE
-    is RcNamedValue.BooleanValue -> type == RcNamedVariable.INT_TYPE
-    is RcNamedValue.FloatArrayValue -> type == RcNamedVariable.FLOAT_ARRAY_TYPE
-  }
 
 private var didWarnAboutHighRefreshRatePlist = false
 

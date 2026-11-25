@@ -114,13 +114,19 @@ class RcStructuralDiffTest {
         operations =
           card.operations +
             RcTextData(99, "More") +
-            RcNamedVariable(98, RcNamedVariable.COLOR_TYPE, "accent"),
+            RcNamedVariable(98, RcNamedVariable.COLOR_TYPE, "accent") +
+            RcNamedVariable(97, RcNamedVariable.INT_TYPE, "count") +
+            RcNamedVariable(96, RcNamedVariable.FLOAT_ARRAY_TYPE, "series"),
       )
     val summary = card.structuralDiff(after).summary
     assertContains(summary, "header DOC_WIDTH: 200 -> 300")
     assertContains(summary, "header DOC_HEIGHT: removed (was 100)")
-    assertContains(summary, "operations 13 -> 15: +1 DATA_TEXT, +1 NAMED_VARIABLE")
-    assertContains(summary, "named value: added \"accent\" (color)")
+    assertContains(summary, "operations 13 -> 17: +1 DATA_TEXT, +3 NAMED_VARIABLE")
+    // Every wire type is named through RcHostValueType, not only string/float/color.
+    assertContains(
+      summary,
+      "named value: added \"accent\" (color), \"count\" (int), \"series\" (float[])",
+    )
   }
 
   @Test

@@ -20,6 +20,9 @@ kotlin {
   jvm()
 
   sourceSets {
+    // The named-value parsing in RcHostParameters.kt builds RcNamedValues. The runtime is plain
+    // Kotlin with no Compose dependency, so the JVM test target can take it.
+    commonMain.dependencies { implementation(project(":rc-player-runtime")) }
     commonTest.dependencies { implementation(kotlin("test")) }
     wasmJsMain.dependencies {
       implementation(project(":rc-player-compose"))

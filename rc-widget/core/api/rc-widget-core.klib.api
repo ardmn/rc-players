@@ -17,6 +17,8 @@ final enum class ee.schimke.composeai.rcwidget/RcBindingType : kotlin/Enum<ee.sc
 
     final val entries // ee.schimke.composeai.rcwidget/RcBindingType.entries|#static{}entries[0]
         final fun <get-entries>(): kotlin.enums/EnumEntries<ee.schimke.composeai.rcwidget/RcBindingType> // ee.schimke.composeai.rcwidget/RcBindingType.entries.<get-entries>|<get-entries>#static(){}[0]
+    final val hostType // ee.schimke.composeai.rcwidget/RcBindingType.hostType|{}hostType[0]
+        final fun <get-hostType>(): ee.schimke.composeai.rcplayer.runtime/RcHostValueType // ee.schimke.composeai.rcwidget/RcBindingType.hostType.<get-hostType>|<get-hostType>(){}[0]
     final val wireName // ee.schimke.composeai.rcwidget/RcBindingType.wireName|{}wireName[0]
         final fun <get-wireName>(): kotlin/String // ee.schimke.composeai.rcwidget/RcBindingType.wireName.<get-wireName>|<get-wireName>(){}[0]
     final val wireType // ee.schimke.composeai.rcwidget/RcBindingType.wireType|{}wireType[0]
