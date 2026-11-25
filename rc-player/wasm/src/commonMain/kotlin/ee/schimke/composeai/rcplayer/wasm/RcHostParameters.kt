@@ -1,5 +1,8 @@
 package ee.schimke.composeai.rcplayer.wasm
 
+import ee.schimke.composeai.rcplayer.runtime.RcHostValueType
+import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
+
 /**
  * Pure parsing for the browser host's page parameters, kept out of `Main.kt` so it runs under a JVM
  * test: the host itself reaches the browser only through `js(...)`, which nothing but a browser can
@@ -118,4 +121,36 @@ internal fun parse3DRendererParameter(raw: String?): Rc3DRendererParameter =
     "software" -> Rc3DRendererParameter.Software
     "gpu" -> Rc3DRendererParameter.Gpu
     else -> Rc3DRendererParameter.Auto
+  }
+
+/**
+ * The `kind` names the embed contract accepts (docs/design/RC_PLAYER_EMBED.md, the `namedValues`
+ * row; a test keeps the two lists equal). Each resolves through [RcHostValueType], the one owner of
+ * host type names; the contract accepts only these spellings.
+ */
+internal val EMBED_TYPE_NAMES: List<String> =
+  listOf("string", "float", "dp", "int", "bool", "color", "long")
+
+/**
+ * One `?namedValues=` element's value as the player takes it, or null when [typeName] is not one of
+ * [EMBED_TYPE_NAMES] or [value] does not parse as it — the element is then dropped, as
+ * docs/design/RC_PLAYER_EMBED.md describes.
+ *
+ * `bool` is a [RcNamedValue.BooleanValue], as the iOS controller and the embedded live bridge write
+ * a boolean, mirroring AndroidX, where `setNamedBooleanOverride` is a separate call; the player
+ * stores it as the integer 1 or 0. It does not validate: anything but `true` is false, as the embed
+ * contract documents.
+ */
+internal fun parseNamedValue(typeName: String, value: String): RcNamedValue? =
+  when (if (typeName in EMBED_TYPE_NAMES) RcHostValueType.ofName(typeName) else null) {
+    RcHostValueType.STRING -> RcNamedValue.Text(value)
+    RcHostValueType.FLOAT -> value.toFloatOrNull()?.let(RcNamedValue::FloatValue)
+    RcHostValueType.INT -> value.toIntOrNull()?.let(RcNamedValue::Integer)
+    RcHostValueType.BOOLEAN -> RcNamedValue.BooleanValue(value == "true")
+    RcHostValueType.COLOR ->
+      value.removePrefix("#").toULongOrNull(16)?.toInt()?.let(RcNamedValue::Color)
+    RcHostValueType.LONG -> value.toLongOrNull()?.let(RcNamedValue::LongValue)
+    RcHostValueType.IMAGE,
+    RcHostValueType.FLOAT_ARRAY,
+    null -> null
   }

@@ -53,6 +53,7 @@ public final class ee/schimke/composeai/rcwidget/RcBindingType : java/lang/Enum 
 	public static final field TEXT Lee/schimke/composeai/rcwidget/RcBindingType;
 	public final fun accepts (Lee/schimke/composeai/rcplayer/edit/RcHardcodedValue;)Z
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getHostType ()Lee/schimke/composeai/rcplayer/runtime/RcHostValueType;
 	public final fun getWireName ()Ljava/lang/String;
 	public final fun getWireType ()I
 	public static fun valueOf (Ljava/lang/String;)Lee/schimke/composeai/rcwidget/RcBindingType;
