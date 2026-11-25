@@ -138,7 +138,8 @@ const namedValues = [
 const src = `player.html?src=doc.rc&namedValues=${encodeURIComponent(JSON.stringify(namedValues))}`;
 ```
 
-`value` is stringified, so a number or boolean may be passed unquoted. `color` accepts
+`value` is stringified, so a number or boolean may be passed unquoted. Pass numbers as JSON numbers
+or strings with a `.` decimal point, never `toLocaleString()` output: `"1,5"` is malformed and dropped. `color` accepts
 `#RRGGBB`/`#AARRGGBB` with or without the leading `#`.
 
 **`bool` is `"true"` or nothing.** It is the one kind that does not validate: the parser tests for

@@ -1,5 +1,11 @@
 package ee.schimke.composeai.rcplayer.wasm
 
+import ee.schimke.composeai.rcplayer.protocol.RcDocument
+import ee.schimke.composeai.rcplayer.protocol.RcHeader
+import ee.schimke.composeai.rcplayer.protocol.RcNamedVariable
+import ee.schimke.composeai.rcplayer.protocol.RcVersion
+import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
+import ee.schimke.composeai.rcplayer.runtime.RcPlayerState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -98,5 +104,47 @@ class RcHostParametersTest {
   fun neverEmpty() {
     assertEquals(listOf(FALLBACK_LANGUAGE_TAG), usableLanguageTags(emptyList(), ::isValid))
     assertEquals(listOf(FALLBACK_LANGUAGE_TAG), usableLanguageTags(listOf("", "@", "1"), ::isValid))
+  }
+
+  @Test
+  fun aBooleanIsTheBooleanValueTheIosControllerWrites() {
+    assertEquals(RcNamedValue.BooleanValue(true), parseNamedValue("bool", "true"))
+    assertEquals(RcNamedValue.BooleanValue(false), parseNamedValue("bool", "false"))
+    // The documented embed contract: a boolean does not validate, anything but `true` is false.
+    for (value in listOf("1", "TRUE", "yes", "")) {
+      assertEquals(RcNamedValue.BooleanValue(false), parseNamedValue("bool", value), value)
+    }
+  }
+
+  @Test
+  fun aBooleanStillReachesTheDocumentAsTheInteger1Or0() {
+    val document =
+      RcDocument(
+        RcHeader(RcVersion(1, 0, 0)),
+        listOf(RcNamedVariable(50, RcNamedVariable.INT_TYPE, "USER:enabled")),
+      )
+    fun applied(value: String): Int? {
+      val namedValue = parseNamedValue("bool", value)!!
+      return RcPlayerState(document, namedValues = mapOf("USER:enabled" to namedValue)).integer(50)
+    }
+    assertEquals(1, applied("true"))
+    assertEquals(0, applied("false"))
+  }
+
+  @Test
+  fun everyOtherKindParsesAsBefore() {
+    assertEquals(RcNamedValue.Text("Ready"), parseNamedValue("string", "Ready"))
+    assertEquals(RcNamedValue.FloatValue(0.75f), parseNamedValue("float", "0.75"))
+    assertEquals(RcNamedValue.FloatValue(12f), parseNamedValue("dp", "12"))
+    assertEquals(RcNamedValue.Integer(7), parseNamedValue("int", "7"))
+    assertEquals(RcNamedValue.Color(0xFFFF8800.toInt()), parseNamedValue("color", "#FFFF8800"))
+    assertEquals(
+      RcNamedValue.LongValue(1_700_000_000_000),
+      parseNamedValue("long", "1700000000000"),
+    )
+    assertNull(parseNamedValue("int", "seven"))
+    assertNull(parseNamedValue("color", "orange"))
+    assertNull(parseNamedValue("long", "soon"))
+    assertNull(parseNamedValue("unknown", "1"))
   }
 }
