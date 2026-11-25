@@ -182,6 +182,14 @@
     let wallClock: NativeSwiftWallClock?
   }
 
+  /// A session's first frame and what was built from it, before its resources are prepared.
+  private struct NativeOpenedFirstFrame {
+    let engine: NativePlayerEngine
+    let frame: NativePlayerEngine.Frame
+    let model: NativeDocument
+    let diagnostics: RemoteComposeNativePlayerDiagnostics
+  }
+
   /// One open document and the work queued against it.
   ///
   /// Frames and input run one at a time, in arrival order, on a single pump task, so a frame never
@@ -313,12 +321,19 @@
     /// Signals a caller holding a deferred write when to offer it again.
     @_spi(RemoteComposeController)
     public let inputAvailability = RemoteComposeNativeInputAvailability()
-    /// The named values every session this player opens starts from, read as each open starts and
+    /// The named values each session this player reopens starts from, read as the open starts and
     /// applied before its first frame is resolved — as the Kotlin player seeds a new state with its
     /// host's values — so a reopen (for the foreground, a new density, policy, limits, resolver or
-    /// custom components) never shows the document's own values first. A value the document
-    /// declines is skipped silently, as a declined write is. Nil, or empty, opens with the
-    /// document's own values; a value written while the session opens goes through `submit`.
+    /// custom components) does not show the document's own values first. The player's first open
+    /// runs from `init`, before a host can set this, and is not seeded.
+    ///
+    /// A value the document declines is skipped silently, as a declined write is. When the seeded
+    /// first frame fails — a value breaks an execution limit or the compatibility policy — the
+    /// session opens without the seed and the values are written as ordinary input once it is
+    /// open: a bad one is refused and reported through `onError`, once per session, and the
+    /// session stays open. Nil, or empty, opens with the document's own values; a value written
+    /// while the session opens goes through `submit`. `load(_:)` with other bytes clears it: the
+    /// values belong to the document they were written for.
     @_spi(RemoteComposeController)
     public var namedValueSeed: (() -> [(name: String, value: RemoteComposeNativeNamedValue)])?
     private let clock: any RemoteComposeNativePlayerClock
@@ -398,6 +413,9 @@
     public func load(_ data: Data) {
       if data == documentData, !isShowingError { return }
       if data != documentData {
+        // The seed holds values for the document it was set with; another one may declare the
+        // same names for something else.
+        namedValueSeed = nil
         soundPlayer.stopAll()
         animationTimeline.reset(
           at: clock.now(),
@@ -507,6 +525,10 @@
     /// shows rather than a later one.
     var onSessionOpened: (() -> Void)?
 
+    /// Called with each input the open session applied. A test hook: it counts the writes a
+    /// session took.
+    var onInputApplied: ((NativePlayerEngine.Input) -> Void)?
+
     /// The open session that accepts input, whether or not an error is showing.
     private var openPresentation: NativePlayerPresentation? {
       switch state {
@@ -516,8 +538,9 @@
       }
     }
 
-    /// Whether a scheduled frame has to wait: a document is opening, or its pump has work.
-    private var isBusy: Bool {
+    /// Whether a scheduled frame has to wait: a document is opening, or its pump has work. Tests
+    /// read it to know the player has settled.
+    var isBusy: Bool {
       switch state {
       case .loading: return true
       case .presenting(let presentation): return presentation.isBusy
@@ -576,23 +599,57 @@
       let visibilityAnimations = !UIAccessibility.isReduceMotionEnabled
       let task = Task { [weak self] in
         do {
-          let (engine, frame) = try await NativePlayerEngine.open(
-            data: data, maximumDocumentBytes: executionLimits.maximumDocumentBytes,
-            hostDensity: hostDensity, hostFontScale: hostFontScale,
-            wallClock: wallClock, visibilityAnimations: visibilityAnimations,
-            namedValues: namedValues)
-          try Task.checkCancellation()
-          let model = try NativeDocument(
-            frame: frame, timeSeconds: 0, limits: executionLimits,
-            androidCompatibility: androidCompatibility)
+          func openFirstFrame(
+            seededWith namedValues: [(name: String, value: RemoteComposeNativeNamedValue)]
+          ) async throws -> NativeOpenedFirstFrame {
+            let (engine, frame) = try await NativePlayerEngine.open(
+              data: data, maximumDocumentBytes: executionLimits.maximumDocumentBytes,
+              hostDensity: hostDensity, hostFontScale: hostFontScale,
+              wallClock: wallClock, visibilityAnimations: visibilityAnimations,
+              namedValues: namedValues)
+            try Task.checkCancellation()
+            let model = try NativeDocument(
+              frame: frame, timeSeconds: 0, limits: executionLimits,
+              androidCompatibility: androidCompatibility)
+            return NativeOpenedFirstFrame(
+              engine: engine, frame: frame, model: model,
+              diagnostics: model.diagnostics(
+                availableCustomComponents: availableCustomComponents))
+          }
+          /// The opened session, and the seed it has not taken, to write through the input path.
+          func openSeededFirstFrame() async throws -> (
+            NativeOpenedFirstFrame, [(name: String, value: RemoteComposeNativeNamedValue)]
+          ) {
+            guard !namedValues.isEmpty else {
+              return (try await openFirstFrame(seededWith: []), [])
+            }
+            do {
+              let opened = try await openFirstFrame(seededWith: namedValues)
+              guard
+                RemoteComposeNativeCompatibilityDecision.shouldRender(
+                  policy: compatibilityPolicy, diagnostics: opened.diagnostics)
+              else { throw RemoteComposeNativePlayerError.incompatible(opened.diagnostics) }
+              return (opened, [])
+            } catch is CancellationError {
+              throw CancellationError()
+            } catch {
+              // A seeded value may be what failed — one that breaks an execution limit or the
+              // compatibility policy. Open as an unseeded open would, and write the seed as
+              // ordinary input once the session is open: a bad value is then refused and
+              // reported, and the session stays open, as for any write. A document that fails
+              // without the seed too fails as before.
+              try Task.checkCancellation()
+              return (try await openFirstFrame(seededWith: []), namedValues)
+            }
+          }
+          let (opened, unseeded) = try await openSeededFirstFrame()
+          let model = opened.model
           guard generation == self?.generation else { return }
-          let diagnostics = model.diagnostics(
-            availableCustomComponents: availableCustomComponents)
-          self?.onDiagnostics(diagnostics)
+          self?.onDiagnostics(opened.diagnostics)
           if !RemoteComposeNativeCompatibilityDecision.shouldRender(
-            policy: compatibilityPolicy, diagnostics: diagnostics)
+            policy: compatibilityPolicy, diagnostics: opened.diagnostics)
           {
-            throw RemoteComposeNativePlayerError.incompatible(diagnostics)
+            throw RemoteComposeNativePlayerError.incompatible(opened.diagnostics)
           }
           try Task.checkCancellation()
           let resources = try await Self.prepareResources(
@@ -601,7 +658,9 @@
             cache: resourceCache)
           try Task.checkCancellation()
           guard let self, generation == self.generation else { return }
-          self.presentOpened(model, engine: engine, resources: resources, effects: frame.effects)
+          self.presentOpened(
+            model, engine: opened.engine, resources: resources, effects: opened.frame.effects,
+            writing: unseeded)
         } catch {
           guard !Task.isCancelled, let self, generation == self.generation else { return }
           self.show(error: error, retaining: nil)
@@ -610,13 +669,18 @@
       state = .loading(task)
     }
 
-    /// Install the first frame of a freshly opened session.
+    /// Install the first frame of a freshly opened session, then write `namedValues` — a seed the
+    /// session could not open with — as ordinary input.
     private func presentOpened(
       _ model: NativeDocument, engine: NativePlayerEngine, resources: NativeResourceStore,
-      effects: [RemoteComposeNativePlayerEvent]
+      effects: [RemoteComposeNativePlayerEvent],
+      writing namedValues: [(name: String, value: RemoteComposeNativeNamedValue)]
     ) {
       let presentation = NativePlayerPresentation(engine: engine, resources: resources)
-      defer { announceOpened() }
+      defer {
+        write(namedValues, to: presentation)
+        announceOpened()
+      }
       do {
         try validateExecution(model, events: effects)
         try install(model, for: presentation)
@@ -628,6 +692,38 @@
         return
       }
       if scheduledFramePending { requestScheduledFrame() }
+    }
+
+    /// Writes `namedValues` to `presentation` as ordinary input, so each is judged and reported as
+    /// any write is. They are queued at once, in order, ahead of any write made after the seed was
+    /// read, so none of them lands on top of a newer value. One the queue has no room for — a seed
+    /// of more values than it holds — is offered again as room frees, until `presentation` is no
+    /// longer the open session; a reopen starts from `namedValueSeed` again.
+    private func write(
+      _ namedValues: [(name: String, value: RemoteComposeNativeNamedValue)],
+      to presentation: NativePlayerPresentation
+    ) {
+      var overflow: [(name: String, value: RemoteComposeNativeNamedValue)] = []
+      for (name, value) in namedValues {
+        var deferred = false
+        enqueue(Self.input(value, for: name)) { deferred = $0 == .deferred }
+        if deferred { overflow.append((name, value)) }
+      }
+      guard !overflow.isEmpty else { return }
+      let availability = inputAvailability
+      Task { [weak self] in
+        for (name, value) in overflow {
+          while true {
+            let mark = availability.mark
+            // The strong reference lives only for the offer, not across the wait below.
+            do {
+              guard let self, self.openPresentation === presentation else { return }
+              guard await self.submit(value, for: name) == .deferred else { break }
+            }
+            await availability.wait(after: mark)
+          }
+        }
+      }
     }
 
     /// A session has opened: release the writes that waited for it.
@@ -738,11 +834,17 @@
     public func submit(
       _ value: RemoteComposeNativeNamedValue, for name: String
     ) async -> RemoteComposeNativeInputAdmission {
+      await admit(Self.input(value, for: name))
+    }
+
+    private static func input(
+      _ value: RemoteComposeNativeNamedValue, for name: String
+    ) -> NativePlayerEngine.Input {
       switch value {
-      case .float(let value): await admit(.setFloat(value, name: name))
-      case .text(let value): await admit(.setString(value, name: name))
-      case .color(let argb): await admit(.setColor(argb, name: name))
-      case .integer(let value): await admit(.setInteger(value, name: name))
+      case .float(let value): .setFloat(value, name: name)
+      case .text(let value): .setString(value, name: name)
+      case .color(let argb): .setColor(argb, name: name)
+      case .integer(let value): .setInteger(value, name: name)
       }
     }
 
@@ -876,6 +978,7 @@
       }
       switch result {
       case .success(let update):
+        onInputApplied?(pending.input)
         // Evaluated first: an optional-chained call skips its argument when a gesture has no reply.
         let accepted = presentInput(update, on: presentation, generation: generation)
         pending.reply?(accepted ? .accepted : .refused)

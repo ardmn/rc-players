@@ -17,33 +17,35 @@ import Testing
         released.append(name)
       }
     }
-    func settle() async {
-      for _ in 0..<200 { await Task.yield() }
-      try? await Task.sleep(nanoseconds: 20_000_000)
+    /// Returns once `count` callers are waiting, so each waiter starts after the one before.
+    func waitUntilWaiting(_ count: Int) async {
+      for _ in 0..<1_000_000 where availability.waiterCount < count { await Task.yield() }
+      #expect(availability.waiterCount == count)
     }
     let first = waiter("first")
-    await settle()
+    await waitUntilWaiting(1)
     let cancelled = waiter("cancelled")
-    await settle()
+    await waitUntilWaiting(2)
     let third = waiter("third")
-    await settle()
+    await waitUntilWaiting(3)
     let fourth = waiter("fourth")
-    await settle()
+    await waitUntilWaiting(4)
     #expect(released.entries.isEmpty)
 
     cancelled.cancel()
     await cancelled.value
     #expect(released.entries == ["cancelled"])
+    #expect(availability.waiterCount == 3)
 
     availability.signalOne()
     await first.value
-    await settle()
     #expect(released.entries == ["cancelled", "first"])
+    #expect(availability.waiterCount == 2)
 
     availability.signalOne()
     await third.value
-    await settle()
     #expect(released.entries == ["cancelled", "first", "third"])
+    #expect(availability.waiterCount == 1)
 
     availability.signal()
     await fourth.value

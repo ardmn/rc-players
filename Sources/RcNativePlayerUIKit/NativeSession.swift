@@ -98,7 +98,8 @@
     ///   - visibilityAnimations: whether custom visibility animations play; see
     ///     `NativeSwiftDocumentSession.setVisibilityAnimationsEnabled`.
     ///   - namedValues: host values applied before the first frame is resolved, so that frame
-    ///     already shows them. One the document declines is skipped, as a declined write is.
+    ///     already shows them. One the document declines is skipped, as a declined write is; one
+    ///     that breaks a limit fails the first frame, and the caller opens again without them.
     static func open(
       data: Data, maximumDocumentBytes: Int, hostDensity: Float = 1, hostFontScale: Float = 1,
       wallClock: NativeSwiftWallClock? = nil, visibilityAnimations: Bool = true,

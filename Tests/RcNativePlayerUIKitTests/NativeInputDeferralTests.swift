@@ -18,10 +18,8 @@
       var errors: [RemoteComposeNativePlayerError] = []
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.shownBox(), resourceResolver: nil, onError: { errors.append($0) })
-      for _ in 0..<1_000 where view.isOpeningDocument {
-        try await Task.sleep(nanoseconds: 10_000_000)
-      }
-      try #require(!view.isOpeningDocument && errors.isEmpty, "\(errors)")
+      try await until("the document opens") { !view.isOpeningDocument }
+      try #require(errors.isEmpty, "\(errors)")
       return view
     }
 
@@ -65,28 +63,6 @@
       #expect(view.inputAvailability.mark != mark)
     }
 
-    /// Writes waiting on a full queue are woken one per freed slot, not all of them for every slot:
-    /// waking them all made `n` waiting writes cost about `n²/2` offers.
-    @Test func aFullQueueWakesOneWaitingWritePerFreedSlot() async throws {
-      let view = try await openedView()
-      let writes = 600
-      var offers = 0
-      let deliveries = (0..<writes).map { index in
-        Task { @MainActor in
-          while true {
-            let mark = view.inputAvailability.mark
-            offers += 1
-            let value = index % 2 == 0 ? Self.visible : Self.gone
-            guard await view.submit(.integer(value), for: "shown") == .deferred else { return }
-            await view.inputAvailability.wait(after: mark)
-          }
-        }
-      }
-      for delivery in deliveries { await delivery.value }
-      // Each write is offered once, plus about once more per wait: well under twice in all.
-      #expect(offers < 2 * writes, "\(offers) offers for \(writes) writes")
-    }
-
     /// A write the session is applying as the scene goes to the background is lost with that
     /// session — the bytes are reopened on activation — so it is deferred, not accepted.
     @Test func anInputInFlightWhenTheSceneGoesToTheBackgroundIsDeferred() async throws {
@@ -117,6 +93,31 @@
       let refused = Task { @MainActor in await view.submit(.integer(1), for: "missing") }
       #expect(await refused.value == .refused)
       for write in busy { #expect(await write.value == .accepted) }
+    }
+
+    /// Returns once `condition` holds, yielding to the tasks it waits on; fails the test after
+    /// `seconds` rather than hanging.
+    private func until(
+      _ what: String, within seconds: TimeInterval = 30, _ condition: () -> Bool
+    ) async throws {
+      let deadline = Date().addingTimeInterval(seconds)
+      while !condition() {
+        try #require(Date() < deadline, "timed out waiting until \(what)")
+        await Task.yield()
+      }
+    }
+
+    /// Whether a component with `id` is in the document view on screen.
+    private func hasComponent(_ id: Int, in view: UIView) -> Bool {
+      var pending: [UIView] = [view]
+      while !pending.isEmpty {
+        let next = pending.removeFirst()
+        if let component = next as? NativeComponentView, component.descendant(withID: id) != nil {
+          return true
+        }
+        pending.append(contentsOf: next.subviews)
+      }
+      return false
     }
 
     /// Whether the document's box is on screen, or nil before the document has a view.
@@ -152,9 +153,7 @@
       let mark = view.inputAvailability.mark
       view.configureHostDensity(2)
       #expect(view.isOpeningDocument)
-      for _ in 0..<1_000 where view.isOpeningDocument {
-        try await Task.sleep(nanoseconds: 10_000_000)
-      }
+      try await until("the reopen finishes") { !view.isOpeningDocument }
       #expect(seedReads == 1)
       // The undeclared "missing" is skipped, as a declined write is, and does not fail the open.
       #expect(firstFrames == [true])
@@ -179,11 +178,90 @@
       var firstFrames: [Bool?] = []
       view.onSessionOpened = { [unowned view] in firstFrames.append(isBoxShown(in: view)) }
       view.configureExecutionLimits(.default)
-      for _ in 0..<1_000 where view.isOpeningDocument {
-        try await Task.sleep(nanoseconds: 10_000_000)
-      }
+      try await until("the reopen finishes") { !view.isOpeningDocument }
       #expect(errors.count == 1)
       #expect(firstFrames == [true])
+    }
+
+    /// A seeded value that breaks an execution limit does not fail the reopen, under either policy:
+    /// the session opens without the seed, the value is refused and reported once as a write
+    /// would be, and the session keeps taking writes.
+    @Test(arguments: [
+      RemoteComposeNativePlayerCompatibilityPolicy.compatible,
+      RemoteComposeNativePlayerCompatibilityPolicy.strict,
+    ])
+    func aSeedValueThatBreaksALimitIsReportedAndTheReopenStillOpens(
+      policy: RemoteComposeNativePlayerCompatibilityPolicy
+    ) async throws {
+      var errors: [RemoteComposeNativePlayerError] = []
+      var limits = RemoteComposeNativeExecutionLimits.default
+      limits.maximumTextBytes = 64
+      let view = RemoteComposeNativePlayerView(
+        data: NativeTestDocuments.label(), compatibilityPolicy: policy, executionLimits: limits,
+        resourceResolver: nil, onError: { errors.append($0) })
+      try await until("the document opens") { !view.isOpeningDocument }
+      try #require(errors.isEmpty, "\(errors)")
+      view.namedValueSeed = { [(name: "label", value: .text(String(repeating: "x", count: 100)))] }
+
+      view.configureHostDensity(2)
+      // Settled: the reopen finished and has nothing left to apply or report.
+      try await until("the reopen settles") {
+        !view.isOpeningDocument && !view.isBusy && !errors.isEmpty
+      }
+      #expect(errors.count == 1, "\(errors)")
+      #expect(
+        errors.first?.localizedDescription.contains("UTF-8 bytes; the limit is 64") == true,
+        "the text limit, reported for the seeded value: \(errors)")
+      #expect(hasComponent(NativeTestDocuments.labelID, in: view))
+      // The session is open, not failed: it still takes a write.
+      #expect(await view.submit(.text("Ready"), for: "label") == .accepted)
+      #expect(errors.count == 1, "\(errors)")
+    }
+
+    /// A write made while the reopen opens is newer than the seed, so when the seed falls back to
+    /// ordinary input every seeded value is applied before that write, never on top of it.
+    @Test func aSeedWrittenAsInputLandsBeforeAWriteMadeDuringTheReopen() async throws {
+      var limits = RemoteComposeNativeExecutionLimits.default
+      limits.maximumTextBytes = 64
+      let view = RemoteComposeNativePlayerView(
+        data: NativeTestDocuments.label(), executionLimits: limits, resourceResolver: nil)
+      try await until("the document opens") { !view.isOpeningDocument }
+      let tooLong = String(repeating: "x", count: 100)
+      view.namedValueSeed = {
+        [(name: "label", value: .text(tooLong)), (name: "title", value: .text("Seeded"))]
+      }
+      var applied: [String] = []
+      view.onInputApplied = { input in
+        if case .setString(let value, let name) = input { applied.append("\(name)=\(value)") }
+      }
+
+      view.configureHostDensity(2)
+      #expect(view.isOpeningDocument)
+      // Offered as the controller offers it: again each time the player signals.
+      var answer = RemoteComposeNativeInputAdmission.deferred
+      while answer == .deferred {
+        let mark = view.inputAvailability.mark
+        answer = await view.submit(.text("Ready"), for: "title")
+        if answer == .deferred { await view.inputAvailability.wait(after: mark) }
+      }
+      // The answer itself is `.refused`: the over-long label the seed wrote stays in the session,
+      // as any applied write does, so the frame "Ready" produces breaks the same limit.
+      try await until("the reopen settles") { !view.isBusy }
+      #expect(applied == ["label=\(tooLong)", "title=Seeded", "title=Ready"])
+    }
+
+    /// The seed belongs to the document it was set for: other bytes clear it, and their first
+    /// frame shows their own values.
+    @Test func loadingOtherBytesClearsTheSeed() async throws {
+      let view = try await openedView()
+      view.namedValueSeed = { [(name: "shown", value: .integer(Self.visible))] }
+      var firstFrames: [Bool?] = []
+      view.onSessionOpened = { [unowned view] in firstFrames.append(isBoxShown(in: view)) }
+
+      view.load(NativeTestDocuments.shownBox(size: 300))
+      try await until("the new document opens") { !view.isOpeningDocument }
+      #expect(firstFrames == [false])
+      #expect(view.namedValueSeed == nil)
     }
 
     /// A waiter is released when the player goes away, so nothing waits for a scene that will

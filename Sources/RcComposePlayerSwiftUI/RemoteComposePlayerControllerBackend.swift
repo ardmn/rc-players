@@ -76,7 +76,7 @@ protocol ControllerBackendProtocol: AnyObject {
   /// Checks each write against the attached document's declarations — the same check the native
   /// session makes — and hands an accepted value to the native player, which applies it once it can:
   /// after its asynchronous session opens, its scene returns from the background, or its input
-  /// queue has room. Every session the player opens again starts from the values held here
+  /// queue has room. Every session the player reopens starts from the values held here
   /// (`seedValues`).
   @MainActor
   final class NativeControllerBackend: ControllerBackendProtocol {
@@ -134,7 +134,7 @@ protocol ControllerBackendProtocol: AnyObject {
       }
     }
 
-    /// The values written so far, as a session the native player opens again starts from them —
+    /// The values written so far, as a session the native player reopens starts from them —
     /// including values an earlier session refused, which the new session judges afresh. Empty
     /// while no update handler is installed: the values are not yet re-keyed for the player's
     /// document.
@@ -180,11 +180,12 @@ protocol ControllerBackendProtocol: AnyObject {
     /// takes. Nothing polls while it waits. A refusal is the session's final answer — the document
     /// is failed, declines the value (which reports nothing), or failed applying it (reported
     /// through `onError`) — and is not offered to that session again. The value stays with the
-    /// controller, as on the Kotlin player, and each new session the player opens starts from it
-    /// (`seedValues`) and judges it afresh: a value that fails an execution limit is reported once
-    /// per session, not once per retry. It stops as soon as the player is gone, the task is
-    /// cancelled, or `isCurrent` says a newer value for this name has started or the player was
-    /// rebuilt.
+    /// controller, as on the Kotlin player, and each session the player reopens starts from it
+    /// (`seedValues`) and judges it afresh: a value that breaks an execution limit is refused and
+    /// reported through `onError` once per session, not once per retry, and the session stays
+    /// open. It stops as soon as the player is gone, the task is cancelled, or `isCurrent` says a
+    /// newer value for this name has started, the player was rebuilt, or a reopen took the value
+    /// in its seed.
     @MainActor
     func deliver<Target: NativeNamedValueTarget>(
       for name: String, to target: () -> Target?, isCurrent: () -> Bool

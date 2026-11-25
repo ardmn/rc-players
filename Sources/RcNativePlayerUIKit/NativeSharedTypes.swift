@@ -24,8 +24,8 @@ public enum RemoteComposeNativeInputAdmission: Equatable, Sendable {
   case accepted
   /// This session's final answer: the document is failed and has no session, the document
   /// declines the name or value (nothing is reported), or applying it failed (reported through
-  /// `onError`). Offering it again to the same session gets the same answer; a later session —
-  /// seeded through `namedValueSeed` — judges it afresh.
+  /// `onError`). Offering it again to the same session gets the same answer; a session the
+  /// player reopens — seeded through `namedValueSeed` — judges it afresh.
   case refused
   /// The player could not take it yet — its document is still opening, its scene is in the
   /// background, its input queue is full, or the session it reached was discarded for a reopen. It
@@ -56,6 +56,9 @@ public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
   /// The point to wait from. Read it before offering a write, so a signal that arrives while the
   /// write is being answered is not missed.
   public var mark: UInt64 { locked { epoch } }
+
+  /// How many callers are waiting now. Tests use it to know a waiter has started waiting.
+  var waiterCount: Int { locked { waiters.count } }
 
   /// Returns once the player has signalled since `mark`, has gone away, or the task is cancelled.
   public func wait(after mark: UInt64) async {

@@ -340,8 +340,9 @@
     private var latestNativeUpdates: [String: Int] = [:]
     private var nextNativeUpdateToken = 0
     /// The delivery of each name's latest value, cancelled when a newer one starts or the player is
-    /// rebuilt, so a delivery waiting for the player does not outlive its value.
-    private var nativeUpdateTasks: [String: Task<Void, Never>] = [:]
+    /// rebuilt, so a delivery waiting for the player does not outlive its value. Internal, not
+    /// private, so a test can tell when every delivery has finished.
+    private(set) var nativeUpdateTasks: [String: Task<Void, Never>] = [:]
     /// Reads the current document's declarations off the main thread; replaced on every rebuild.
     private var declarationTask: Task<Void, Never>?
 
@@ -429,13 +430,23 @@
         onDiagnostics: { _ in },
         onError: { [weak self] error in self?.errorHandler(.playback(error.localizedDescription)) })
       install(native)
-      // A session the player opens again — back from the background, or for a new density — is
-      // seeded with the values written so far, so its first frame already shows them. The Kotlin
+      // A session the player reopens — back from the background, or for a new density — is
+      // seeded with the values written so far, so its first frame already shows them. (The
+      // first open starts inside `init`, before this is set, and is not seeded.) The Kotlin
       // player does not reopen for either and keeps its state; a native reopen still loses what
       // the document's own actions changed.
+      //
+      // A write still on its way when the reopen starts was meant for the session it discards; the
+      // seed hands the new session the same value — the controller's latest for that name — so
+      // that write is dropped rather than applied a second time.
       native.playerView.namedValueSeed = { [weak self, weak native] in
         guard let self, let native, self.nativeController === native else { return [] }
-        return self.playerController.backend.seedValues
+        let seed = self.playerController.backend.seedValues
+        for (name, _) in seed {
+          self.latestNativeUpdates[name] = nil
+          self.nativeUpdateTasks.removeValue(forKey: name)?.cancel()
+        }
+        return seed
       }
       // Reading the declarations decodes the whole document, so it runs off the main thread, like
       // the session's own open. The controller is attached as soon as it finishes — normally well
