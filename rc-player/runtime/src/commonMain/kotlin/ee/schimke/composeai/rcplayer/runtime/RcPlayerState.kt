@@ -890,8 +890,11 @@ private constructor(
             requireNotNull(operation.argumentIds.firstOrNull()) {
               "TimeAttribute type $type requires one argument id"
             }
-          selected.epochMillis -
-            requireNotNull(longs[argumentId]) { "Missing TimeAttribute long argument $argumentId" }
+          // No long at the argument — a host long cleared on an id the document gives no
+          // `LongConstant` — leaves nothing to measure from: the slot is not written, as the
+          // native Swift player leaves it unset. (AndroidX would cast a null and throw.)
+          val argument = longs[argumentId] ?: return
+          selected.epochMillis - argument
         }
         else -> 0L
       }
@@ -1124,7 +1127,9 @@ private constructor(
             storeFloat(operation.outId, requireNotNull(floats[entry.id.also(::noteValueRead)]))
             expressionReservedReads[entry.id]?.let { expressionReservedReads[operation.outId] = it }
           }
-          RcIdMap.TYPE_LONG -> setInteger(operation.outId, requireNotNull(longs[entry.id]).toInt())
+          // A missing long (a host long cleared on an id with no `LongConstant`) reads 0, as on
+          // the native Swift player; AndroidX would cast a null and throw.
+          RcIdMap.TYPE_LONG -> setInteger(operation.outId, (longs[entry.id] ?: 0L).toInt())
           RcIdMap.TYPE_BOOLEAN ->
             setInteger(operation.outId, if (requireNotNull(booleans[entry.id])) 1 else 0)
           else -> error("Unknown AndroidX data-map type ${entry.type}")
@@ -2376,7 +2381,8 @@ private constructor(
    * every document declares every name; throwing made each host filter its map against the
    * document's `RcNamedVariable`s before handing it over. A declared name written with an
    * incompatible type is still an error — that is a host bug, not a document that happens not to
-   * use the value.
+   * use the value. So is a float array no float list could hold: a value that is not finite, or
+   * more than [RcFloatList.MAX_VALUES] of them.
    */
   public fun setNamedValue(hostName: String, value: RcNamedValue) {
     val name = resolveName(hostName)
@@ -2403,8 +2409,12 @@ private constructor(
       // AndroidX's `setNamedBooleanOverride` is an integer override of 1 or 0.
       is RcNamedValue.BooleanValue ->
         setNamedValue(name, RcNamedValue.Integer(if (value.value) 1 else 0))
-      is RcNamedValue.FloatArrayValue ->
+      is RcNamedValue.FloatArrayValue -> {
+        require(value.values.size <= RcFloatList.MAX_VALUES && value.values.all { it.isFinite() }) {
+          "Named variable '$name' takes at most ${RcFloatList.MAX_VALUES} finite values, as a float list holds"
+        }
         floatArrayOverrides[variable.id] = value.values.toFloatArray()
+      }
     }
   }
 }

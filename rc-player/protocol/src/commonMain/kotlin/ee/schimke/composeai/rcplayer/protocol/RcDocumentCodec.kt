@@ -2023,8 +2023,8 @@ private object DynamicFloatListCodec : RcOperationCodec<RcDynamicFloatList> {
 
   override fun encode(output: RcWireWriter, value: RcDynamicFloatList) {
     if (value.length.referencedId == null) {
-      require(value.length.value.toInt() in 0..2_000) {
-        "DataDynamicListFloat length must be within AndroidX's 0..2,000 limit"
+      require(value.length.value.toInt() in 0..RcFloatList.MAX_VALUES) {
+        "DataDynamicListFloat length must be within AndroidX's 0..${RcFloatList.MAX_VALUES} limit"
       }
     }
     output.writeInt(value.id)

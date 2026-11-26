@@ -472,4 +472,34 @@ import Testing
       data: document.data, toleratingRootlessData: true)
     #expect(!session.clearNamedValue("USER:avatar"))
   }
+
+  /// A cleared host long on an id the document gives no `LongConstant`, read as a `fromArgument`
+  /// time attribute's argument and through a long data-map entry: the attribute has nothing to
+  /// measure from and is left unset, and the lookup reads 0 — no error either way, as on the
+  /// Kotlin player (`RcNamedValueLongClearTest`).
+  @Test func aClearedLongWithNoConstantStillEvaluatesItsReaders() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataLong).int(1).int64(1_700_000_000_000)
+    document.namedVariable(id: 13, type: Kind.long, name: "USER:start")
+    document.u8(Op.attributeTime).int(24).int(1)
+      .u16(NativeSwiftTimeAttributeType.fromArgumentSeconds).u16(1).int(13)
+    document.text(id: 21, "k")
+    let key = Array("k".utf8)
+    document.u8(Op.idMap).int(20).int(1).int(key.count).raw(Data(key))
+      .u8(NativeSwiftDataMapType.long).int(13)
+    document.u8(Op.dataMapLookup).int(30).int(20).int(21)
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    #expect(session.setLong(1_699_999_990_000, for: "start"))
+    let set = try values(session)
+    #expect(set.floats[24] == 10)
+    #expect(set.integers[30] == Int(Int32(truncatingIfNeeded: Int64(1_699_999_990_000))))
+
+    #expect(session.clearNamedValue("start"))
+
+    let cleared = try values(session)
+    #expect(cleared.floats[24] == nil)
+    #expect(cleared.integers[30] == 0)
+  }
 }

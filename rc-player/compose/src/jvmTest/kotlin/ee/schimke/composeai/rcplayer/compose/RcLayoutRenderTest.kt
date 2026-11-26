@@ -594,37 +594,36 @@ class RcLayoutRenderTest {
 
   /**
    * A host float array over a layout computation's bounds list replaces what the body returns. One
-   * too short to hold a width and height, or holding a non-finite one, leaves the component as
-   * measured — what the native Swift player does with it — instead of failing the layout pass on
-   * `values[2]` or `NaN.roundToInt()`.
+   * too short to hold a box, or a body that computes a position that is not finite, leaves the
+   * component as measured — what the native Swift player does — instead of failing the layout pass
+   * on `values[2]` or `roundToInt()`.
    */
   @Test
-  fun aHostBoundsListTooShortOrNotFiniteLeavesTheComponentAsMeasured() {
+  fun aBoundsListTooShortOrNotFiniteLeavesTheComponentAsMeasured() {
     val red = 0xffff0000.toInt()
-    val operations =
-      listOf<RcOperation>(
-        RcDynamicFloatList(42, RcFloatWord.literal(6f)),
-        RcNamedVariable(42, RcNamedVariable.FLOAT_ARRAY_TYPE, "bounds"),
-        RcRootLayout(1),
-        RcLayoutContent(2),
-        RcCanvasLayout(3, 30),
-        width(60f),
-        height(50f),
-        RcLayoutCompute(RcLayoutCompute.MEASURE, 42, animateChanges = false),
-        RcNoArg(RcOpcodes.CONTAINER_END),
-        solidBackground(red = 1f, green = 0f, blue = 0f),
-      ) + List(3) { RcNoArg(RcOpcodes.CONTAINER_END) }
-    val document =
+    fun document(type: Int = RcLayoutCompute.MEASURE, vararg body: RcOperation) =
       RcDocument(
         RcHeader(RcVersion(1, 0, 0), legacyWidth = 80, legacyHeight = 80, modern = false),
-        operations,
+        listOf<RcOperation>(
+          RcDynamicFloatList(42, RcFloatWord.literal(6f)),
+          RcNamedVariable(42, RcNamedVariable.FLOAT_ARRAY_TYPE, "bounds"),
+          RcRootLayout(1),
+          RcLayoutContent(2),
+          RcCanvasLayout(3, 30),
+          width(60f),
+          height(50f),
+          RcLayoutCompute(type, 42, animateChanges = false),
+        ) +
+          body +
+          listOf(
+            RcNoArg(RcOpcodes.CONTAINER_END),
+            solidBackground(red = 1f, green = 0f, blue = 0f),
+          ) +
+          List(3) { RcNoArg(RcOpcodes.CONTAINER_END) },
       )
-    for (bounds in
-      listOf(listOf(1f), List(6) { Float.NaN }, listOf(0f, 0f, Float.POSITIVE_INFINITY, 4f))) {
-      val namedValues =
-        mutableStateMapOf<String, RcNamedValue>(
-          "bounds" to RcNamedValue.FloatArrayValue(bounds),
-        )
+    fun redPixels(document: RcDocument, bounds: List<Float>?): Int {
+      val namedValues = mutableStateMapOf<String, RcNamedValue>()
+      if (bounds != null) namedValues["bounds"] = RcNamedValue.FloatArrayValue(bounds)
       val scene =
         ImageComposeScene(width = 80, height = 80, density = Density(1f)) {
           RcComposePlayer(document, namedValues = namedValues)
@@ -633,14 +632,29 @@ class RcLayoutRenderTest {
         val image = scene.render()
         val bitmap = Bitmap().apply { allocN32Pixels(80, 80) }
         check(image.readPixels(bitmap))
-        val redPixels =
-          (0 until 80).sumOf { y -> (0 until 80).count { x -> bitmap.getColor(x, y) == red } }
-
-        assertEquals(60 * 50, redPixels, "bounds $bounds")
+        return (0 until 80).sumOf { y -> (0 until 80).count { x -> bitmap.getColor(x, y) == red } }
       } finally {
         scene.close()
       }
     }
+    val plain = document()
+    // A usable host list is applied (the control); a short one leaves the component as measured.
+    assertEquals(24 * 18, redPixels(plain, listOf(0f, 0f, 24f, 18f, 80f, 80f)))
+    assertEquals(60 * 50, redPixels(plain, listOf(1f)))
+    assertEquals(60 * 50, redPixels(plain, listOf(0f, 0f, 24f)))
+    // A body that computes a position that is not finite (a host array cannot hold one: it is
+    // refused first, see `RcNamedValueOverrideTest`) leaves the component where it was, rather
+    // than placing it at `Int.MAX_VALUE`, off screen.
+    val infinite =
+      document(
+        RcLayoutCompute.POSITION,
+        RcUpdateDynamicFloatList(
+          42,
+          RcFloatWord.literal(0f),
+          RcFloatWord.literal(Float.POSITIVE_INFINITY),
+        ),
+      )
+    assertEquals(60 * 50, redPixels(infinite, null))
   }
 
   @Test
