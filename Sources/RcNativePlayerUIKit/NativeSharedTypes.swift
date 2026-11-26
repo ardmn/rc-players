@@ -9,6 +9,9 @@ public enum RemoteComposeNativePlayerBackground: Equatable, Sendable {
 
 /// A value a host sets on a document's named variable before it renders: the four kinds a `.rc`
 /// document declares a `USER:` name with. A boolean travels as `.integer` 0 or 1, as on the wire.
+///
+/// Public, so it stays its own type rather than an alias of the core's SPI `NativeSwiftNamedValue`,
+/// which also carries an integer's float view that a host never writes (`coreValue` maps to it).
 public enum RemoteComposeNativeNamedValue: Equatable, Sendable {
   case text(String)
   case float(Float)

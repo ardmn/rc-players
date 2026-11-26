@@ -29,7 +29,9 @@ import Foundation
 
 /// A value the controller writes to a named variable, with its type, so a colour and an integer —
 /// both carried as integers — reach the setter that type-checks each. The overlay keeps its own
-/// type rather than a player's because it also compiles with no native player linked at all.
+/// type rather than a player's because it also compiles with no native player linked at all, and
+/// because it keeps a boolean apart from an integer, as the controller's API does, until
+/// `nativeValue` writes it as 1 or 0 into the native player's `RemoteComposeNativeNamedValue`.
 enum ControllerNamedValue: Equatable {
   case float(Float)
   case text(String)
