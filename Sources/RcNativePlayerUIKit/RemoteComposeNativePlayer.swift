@@ -234,12 +234,13 @@
   }
 
   /// A named value a new session starts from, by the name the document declares it under.
-  private struct NativeStartingValue: Equatable {
+  struct NativeStartingValue: Equatable {
     let name: String
     let value: NativeSwiftNamedValue
 
-    /// `values`, then `later`, without an earlier entry for a name `later` sets again: only the
-    /// newest value of each name is applied, or judged against the limits.
+    /// `values`, then `later`, without an earlier entry for a name `later` sets again. Entries of
+    /// one name within `later` are all kept, in order, so the last of them is the value applied.
+    /// Linear: one set of the later names, one pass over each list.
     static func merging(_ values: [Self], with later: [Self]) -> [Self] {
       let names = Set(later.map(\.name))
       return values.filter { !names.contains($0.name) } + later

@@ -123,6 +123,29 @@ import Testing
     #expect(session.writtenNamedValues().isEmpty)
   }
 
+  /// Clearing an integer variable whose id also declared a float constant restores the seeded
+  /// float view too, not only the integer slot `storeInteger` wrote.
+  @Test func clearingAnIntegerRestoresASeededFloatViewOnTheSameID() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(12).float(2.5)
+    document.namedVariable(id: 12, type: Kind.int, name: "USER:count")
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    let initial = try values(session)
+    try #require(initial.floats[12] == 2.5 && initial.integers[12] == 2)
+
+    #expect(session.setInteger(8, for: "count"))
+    let written = try values(session)
+    #expect(written.integers[12] == 8 && written.floats[12] == 8)
+
+    #expect(session.clearNamedValue("count"))
+    let restored = try values(session)
+    #expect(restored.integers[12] == 2)
+    #expect(restored.floats[12] == 2.5)
+    #expect(session.writtenNamedValues().isEmpty)
+  }
+
   /// A float variable a document action wrote (a click's float action, which publishes the
   /// integer view too, as `RcPlayerState.storeFloat` does) is the document's again once cleared,
   /// in both views, as the Kotlin clear writes the recorded float back through `setFloat`.
@@ -325,8 +348,8 @@ import Testing
     #expect(try list(2) == [0, 0])
   }
 
-  /// `aColourOverrideSurvivesTheExpressionThatDefaultsItAndClearingHandsItBack` (:110), the clear
-  /// half: once cleared, the colour expression's output is the variable's value.
+  /// `aColourOverrideSurvivesTheExpressionThatDefaultsItAndClearingHandsItBack` (:110): the host's
+  /// override stands over the colour expression that defaults it, and clearing hands it back.
   @Test func clearingAColourAnExpressionDefaultsHandsItBackToTheExpression() throws {
     let red: UInt32 = 0xFFFF_0000
     let blue: UInt32 = 0xFF00_00FF
@@ -341,10 +364,7 @@ import Testing
     #expect(try values(session).colors[61] == red)
 
     #expect(session.setColor(blue, for: "USER:accent"))
-    let overridden = try values(session).colors[61]
-    withKnownIssue("pre-existing: a colour expression replaces a host colour on its output") {
-      #expect(overridden == blue)
-    }
+    #expect(try values(session).colors[61] == blue)
 
     #expect(session.clearNamedValue("USER:accent"))
     #expect(try values(session).colors[61] == red)

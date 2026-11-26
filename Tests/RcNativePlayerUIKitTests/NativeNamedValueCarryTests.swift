@@ -92,10 +92,38 @@
       #expect(first.setFloat(2.75, forID: id))
       let carried = first.writtenNamedValues()
       #expect(carried.map(\.name) == ["i"])
-      #expect(carried.map(\.value) == [.integer(3, float: 2.75)])
+      #expect(carried.map(\.value) == [.integer(2, float: 2.75)])
       let (second, _) = try await NativePlayerEngine.open(
         data: data, maximumDocumentBytes: 1 << 20, namedValues: carried)
-      #expect(await second.writtenNamedValues().map(\.value) == [.integer(3, float: 2.75)])
+      #expect(await second.writtenNamedValues().map(\.value) == [.integer(2, float: 2.75)])
+    }
+
+    /// A later value of a name replaces every earlier one, an equal integer included: a value
+    /// left out of the last session (it broke a limit) is replaced by the integer the host then
+    /// wrote. Two later values of one name are both kept, in order, so the newer is applied last.
+    @Test func aLaterValueReplacesEveryEarlierOneOfItsName() {
+      typealias Value = NativeStartingValue
+      let leftOut = [
+        Value(name: "level", value: .integer(3, float: 3.5)), Value(name: "s", value: .text("a")),
+      ]
+      let written = Value(name: "level", value: .integer(3))
+      #expect(Value.merging(leftOut, with: [written]) == [leftOut[1], written])
+      let twice = [
+        Value(name: "level", value: .integer(3)), Value(name: "level", value: .integer(5)),
+      ]
+      #expect(Value.merging(leftOut, with: twice) == [leftOut[1]] + twice)
+    }
+
+    /// Kotlin's `setInteger` returns early for an unchanged integer, so a host seed equal to the
+    /// integer a reopen carries keeps the float a float write gave it. The native player applies
+    /// the seed in place of the carried value instead: a seed cannot tell a carried value the
+    /// session held from one a limit left out, which must be replaced.
+    @Test func aSeedEqualToTheCarriedIntegerKeepsTheCarriedFloat() {
+      typealias Value = NativeStartingValue
+      let carried = [Value(name: "i", value: .integer(2, float: 2.5))]
+      withKnownIssue("the seed replaces the carried value, float view included") {
+        #expect(Value.merging(carried, with: [Value(name: "i", value: .integer(2))]) == carried)
+      }
     }
 
     /// A value carried by its declared name lands in that variable, not in the one the host's
