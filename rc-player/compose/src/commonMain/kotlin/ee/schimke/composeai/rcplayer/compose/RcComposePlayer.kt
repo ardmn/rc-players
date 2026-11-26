@@ -5260,8 +5260,10 @@ private fun Modifier.applyGraphicsLayer(
   // RenderNode layer composites like `Auto`).
   val compositingStrategy = remember(operation) { operation.compositingStrategy() }
   // The offsets drawn into a `ModulateAlpha` layer decide from these same eased values whether
-  // they can keep a layer of their own (see [RcModulateAlphaLayer]).
-  modulateAlphaLayer?.bind(alpha, blurX, blurY)
+  // they can keep a layer of their own (see [RcModulateAlphaLayer]). Bound once the composition
+  // applies, not during it: the readers are snapshot state, and a recomposition that changed none
+  // of them hands over the same readers, which writes nothing.
+  if (modulateAlphaLayer != null) SideEffect { modulateAlphaLayer.bind(alpha, blurX, blurY) }
   val shapeType = int(RcGraphicsLayerModifier.SHAPE)
   val blurTileMode =
     when (int(RcGraphicsLayerModifier.BLUR_TILE_MODE)) {
@@ -5324,17 +5326,23 @@ private fun rcLayerFloat(
   default: Float,
   state: RcPlayerState,
 ): () -> Float {
-  val word = (attribute as? RcGraphicsLayerAttribute.FloatValue)?.value ?: return { default }
+  // Each reader is remembered for what it captures, so a recomposition that changed none of them
+  // returns the same reader, and `RcModulateAlphaLayer.bind` sees no change.
+  val word =
+    (attribute as? RcGraphicsLayerAttribute.FloatValue)?.value
+      ?: return remember(default) { { default } }
   val target = state.resolve(word)
-  val referencedId = word.referencedId ?: return { target }
+  val referencedId = word.referencedId ?: return remember(target) { { target } }
   if (state.isContinuouslyDriven(referencedId)) {
     // Resolved in the layer block, not captured here: a component whose parameters did not change
     // is skipped on recomposition, so a captured value left a clock-bound layer on its first frame
     // for good. Reading the frame time in the same block is what re-runs it each frame.
-    val frame = LocalRcFrameTime.current ?: return { target }
-    return {
-      frame.floatValue
-      state.resolve(word)
+    val frame = LocalRcFrameTime.current ?: return remember(target) { { target } }
+    return remember(frame, state, word) {
+      {
+        frame.floatValue
+        state.resolve(word)
+      }
     }
   }
   val animatable = remember(state) { Animatable(target) }
