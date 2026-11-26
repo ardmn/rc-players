@@ -3678,6 +3678,8 @@ public final class ee/schimke/composeai/rcplayer/protocol/RcTextMeasure : ee/sch
 }
 
 public final class ee/schimke/composeai/rcplayer/protocol/RcTextMerge : ee/schimke/composeai/rcplayer/protocol/RcOperation {
+	public static final field Companion Lee/schimke/composeai/rcplayer/protocol/RcTextMerge$Companion;
+	public static final field MAX_LENGTH I
 	public fun <init> (III)V
 	public final fun component1 ()I
 	public final fun component2 ()I
@@ -3691,6 +3693,9 @@ public final class ee/schimke/composeai/rcplayer/protocol/RcTextMerge : ee/schim
 	public final fun getRightId ()I
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class ee/schimke/composeai/rcplayer/protocol/RcTextMerge$Companion {
 }
 
 public final class ee/schimke/composeai/rcplayer/protocol/RcTextStyle : ee/schimke/composeai/rcplayer/protocol/RcOperation {
