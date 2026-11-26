@@ -5,8 +5,9 @@ import Testing
 
 /// The Swift core links no Kotlin, so it cannot read `RcFloatList.MAX_VALUES`; it keeps its own
 /// `NativeSwiftDocumentDecoder.maximumFloatListValues`. This test reads the value from the Kotlin
-/// source and from the vendored AndroidX player (`DataDynamicListFloat.MAX_FLOAT_ARRAY`; AndroidX
-/// `DataListFloat` holds the same 2000) and fails when either drifts from the Swift constant — as
+/// source and from the vendored AndroidX TypeScript port (`DataDynamicListFloat.MAX_FLOAT_ARRAY`;
+/// the port's `DataListFloat` has no limit, AndroidX's Java `DataListFloat` holds the same 2000 but
+/// is not vendored) and fails when either drifts from the Swift constant — as
 /// `scripts/check-native-uikit-profile.sh` reads Kotlin sources for the other limits.
 @Suite struct NativeSwiftFloatListLimitParityTests {
   private static let repositoryRoot = URL(fileURLWithPath: #filePath)

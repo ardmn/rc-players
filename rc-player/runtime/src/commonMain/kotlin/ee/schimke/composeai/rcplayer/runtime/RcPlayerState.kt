@@ -2318,19 +2318,20 @@ private constructor(
         // the document's value to go back to is that absence, not the `0L` `readNamedValue`
         // reports for it.
         val recorded = documentNamedValues[name] as? RcNamedValue.LongValue
-        when {
-          variable.id in documentLongIds && recorded != null -> longs[variable.id] = recorded.value
-          else -> longs.remove(variable.id)
+        if (variable.id in documentLongIds && recorded != null) {
+          longs[variable.id] = recorded.value
+        } else {
+          longs.remove(variable.id)
         }
       }
       RcNamedVariable.FLOAT_TYPE,
       RcNamedVariable.INT_TYPE ->
-        when {
-          // A named system variable: the value to go back to is the clock's, which the next frame
-          // loads once the host's claim is gone. Writing a remembered value back would re-claim it.
-          variable.id in RcSystemVariables.ALL && variable.id !in documentClaimedSystemIds ->
-            claimedSystemIds.remove(variable.id)
-          else -> documentNamedValues[name]?.let { setNamedValue(name, it) }
+        // A named system variable: the value to go back to is the clock's, which the next frame
+        // loads once the host's claim is gone. Writing a remembered value back would re-claim it.
+        if (variable.id in RcSystemVariables.ALL && variable.id !in documentClaimedSystemIds) {
+          claimedSystemIds.remove(variable.id)
+        } else {
+          documentNamedValues[name]?.let { setNamedValue(name, it) }
         }
       else -> documentNamedValues[name]?.let { setNamedValue(name, it) }
     }
