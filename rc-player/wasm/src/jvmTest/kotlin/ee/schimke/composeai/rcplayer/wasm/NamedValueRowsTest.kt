@@ -70,7 +70,13 @@ class NamedValueRowsTest {
     assertEquals(mapOf(orange), read(join(forged, good)))
     assertEquals(
       emptyMap(),
-      read(row("color$NAMED_VALUE_FIELD_SEPARATOR$NAMED_VALUE_ROW_SEPARATOR", "WearM3.primary", "#FF0000FF")),
+      read(
+        row(
+          "color$NAMED_VALUE_FIELD_SEPARATOR$NAMED_VALUE_ROW_SEPARATOR",
+          "WearM3.primary",
+          "#FF0000FF",
+        ),
+      ),
     )
   }
 
