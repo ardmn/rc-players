@@ -968,33 +968,25 @@ private constructor(
   }
 
   /**
-   * Runs AndroidX's ascending exclusive-upper-bound loop with a hard resource bound.
+   * Runs AndroidX's loop, `for (i = from; i < until; i += step)`, with a hard resource bound.
    *
-   * Java's loop condition is always `index < until`; negative steps therefore only produce zero
-   * iterations unless they would enter an infinite loop. Dynamic zero/non-finite steps are caught
-   * here because AndroidX only validates literal values while decoding.
+   * Every bound may be a host's value, so any float reaches here: a NaN bound or step runs what
+   * Java's loop runs (none, or a single pass for a NaN step), and a loop AndroidX would never leave
+   * (an infinite bound, a step that does not advance the index) stops after [MAX_LOOP_ITERATIONS]
+   * passes instead of hanging the player.
    */
   public fun forEachLoopValue(operation: RcLoopOperation, block: (Float) -> Unit) {
-    val from = resolve(operation.from)
     val until = resolve(operation.until)
     val step = resolve(operation.step)
-    require(from.isFinite() && until.isFinite() && step.isFinite()) {
-      "Loop bounds and step must be finite"
-    }
-    if (!(from < until)) return
-    require(step > 0f) { "Loop step must be positive when from < until" }
-    var value = from
+    var value = resolve(operation.from)
     var iterations = 0
-    while (value < until) {
-      require(iterations++ < MAX_LOOP_ITERATIONS) { "Loop exceeds $MAX_LOOP_ITERATIONS iterations" }
+    while (value < until && iterations++ < MAX_LOOP_ITERATIONS) {
       if (operation.indexVariableId != 0) {
         setFloat(operation.indexVariableId, value)
         loopDependents(operation.indexVariableId).forEach(::applyFloatExpression)
       }
       block(value)
-      val next = value + step
-      require(next > value) { "Loop step does not advance the index" }
-      value = next
+      value += step
     }
   }
 
@@ -1054,8 +1046,8 @@ private constructor(
       // over a value computed later in the frame draws, and the next pass fills it in.
       is RcTextMerge -> {
         val value = texts[operation.leftId].orEmpty() + texts[operation.rightId].orEmpty()
-        require(value.length <= 16 * 1024) { "TextMerge output exceeds AndroidX's 16K limit" }
-        texts[operation.outId] = value
+        // AndroidX throws on a merge longer than its limit; the merged text stays as it was.
+        if (value.length <= RcTextMerge.MAX_LENGTH) texts[operation.outId] = value
       }
       is RcTextLength ->
         setFloat(operation.outId, texts[operation.textId].orEmpty().length.toFloat())
@@ -1145,12 +1137,13 @@ private constructor(
       }
       is RcDynamicFloatList -> {
         val length = resolve(operation.length).toInt()
-        require(length in 0..RcFloatList.MAX_VALUES) {
-          "Dynamic float-list length $length is outside AndroidX's 0..${RcFloatList.MAX_VALUES} range"
-        }
         val existing = dynamicFloatLists[operation.id]
-        if (existing == null || existing.size != length) {
-          dynamicFloatLists[operation.id] = FloatArray(length)
+        when {
+          // AndroidX throws on a length outside 0..MAX_VALUES (a host's infinity, say); here the id
+          // holds no list, as the native Swift player's has none.
+          length !in 0..RcFloatList.MAX_VALUES -> dynamicFloatLists.remove(operation.id)
+          existing == null || existing.size != length ->
+            dynamicFloatLists[operation.id] = FloatArray(length)
         }
       }
       is RcUpdateDynamicFloatList -> {
@@ -2086,8 +2079,12 @@ private constructor(
 
   // AndroidX RemoteComposeState.updateFloat publishes both numeric views. Integer expressions
   // consume float results (including comparisons) through the same ID, truncating toward zero.
+  // AndroidX writes only a value `!=` the one it holds (an unset id holds 0), so a zero written
+  // over
+  // a zero keeps the sign already there; NaN is never equal to itself and is always written.
   private fun storeFloat(id: Int, value: Float) {
-    floats[id] = value
+    val previous = floats[id] ?: 0f
+    floats[id] = if (value == previous) previous else value
     integers[id] = value.toInt()
   }
 
@@ -2385,12 +2382,12 @@ private constructor(
    * every document declares every name; throwing made each host filter its map against the
    * document's `RcNamedVariable`s before handing it over. A declared name written with an
    * incompatible type is still an error — that is a host bug, not a document that happens not to
-   * use the value. A float array no float list could hold ([RcFloatList.canHold]: a value that is
-   * not finite, or more than [RcFloatList.MAX_VALUES] of them) is ignored instead, and the variable
-   * keeps its value: such an array is data, a sensor gap or a long series, not a host bug, and it
-   * reaches here from inside composition, where a throw crashes the app. A host that needs to know
-   * checks [RcFloatList.canHold] first, as the iOS controller's `setFloatArray` does to answer
-   * `false`.
+   * use the value. Any value AndroidX's `setNamed*Override` takes is taken here: a float may be NaN
+   * or infinite, and a string any length. A float array no float list could hold
+   * ([RcFloatList.canHold]: more than [RcFloatList.MAX_VALUES] values) is ignored instead, and the
+   * variable keeps its value: such an array is data, a long series, not a host bug, and it reaches
+   * here from inside composition, where a throw crashes the app. A host that needs to know checks
+   * [RcFloatList.canHold] first, as the iOS controller's `setFloatArray` does to answer `false`.
    */
   public fun setNamedValue(hostName: String, value: RcNamedValue) {
     val name = resolveName(hostName)
@@ -2417,8 +2414,8 @@ private constructor(
       // AndroidX's `setNamedBooleanOverride` is an integer override of 1 or 0.
       is RcNamedValue.BooleanValue ->
         setNamedValue(name, RcNamedValue.Integer(if (value.value) 1 else 0))
-      // An array no float list could hold is ignored, not thrown: a host's map reaches here from
-      // inside composition, where a throw crashes the app. The iOS controller and the native
+      // An array longer than a float list holds is ignored, not thrown: a host's map reaches here
+      // from inside composition, where a throw crashes the app. The iOS controller and the native
       // Swift player refuse the same arrays.
       is RcNamedValue.FloatArrayValue ->
         if (RcFloatList.canHold(value.values)) {

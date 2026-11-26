@@ -944,8 +944,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     set(.long(value), for: name)
   }
 
-  /// Replaces the list a named float array holds. The values must be finite, and no more than a
-  /// document's float list may hold.
+  /// Replaces the list a named float array holds: any values, NaN and the infinities included, and
+  /// no more of them than a document's float list may hold.
   public func setFloatArray(_ values: [Float], for name: String) -> Bool {
     set(.floatArray(values), for: name)
   }
@@ -1377,6 +1377,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       }
       return (type, value)
     }
+    // An exact size the Kotlin player hands Compose as `Dp`: NaN is `Dp.Unspecified`, which sizes
+    // the component by its content, and an infinity is constrained to what the parent allows.
+    if NativeSwiftDimensionType.isExact(type) {
+      let value = NativeSwiftFloatExpression.resolve(word, values: values)
+      if value.isNaN { return (NativeSwiftDimensionType.wrap, 0) }
+      if value == .infinity { return (NativeSwiftDimensionType.fill, 1) }
+    }
     return (type, try resolvedFloat(word, field, values: values))
   }
 
@@ -1449,13 +1456,14 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     return settings
   }
 
+  /// A layout or text field's float, which may be any value a host wrote: NaN reads 0, as Java's
+  /// `Math.round` and `(int)` read it where the Kotlin player rounds a padding or offset, and an
+  /// infinity saturates to the largest finite float, as those casts saturate. A `positive` field
+  /// (a font size, a marquee velocity) must still be above 0.
   private func resolvedFloat(
     _ word: UInt32, _ field: String, values: [Int: Float], positive: Bool = false
   ) throws -> Float {
-    let value = NativeSwiftFloatExpression.resolve(word, values: values)
-    guard value.isFinite else {
-      throw NativeSwiftCoreError.malformed(offset: 0, reason: "\(field) resolved to \(value)")
-    }
+    let value = nativeSwiftSaturated(NativeSwiftFloatExpression.resolve(word, values: values))
     guard !positive || value > 0 else {
       throw NativeSwiftCoreError.malformed(
         offset: 0, reason: "\(field) resolved to \(value), which is not positive")
@@ -1467,10 +1475,19 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// and clamped to 32 bits — `RcPlayerState.storeFloat`, as AndroidX
   /// `RemoteComposeState.updateFloat` / `overrideFloat` publish both. Integer expressions, a state
   /// layout's index and visibility read the integer view.
+  ///
+  /// AndroidX writes only a value `!=` the one the id holds (an unset id holds 0), so a zero
+  /// written over a zero keeps the sign already there, as Kotlin's `storeFloat` keeps it; NaN is
+  /// never equal to itself and is always written.
   private func storeFloat(_ id: Int, _ value: Float) {
-    floatOverrides[id] = value
+    let previous = floatOverrides[id] ?? floats[id] ?? 0
+    floatOverrides[id] = value == previous ? previous : value
     integers[id] = nativeSwiftIntegerView(value)
   }
+
+  /// The longest text a `TextMerge` may produce, in UTF-16 units (Java's `String.length`): AndroidX
+  /// `TextMerge.MAX_TEXT_LENGTH`, and Kotlin's `RcTextMerge.MAX_LENGTH`.
+  static let maximumTextMergeLength = 16 * 1024
 
   /// An integer write — `RcPlayerState.setInteger`, as AndroidX `RemoteComposeState.updateInteger`:
   /// nothing for the integer the id already holds, else both views, the float being the integer.
@@ -1954,7 +1971,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
           value, digitsBefore: conversion.digitsBefore, digitsAfter: conversion.digitsAfter,
           flags: conversion.flags)
       case .merge(let merge):
-        texts[merge.outputID] = (texts[merge.leftID] ?? "") + (texts[merge.rightID] ?? "")
+        let merged = (texts[merge.leftID] ?? "") + (texts[merge.rightID] ?? "")
+        // AndroidX throws on a merge longer than its limit; the merged text stays as it was, as
+        // the Kotlin player leaves it.
+        if merged.utf16.count <= Self.maximumTextMergeLength { texts[merge.outputID] = merged }
       case .lookupInt(let lookup):
         guard let ids = document.idLists[lookup.listID], !ids.isEmpty else { continue }
         let index = min(max(integers[lookup.indexID] ?? 0, 0), ids.count - 1)

@@ -1271,8 +1271,8 @@
     }
 
     /// Replaces the list a float-array named variable holds, and answers as ``setFloat(_:for:)``
-    /// does. Every value must be finite, and there may be no more of them than a float list holds
-    /// (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000).
+    /// does. Any value is taken, NaN and the infinities included, but there may be no more of them
+    /// than a float list holds (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000).
     @discardableResult
     public func setFloatArray(_ values: [Float], for name: String) async -> Bool {
       await submit(.setNamed(name, value: .floatArray(values)))

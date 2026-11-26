@@ -2143,7 +2143,7 @@ private fun RenderLayoutNodeContent(
             mainPositioning = androidXRowMainPosition(node.operation.horizontalPositioning),
             crossPositioning = androidXVerticalPosition(node.operation.verticalPositioning),
             spacing =
-              state.dpTypedPixels(state.resolve(node.operation.spacedBy), density).roundToInt(),
+              state.dpTypedPixels(state.resolve(node.operation.spacedBy), density).javaRoundToInt(),
             modifier =
               effectiveModifier.applyComponentModifiers(
                 node.modifiers,
@@ -2170,7 +2170,7 @@ private fun RenderLayoutNodeContent(
             mainPositioning = androidXColumnMainPosition(node.operation.verticalPositioning),
             crossPositioning = androidXHorizontalPosition(node.operation.horizontalPositioning),
             spacing =
-              state.dpTypedPixels(state.resolve(node.operation.spacedBy), density).roundToInt(),
+              state.dpTypedPixels(state.resolve(node.operation.spacedBy), density).javaRoundToInt(),
             modifier =
               effectiveModifier.applyComponentModifiers(
                 node.modifiers,
@@ -2880,7 +2880,9 @@ internal fun alignByCrossPositions(
       5 -> (totalSize - maximumChildSize).toFloat()
       else -> 0f
     }
-  return IntArray(anchors.size) { index -> (base + maximumAnchor - anchors[index]).roundToInt() }
+  return IntArray(anchors.size) { index ->
+    (base + maximumAnchor - anchors[index]).javaRoundToInt()
+  }
 }
 
 private enum class RcCollapseOrientation {
@@ -3377,7 +3379,7 @@ internal fun arrangeLinear(
       else -> 0f
     }
   sizes.forEachIndexed { index, size ->
-    val position = current.roundToInt()
+    val position = current.javaRoundToInt()
     outPositions[index] = if (reverse) totalSize - position - size else position
     current += size + spacing
     if (positioning in 6..8) current += distributedGap
@@ -3772,8 +3774,8 @@ private fun rcOffsetPixels(
   var x = 0
   var y = 0
   for (offset in offsets) {
-    x += state.dpTypedPixels(state.resolve(offset.x), density).roundToInt()
-    y += state.dpTypedPixels(state.resolve(offset.y), density).roundToInt()
+    x += state.dpTypedPixels(state.resolve(offset.x), density).javaRoundToInt()
+    y += state.dpTypedPixels(state.resolve(offset.y), density).javaRoundToInt()
   }
   return IntOffset(x, y)
 }
@@ -3899,14 +3901,21 @@ private fun Modifier.rcPaddingPixels(
 }
 
 /** The leading edge (start, or top) of a padding run, in the whole pixels the chain applies. */
-private fun rcPaddingStartPixels(first: Float): Int = first.coerceAtLeast(0f).roundToInt()
+private fun rcPaddingStartPixels(first: Float): Int = first.coerceAtLeast(0f).javaRoundToInt()
 
 /** The trailing edge (end, or bottom): what the rounded total leaves after the leading edge. */
 private fun rcPaddingEndPixels(first: Float, second: Float): Int =
   rcCombinedPaddingPixels(first, second) - rcPaddingStartPixels(first)
 
 internal fun rcCombinedPaddingPixels(first: Float, second: Float): Int =
-  (first.coerceAtLeast(0f) + second.coerceAtLeast(0f)).roundToInt()
+  (first.coerceAtLeast(0f) + second.coerceAtLeast(0f)).javaRoundToInt()
+
+/**
+ * Java's `Math.round`, which AndroidX's players round with: NaN — a host's value, or an expression
+ * that divides zero by zero — is 0, where `roundToInt` throws; the infinities saturate, as they do
+ * there.
+ */
+private fun Float.javaRoundToInt(): Int = if (isNaN()) 0 else roundToInt()
 
 /** Publishes the pointer position to the document, as AndroidX does on every touch event. */
 private data class RcTouchPositionElement(
@@ -4492,7 +4501,8 @@ private fun Modifier.applyAndroidXScroll(
       .filterIsInstance<RcLinkedNode.Operation>()
       .mapNotNull { it.operation as? ee.schimke.composeai.rcplayer.protocol.RcTouchExpression }
       .singleOrNull()
-  val initialPosition = state.resolve(operation.position).takeIf(Float::isFinite)?.roundToInt() ?: 0
+  val initialPosition =
+    state.resolve(operation.position).takeIf(Float::isFinite)?.javaRoundToInt() ?: 0
   val scrollState = rememberScrollState(initialPosition.coerceAtLeast(0))
   val touchRuntime = touch?.let { remember(it) { RcTouchExpressionRuntime(it) } }
 
@@ -4563,7 +4573,7 @@ private fun Modifier.applyAndroidXScroll(
                     maximum = scrollState.maxValue.toFloat(),
                     resolve = state::resolve,
                   )
-                  .roundToInt()
+                  .javaRoundToInt()
                   .coerceIn(0, scrollState.maxValue)
               return target - current
             }
@@ -4854,7 +4864,7 @@ private fun Modifier.fitToLines(
   // above an integer; rounding that hair up reported 229 for a 228 px line.
   val span = ceil(right - left - LINE_EXTENT_EPSILON).toInt()
   val width = constraints.constrainWidth(span).coerceAtMost(placeable.width)
-  val shift = if (width < placeable.width) -left.roundToInt() else 0
+  val shift = if (width < placeable.width) -left.javaRoundToInt() else 0
   layout(width, placeable.height) { placeable.place(shift, 0) }
 }
 
@@ -5225,15 +5235,17 @@ private fun Modifier.applyLayoutComputes(
     when (block.operation.type) {
       RcLayoutCompute.MEASURE -> {
         width =
-          constraints.constrainWidth(values[LayoutComputeBound.WIDTH].roundToInt().coerceAtLeast(0))
+          constraints.constrainWidth(
+            values[LayoutComputeBound.WIDTH].javaRoundToInt().coerceAtLeast(0),
+          )
         height =
           constraints.constrainHeight(
-            values[LayoutComputeBound.HEIGHT].roundToInt().coerceAtLeast(0),
+            values[LayoutComputeBound.HEIGHT].javaRoundToInt().coerceAtLeast(0),
           )
       }
       RcLayoutCompute.POSITION -> {
-        x = values[LayoutComputeBound.X].roundToInt()
-        y = values[LayoutComputeBound.Y].roundToInt()
+        x = values[LayoutComputeBound.X].javaRoundToInt()
+        y = values[LayoutComputeBound.Y].javaRoundToInt()
       }
     }
   }
@@ -5675,7 +5687,7 @@ private fun rcChildWeight(type: Int?, value: RcFloatWord?, state: RcPlayerState)
  * rounding NaN threw, as in AndroidX's embedded player (androidx-main `300a543b2`).
  */
 internal fun rcFontWeight(resolved: Float): Int =
-  if (resolved.isNaN()) 400 else resolved.roundToInt().coerceIn(1, 1000)
+  if (resolved.isNaN()) 400 else resolved.javaRoundToInt().coerceIn(1, 1000)
 
 private fun Float.finiteOr(default: Float): Float = if (isFinite()) this else default
 
@@ -5733,8 +5745,9 @@ private class RcAlignedRow(
         .maxOfOrNull { measurements.baselines[it] }
     val maximum = maxOf(maximumFixed, maximumBaseline?.toFloat() ?: maximumFixed)
     val reference =
-      if (hasBaselines) maximum.roundToInt() else (maximum - fixedAnchors.min()).roundToInt()
-    return reference - (maximum - anchor).roundToInt()
+      if (hasBaselines) maximum.javaRoundToInt()
+      else (maximum - fixedAnchors.min()).javaRoundToInt()
+    return reference - (maximum - anchor).javaRoundToInt()
   }
 }
 
@@ -6899,10 +6912,10 @@ internal fun fontFeatureSettings(settings: RcFontVariations?): String? =
         // A feature value is a whole number from zero: `GRAD -50` can only be the axis.
         (isAxisOrFeatureTag(it.tag) &&
           it.value >= 0f &&
-          it.value == it.value.roundToInt().toFloat())
+          it.value == it.value.javaRoundToInt().toFloat())
     }
     ?.joinToString(", ") { feature ->
-      val value = feature.value.roundToInt().coerceAtLeast(0)
+      val value = feature.value.javaRoundToInt().coerceAtLeast(0)
       if (value == 1) feature.tag else "${feature.tag} $value"
     }
     ?.ifEmpty { null }
@@ -7669,8 +7682,8 @@ internal fun androidXTextBounds(
   val top: Float
   val bottom: Float
   if (flags and TEXT_MEASURE_FONT_HEIGHT != 0) {
-    top = ascent.roundToInt().toFloat()
-    bottom = descent.roundToInt().toFloat()
+    top = ascent.javaRoundToInt().toFloat()
+    bottom = descent.javaRoundToInt().toFloat()
   } else {
     top = floor(inkTop)
     bottom = ceil(inkBottom)
@@ -9265,24 +9278,25 @@ private class RcFlatEngine(
 
   private fun Constraints.withWidth(width: RcWidthModifier): Constraints =
     when (width.type) {
-      RcDimensionType.EXACT -> fixWidth(px(state.resolve(width.value)).roundToInt())
+      RcDimensionType.EXACT -> fixWidth(px(state.resolve(width.value)).javaRoundToInt())
       RcDimensionType.EXACT_DP ->
-        fixWidth((state.resolve(width.value) * scope.density).roundToInt())
+        fixWidth((state.resolve(width.value) * scope.density).javaRoundToInt())
       RcDimensionType.FILL,
       RcDimensionType.FILL_PARENT_MAX_WIDTH ->
-        if (hasBoundedWidth) fixWidth((maxWidth * state.fillFraction(width.value)).roundToInt())
+        if (hasBoundedWidth) fixWidth((maxWidth * state.fillFraction(width.value)).javaRoundToInt())
         else this
       else -> this
     }
 
   private fun Constraints.withHeight(height: RcHeightModifier): Constraints =
     when (height.type) {
-      RcDimensionType.EXACT -> fixHeight(px(state.resolve(height.value)).roundToInt())
+      RcDimensionType.EXACT -> fixHeight(px(state.resolve(height.value)).javaRoundToInt())
       RcDimensionType.EXACT_DP ->
-        fixHeight((state.resolve(height.value) * scope.density).roundToInt())
+        fixHeight((state.resolve(height.value) * scope.density).javaRoundToInt())
       RcDimensionType.FILL,
       RcDimensionType.FILL_PARENT_MAX_HEIGHT ->
-        if (hasBoundedHeight) fixHeight((maxHeight * state.fillFraction(height.value)).roundToInt())
+        if (hasBoundedHeight)
+          fixHeight((maxHeight * state.fillFraction(height.value)).javaRoundToInt())
         else this
       else -> this
     }
@@ -9345,7 +9359,7 @@ private class RcFlatEngine(
       }
       val span = ceil(right - left - LINE_EXTENT_EPSILON).toInt()
       val fitted = constraints.constrainWidth(span).coerceAtMost(result.size.width)
-      if (fitted < result.size.width) shift = -left.roundToInt()
+      if (fitted < result.size.width) shift = -left.javaRoundToInt()
       width = fitted
     }
     val height = constraints.constrainHeight(result.size.height)
@@ -9473,12 +9487,12 @@ private class RcFlatEngine(
       // handed out a pixel at a time, so the shares add up to exactly the free space.
       val unit = if (totalWeight > 0f) free / totalWeight else 0f
       var remainder =
-        free - weights.sumOf { weight -> weight?.let { (unit * it).roundToInt() } ?: 0 }
+        free - weights.sumOf { weight -> weight?.let { (unit * it).javaRoundToInt() } ?: 0 }
       items.forEachIndexed { index, item ->
         val weight = weights[index] ?: return@forEachIndexed
         val step = remainder.sign
         remainder -= step
-        val share = ((unit * weight).roundToInt() + step).coerceAtLeast(0)
+        val share = ((unit * weight).javaRoundToInt() + step).coerceAtLeast(0)
         val child =
           measure(
             item,

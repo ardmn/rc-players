@@ -243,6 +243,16 @@ tasks
   }
 
 tasks.withType<Test>().configureEach {
+  // `RcHostValueEdgeRenderTest` checks the documents the native Swift player's
+  // `NativeSwiftHostValueEdgeTests` renders, and rewrites them with
+  // `-Prc.hostValueEdges.update=true`.
+  systemProperty(
+    "rc.hostValueEdges.fixtures",
+    rootProject.file("Tests/RcNativePlayerCoreTests/Fixtures/host-value-edges").absolutePath,
+  )
+  (project.findProperty("rc.hostValueEdges.update") as String?)?.let {
+    systemProperty("rc.hostValueEdges.update", it)
+  }
   (project.findProperty("rc.textOnCircle.out") as String?)?.let {
     systemProperty("rc.textOnCircle.out", it)
   }

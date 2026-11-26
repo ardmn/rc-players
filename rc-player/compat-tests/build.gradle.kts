@@ -57,3 +57,16 @@ tasks.register<JavaExec>("generateOperationConformanceFixtures") {
   args(output.get().asFile.absolutePath)
   outputs.dir(output)
 }
+
+// `AndroidxHostValueParityTest` checks the fixture the native Swift player's
+// `NativeSwiftHostValueParityTests` reads against what AndroidX computes, and rewrites it with
+// `-Prc.hostValueParity.update=true`.
+tasks.test {
+  val fixture = rootProject.file("Tests/RcNativePlayerCoreTests/Fixtures/host-value-parity.tsv")
+  systemProperty("rc.hostValueParity.fixture", fixture.absolutePath)
+  inputs.file(fixture).withPropertyName("hostValueParityFixture").optional()
+  providers.gradleProperty("rc.hostValueParity.update").orNull?.let {
+    systemProperty("rc.hostValueParity.update", it)
+    outputs.upToDateWhen { false }
+  }
+}

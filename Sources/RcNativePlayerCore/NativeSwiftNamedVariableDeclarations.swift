@@ -35,14 +35,15 @@ public struct NativeSwiftNamedVariableDeclarations: Sendable {
     return variables[resolved] != nil ? resolved : nil
   }
 
-  /// Whether `value` may be written to the float variable `name`: finite, and `name` is declared
-  /// as a float.
+  /// Whether `value` may be written to the float variable `name`: `name` is declared as a float.
+  /// Any value is, NaN and the infinities included, as AndroidX's `setNamedFloatOverride` takes it.
   public func acceptsFloat(_ value: Float, for name: String) -> Bool {
     accepts(.float(value), for: name)
   }
 
-  /// Whether `value` may be written to the string variable `name`: no longer than a document
-  /// string may be, and `name` is declared as a string.
+  /// Whether `value` may be written to the string variable `name`: `name` is declared as a string.
+  /// A string of any length is, as AndroidX's `setNamedStringOverride` takes it; the 4000-byte
+  /// limit (`maximumStringBytes`) holds only for strings a document carries.
   public func acceptsString(_ value: String, for name: String) -> Bool {
     accepts(.text(value), for: name)
   }
@@ -63,8 +64,8 @@ public struct NativeSwiftNamedVariableDeclarations: Sendable {
     accepts(.long(0), for: name)
   }
 
-  /// Whether `values` may be written to the float-array variable `name`: every value finite, no
-  /// more of them than a document's float list may hold, and `name` is declared as a float array.
+  /// Whether `values` may be written to the float-array variable `name`: no more of them than a
+  /// document's float list may hold, and `name` is declared as a float array.
   public func acceptsFloatArray(_ values: [Float], for name: String) -> Bool {
     accepts(.floatArray(values), for: name)
   }
@@ -75,20 +76,18 @@ public struct NativeSwiftNamedVariableDeclarations: Sendable {
   }
 
   /// The rule every named write meets, whoever names the variable: the value is of the declared
-  /// type, a float (either view of an integer included, and each value of a float array) is
-  /// finite, a string is no longer than a document string may be, and a float array is no longer
-  /// than a document's float list may be.
+  /// type, and a float array is no longer than a document's float list may be. Any float, string,
+  /// colour, integer or long of that type is written, as AndroidX's `setNamed*Override` writes it.
   static func accepts(_ value: NativeSwiftNamedValue, by variable: ParsedNamedVariable) -> Bool {
     switch value {
-    case .float(let value):
-      variable.type == NativeSwiftNamedVariableType.float && value.isFinite
-    case .text(let value):
+    case .float:
+      variable.type == NativeSwiftNamedVariableType.float
+    case .text:
       variable.type == NativeSwiftNamedVariableType.string
-        && value.utf8.count <= NativeSwiftDocumentDecoder.maximumStringBytes
     case .color:
       variable.type == NativeSwiftNamedVariableType.color
-    case .integer(_, let float):
-      variable.type == NativeSwiftNamedVariableType.int && float?.isFinite != false
+    case .integer:
+      variable.type == NativeSwiftNamedVariableType.int
     case .long:
       variable.type == NativeSwiftNamedVariableType.long
     case .floatArray(let values):
@@ -97,14 +96,13 @@ public struct NativeSwiftNamedVariableDeclarations: Sendable {
   }
 
   /// The rule a float array a host writes meets, whatever variable it is for: no more values than
-  /// a document's float list may hold (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000), each one
-  /// finite. The one Swift owner of this rule: the native session and the controller's native
-  /// backend read it. (The Kotlin backend counts against `maxFloatArrayValues` instead and leaves
-  /// the rest to Kotlin's `RcFloatList.canHold`.) The count is checked first, so an oversized
-  /// array is refused without reading its values.
+  /// a document's float list may hold (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000, which every
+  /// AndroidX float list is held to). Any value is allowed, NaN and the infinities included, as
+  /// AndroidX's `UpdateDynamicFloatList` writes any float into a list. The one Swift owner of this
+  /// rule: the native session and the controller's native backend read it; Kotlin's
+  /// `RcFloatList.canHold` is its twin. O(1): the values are not read.
   public static func isWritableFloatArray(_ values: [Float]) -> Bool {
     values.count <= NativeSwiftDocumentDecoder.maximumFloatListValues
-      && values.allSatisfy(\.isFinite)
   }
 
   func variable(for name: String) -> ParsedNamedVariable? {

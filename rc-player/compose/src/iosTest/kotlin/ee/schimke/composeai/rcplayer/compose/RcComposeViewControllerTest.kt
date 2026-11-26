@@ -296,25 +296,27 @@ class RcComposeViewControllerTest {
       controller.values["USER:series"],
     )
 
-    // The arrays the native Swift player refuses are refused here too: an oversized one before
-    // it is copied, a non-finite one by the same rule on the copy.
-    assertFalse(controller.setFloatArray("series", floatArrayOf(1f, Float.NaN)))
-    assertFalse(controller.setFloatArray("series", floatArrayOf(Float.POSITIVE_INFINITY)))
-    assertFalse(controller.setFloatArray("series", floatArrayOf(Float.NEGATIVE_INFINITY)))
-    // Every element is checked, not only the first: one non-finite value anywhere refuses all.
-    val full = FloatArray(RcFloatList.MAX_VALUES) { it.toFloat() }
-    for (index in intArrayOf(0, 1, RcFloatList.MAX_VALUES / 2, RcFloatList.MAX_VALUES - 1)) {
-      for (bad in floatArrayOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
-        val values = full.copyOf().also { it[index] = bad }
-        assertFalse(controller.setFloatArray("series", values), "$bad at index $index")
-      }
-    }
+    // An array longer than a float list holds is refused before it is copied, as the native
+    // Swift player refuses it, and leaves the stored one in place.
     assertFalse(controller.setFloatArray("series", FloatArray(RcFloatList.MAX_VALUES + 1)))
     assertEquals(
       RcNamedValue.FloatArrayValue(listOf(5f, 6f, 7f)),
       controller.values["USER:series"],
       "a refused array replaced the stored one",
     )
+    // Any value is taken, as AndroidX writes any float into a list: NaN and the infinities too,
+    // anywhere in the array.
+    val full = FloatArray(RcFloatList.MAX_VALUES) { it.toFloat() }
+    for (index in intArrayOf(0, 1, RcFloatList.MAX_VALUES / 2, RcFloatList.MAX_VALUES - 1)) {
+      for (edge in floatArrayOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+        val values = full.copyOf().also { it[index] = edge }
+        assertTrue(controller.setFloatArray("series", values), "$edge at index $index")
+      }
+    }
+    // A float is taken whatever its value, as AndroidX's `setNamedFloatOverride` takes it.
+    for (edge in floatArrayOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+      assertTrue(controller.setFloat("progress", edge), "$edge")
+    }
     assertTrue(controller.setFloatArray("series", FloatArray(RcFloatList.MAX_VALUES)))
     assertTrue(controller.setFloatArray("series", floatArrayOf(5f, 6f, 7f)))
 

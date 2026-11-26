@@ -42,8 +42,9 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
     // A word pushes at most one value, so this stack cannot overflow.
     val stack = FloatArray(max(128, expression.size + 1))
     var sp = -1
-    // A malformed document — an operator with too few operands, an array index past its end — must
-    // not take the player down with it. AndroidX's evaluator throws there; this one yields 0.
+    // A malformed document — an operator with too few operands, an array index past its end, a sum
+    // past AndroidX's iteration limit — must not take the player down with it. AndroidX's evaluator
+    // throws there; this one yields 0.
     try {
       expression.forEach { word ->
         val id = word.bits and NAN_PAYLOAD_MASK
@@ -55,6 +56,10 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
         }
       }
     } catch (_: IndexOutOfBoundsException) {
+      return 0f
+    } catch (_: IllegalArgumentException) {
+      // `A_SUM_TILL` past AndroidX's iteration limit, which AndroidX throws on: a host's infinity
+      // reaches it as easily as a malformed document.
       return 0f
     }
     return if (sp in stack.indices) stack[sp] else 0f
@@ -263,7 +268,9 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
         stack[sp - 1] =
           when {
             index < 0 -> values[0]
-            index >= values.lastIndex -> values.last()
+            // AndroidX's `array[array.length - 1]`: an empty array (a host may write one) is
+            // out of bounds, which reads 0 here, not `last()`'s NoSuchElementException.
+            index >= values.lastIndex -> values[values.lastIndex]
             else -> values[index] + (position - index) * (values[index + 1] - values[index])
           }
         sp--

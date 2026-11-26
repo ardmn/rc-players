@@ -346,11 +346,11 @@ enum NativeSwiftFloatExpression {
           opcode: opcode, offset: offset, reason: "float expression operator \(operation)")
       }
     }
-    guard stack.count == 1, let result = stack.last, result.isFinite else {
-      throw NativeSwiftCoreError.malformed(
-        offset: offset, reason: "Invalid float expression result")
-    }
-    return result
+    // The top of the stack, NaN and the infinities included, as AndroidX's
+    // `AnimatedFloatExpression.eval` returns `mStack[sp]` and the Kotlin player's evaluator returns
+    // it: a host may write any float, and `0 / 0` is a value like any other. An empty stack reads
+    // 0, as the Kotlin player's does where AndroidX's would index past it.
+    return stack.last ?? 0
   }
 
   /// Whether `word` names an id in AndroidX's array region rather than a value.
