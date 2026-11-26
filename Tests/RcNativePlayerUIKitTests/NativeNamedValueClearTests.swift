@@ -90,7 +90,8 @@
       #expect(await view.setFloatArray([3, 4, 5], for: "series"))
       #expect(!(await view.setLong(1, for: "scalar")))
       #expect(!(await view.setFloatArray([1], for: "when")))
-      #expect(!(await view.setFloatArray([.nan], for: "series")))
+      // Any element is a value, NaN too, as AndroidX `UpdateDynamicFloatList.apply` stores it.
+      #expect(await view.setFloatArray([.nan], for: "series"))
       #expect(await view.clear("series"))
       #expect(await view.clear("when"))
     }

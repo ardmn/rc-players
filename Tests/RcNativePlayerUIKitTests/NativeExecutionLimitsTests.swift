@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 
+@testable import RcNativePlayerCore
 @testable import RcNativePlayerUIKit
 
 @Suite struct NativeExecutionLimitsTests {
@@ -89,9 +90,11 @@ import Testing
       value: 1, type: 1, componentID: 9, field: "width", limits: strictCoordinates)
     try numbers.validateLayoutDimension(
       value: 2, type: 3, componentID: 9, field: "width", limits: strictCoordinates)
-    expect(.coordinateTooLarge(componentID: 9, field: "width", actual: 1, maximum: 0.5)) {
+    // An exact size of any value passes: `layoutDimension(_:type:)` clamps it instead.
+    for value: Double in [1, 1e9, -1e9, .infinity, .nan] {
       try numbers.validateLayoutDimension(
-        value: 1, type: 0, componentID: 9, field: "width", limits: strictCoordinates)
+        value: value, type: NativeSwiftDimensionType.exact, componentID: 9, field: "width",
+        limits: strictCoordinates)
     }
     expect(.invalidDimensionValue(componentID: 9, field: "width", actual: -1)) {
       try numbers.validateLayoutDimension(

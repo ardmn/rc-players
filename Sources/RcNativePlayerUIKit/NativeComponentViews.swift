@@ -91,12 +91,8 @@
         try budget.validateLayoutDimension(
           value: Double(node.heightValue), type: node.heightType, componentID: node.componentID,
           field: "height", limits: limits)
-        try budget.validateNumbers(
-          [
-            node.padding.left, node.padding.top, node.padding.right, node.padding.bottom,
-            node.spacing,
-          ]
-          .map(Double.init), componentID: node.componentID, field: "layout", limits: limits)
+        // Padding, spacing and offsets render whatever their value: `NativeLayoutNode` normalises
+        // them through `layoutCoordinate(_:)`.
         if let text = node.text {
           try budget.recordCommand(pathElementCount: 0, strings: [text.value], limits: limits)
           try budget.validateFinite(
@@ -112,13 +108,10 @@
             }
           }
         }
+        // A command with non-finite geometry is dropped (`isDrawable`) and the rest clamped
+        // (`NativeDrawCommand(_:limits:)`) by `NativeNode`; each still counts against the budget.
         for command in node.commands {
           try budget.recordCommand(pathElementCount: command.path.count, limits: limits)
-          try budget.validateNumbers(
-            command.geometryValues.map(Double.init)
-              + [Double(command.strokeWidth), Double(command.alpha)]
-              + command.path.flatMap { $0.values.map(Double.init) },
-            componentID: node.componentID, field: "draw", limits: limits)
         }
         if let custom = node.custom {
           try budget.recordWork(custom.properties.count, limits: limits)
@@ -139,7 +132,7 @@
       size = CGSize(width: swiftSnapshot.width, height: swiftSnapshot.height)
       root = NativeNode(
         swiftSnapshot: swiftSnapshot.root,
-        densityBehavior: swiftSnapshot.densityBehavior)
+        densityBehavior: swiftSnapshot.densityBehavior, limits: limits)
       images = swiftSnapshot.images.map {
         NativeImageResource(
           id: $0.id, width: $0.width, height: $0.height, type: $0.type,
@@ -284,8 +277,11 @@
       graphicsLayer.map { max(0, min(1, $0.alpha)) } ?? 1
     }
 
-    init(swiftSnapshot snapshot: NativeSwiftNodeSnapshot, densityBehavior: Int) {
-      layout = NativeLayoutNode(snapshot: snapshot)
+    init(
+      swiftSnapshot snapshot: NativeSwiftNodeSnapshot, densityBehavior: Int,
+      limits: RemoteComposeNativeExecutionLimits = .default
+    ) {
+      layout = NativeLayoutNode(snapshot: snapshot, limits: limits)
       visibilityTransition = snapshot.visibilityTransition
       switch snapshot.kind {
       case .root: kind = .root
@@ -302,40 +298,41 @@
       componentKind = snapshot.componentKind
       scrollDirection = snapshot.scrollDirection
       commands =
-        snapshot.commands.map(NativeDrawCommand.init)
+        snapshot.commands.filter(limits.isDrawable).map { NativeDrawCommand($0, limits: limits) }
         + (snapshot.text.map { [NativeDrawCommand(text: $0)] } ?? [])
       children = snapshot.children.map {
-        NativeNode(swiftSnapshot: $0, densityBehavior: densityBehavior)
+        NativeNode(swiftSnapshot: $0, densityBehavior: densityBehavior, limits: limits)
       }
       semanticDescriptor = snapshot.semanticDescriptor
       semanticLocalLabels = snapshot.semanticLocalLabels
       semanticClickActionTypes = snapshot.semanticClickActionTypes
       gestureTypes = snapshot.supportedGestures
       widthType = snapshot.widthType
-      widthValue = CGFloat(snapshot.widthValue)
+      // The geometry `layout` normalised, so this node and its layout never disagree.
+      widthValue = layout.widthValue
       heightType = snapshot.heightType
-      heightValue = CGFloat(snapshot.heightValue)
-      minimumHeight = CGFloat(snapshot.minimumHeight)
-      minimumWidth = CGFloat(snapshot.minimumWidth)
-      maximumWidth = snapshot.maximumWidth < 0 ? nil : CGFloat(snapshot.maximumWidth)
-      maximumHeight = snapshot.maximumHeight < 0 ? nil : CGFloat(snapshot.maximumHeight)
+      heightValue = layout.heightValue
+      minimumHeight = layout.minimumHeight
+      minimumWidth = layout.minimumWidth
+      maximumWidth = layout.maximumWidth
+      maximumHeight = layout.maximumHeight
       padding = UIEdgeInsets(
-        top: CGFloat(snapshot.padding.top), left: CGFloat(snapshot.padding.left),
-        bottom: CGFloat(snapshot.padding.bottom), right: CGFloat(snapshot.padding.right))
+        top: layout.padding.top, left: layout.padding.left, bottom: layout.padding.bottom,
+        right: layout.padding.right)
       cornerRadius = CGFloat(snapshot.cornerRadius)
       clipsToBounds = snapshot.clipsToBounds
       graphicsLayer = snapshot.graphicsLayer
       backgroundColor = snapshot.backgroundARGB.map(UIColor.init(remoteComposeARGB:))
       horizontalPositioning = snapshot.horizontalPositioning
       verticalPositioning = snapshot.verticalPositioning
-      spacing = CGFloat(snapshot.spacing)
+      spacing = layout.spacing
       flowMaximumItems = snapshot.flowMaximumItems
       flowMaximumLines = snapshot.flowMaximumLines
       isCollapsible = snapshot.isCollapsible
       collapsiblePriority = snapshot.collapsiblePriority.map(CGFloat.init)
       collapsiblePriorityOrientation = snapshot.collapsiblePriorityOrientation
-      offset = CGPoint(x: CGFloat(snapshot.offsetX), y: CGFloat(snapshot.offsetY))
-      zIndex = CGFloat(snapshot.zIndex)
+      offset = layout.offset
+      zIndex = layout.zIndex
       visibility = snapshot.visibility
       custom = snapshot.custom.map(NativeCustomComponent.init)
       self.densityBehavior = densityBehavior
@@ -417,12 +414,17 @@
     let usesComponentGeometry: Bool
     let offscreenTarget: NativeSwiftOffscreenTargetSnapshot?
 
-    init(_ snapshot: NativeSwiftDrawCommandSnapshot) {
+    /// Its geometry, stroke and path held within the coordinate limit (`drawCoordinate`). A
+    /// command that is not `isDrawable` is dropped before it gets here.
+    init(
+      _ snapshot: NativeSwiftDrawCommandSnapshot,
+      limits: RemoteComposeNativeExecutionLimits = .default
+    ) {
       kind = snapshot.kind
-      values = snapshot.values.map(CGFloat.init)
+      values = snapshot.values.map(limits.drawCoordinate)
       color = UIColor(remoteComposeARGB: snapshot.colorARGB)
       alpha = CGFloat(snapshot.alpha)
-      strokeWidth = CGFloat(snapshot.strokeWidth)
+      strokeWidth = limits.drawCoordinate(snapshot.strokeWidth)
       isStroke = snapshot.isStroke
       strokeCap = snapshot.strokeCap
       strokeJoin = snapshot.strokeJoin
@@ -432,7 +434,7 @@
       textWeight = 400
       text = nil
       path = snapshot.path.map {
-        NativePathElement(kind: $0.kind, values: $0.values.map(CGFloat.init))
+        NativePathElement(kind: $0.kind, values: $0.values.map(limits.drawCoordinate))
       }
       pathWinding = snapshot.pathWinding
       gradient = snapshot.gradient.map {
@@ -1415,7 +1417,7 @@
             x: Float(frame.minX), y: Float(frame.minY), width: Float(frame.width),
             height: Float(frame.height))
         else { return nil }
-        return commands.map(NativeDrawCommand.init)
+        return commands.map { NativeDrawCommand($0) }
       }
     }
 

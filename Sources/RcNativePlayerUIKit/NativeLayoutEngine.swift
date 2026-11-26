@@ -86,31 +86,38 @@ struct NativeLayoutNode: Equatable {
 }
 
 extension NativeLayoutNode {
-  init(snapshot: NativeSwiftNodeSnapshot) {
+  /// Every float the snapshot resolved is normalised through `limits` (`layoutCoordinate`,
+  /// `layoutDimension`), so whatever value a host wrote lays out with finite geometry.
+  init(snapshot: NativeSwiftNodeSnapshot, limits: RemoteComposeNativeExecutionLimits = .default) {
     self.init(kind: snapshot.kind)
     componentID = snapshot.componentID
     componentKind = snapshot.componentKind
     widthType = snapshot.widthType
-    widthValue = CGFloat(snapshot.widthValue)
+    widthValue = limits.layoutDimension(snapshot.widthValue, type: snapshot.widthType)
     heightType = snapshot.heightType
-    heightValue = CGFloat(snapshot.heightValue)
-    minimumWidth = CGFloat(snapshot.minimumWidth)
-    maximumWidth = snapshot.maximumWidth < 0 ? nil : CGFloat(snapshot.maximumWidth)
-    minimumHeight = CGFloat(snapshot.minimumHeight)
-    maximumHeight = snapshot.maximumHeight < 0 ? nil : CGFloat(snapshot.maximumHeight)
+    heightValue = limits.layoutDimension(snapshot.heightValue, type: snapshot.heightType)
+    minimumWidth = limits.layoutCoordinate(snapshot.minimumWidth)
+    maximumWidth =
+      snapshot.maximumWidth < 0 ? nil : limits.layoutCoordinate(snapshot.maximumWidth)
+    minimumHeight = limits.layoutCoordinate(snapshot.minimumHeight)
+    maximumHeight =
+      snapshot.maximumHeight < 0 ? nil : limits.layoutCoordinate(snapshot.maximumHeight)
     padding = NativeLayoutInsets(
-      top: CGFloat(snapshot.padding.top), left: CGFloat(snapshot.padding.left),
-      bottom: CGFloat(snapshot.padding.bottom), right: CGFloat(snapshot.padding.right))
+      top: limits.layoutCoordinate(snapshot.padding.top),
+      left: limits.layoutCoordinate(snapshot.padding.left),
+      bottom: limits.layoutCoordinate(snapshot.padding.bottom),
+      right: limits.layoutCoordinate(snapshot.padding.right))
     horizontalPositioning = snapshot.horizontalPositioning
     verticalPositioning = snapshot.verticalPositioning
-    spacing = CGFloat(snapshot.spacing)
+    spacing = limits.layoutCoordinate(snapshot.spacing)
     flowMaximumItems = snapshot.flowMaximumItems
     flowMaximumLines = snapshot.flowMaximumLines
     isCollapsible = snapshot.isCollapsible
     collapsiblePriority = snapshot.collapsiblePriority
     collapsiblePriorityOrientation = snapshot.collapsiblePriorityOrientation
-    offset = CGPoint(x: CGFloat(snapshot.offsetX), y: CGFloat(snapshot.offsetY))
-    zIndex = CGFloat(snapshot.zIndex)
+    offset = CGPoint(
+      x: limits.layoutCoordinate(snapshot.offsetX), y: limits.layoutCoordinate(snapshot.offsetY))
+    zIndex = limits.layoutCoordinate(snapshot.zIndex)
     visibility = snapshot.visibility
     scrollDirection = snapshot.scrollDirection
     marquee = snapshot.marquee != nil

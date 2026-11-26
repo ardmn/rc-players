@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 #if canImport(RcNativePlayerCore)
   import RcNativePlayerCore
@@ -10,8 +11,20 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   public var maximumNestingDepth: Int
   public var maximumDrawCommandCount: Int
   public var maximumPathElementCount: Int
+  /// The UTF-8 bytes of text one frame may show, host-written strings included; each byte also
+  /// counts one unit of `maximumFrameWork`. AndroidX takes a host string of any length
+  /// (`AndroidRemoteContext.setNamedStringOverride`), so the default, 128 KiB, is well over
+  /// anything a document shows by itself (a string is at most 4000 bytes on the wire, AndroidX
+  /// `Limits.MAX_STRING_SIZE`, and a `TextMerge` 16K UTF-16 units) and still fits the default work
+  /// budget; it refuses a document that repeats its text to stall the frame. A longer host string
+  /// fails its frame, reported through `onError`, where AndroidX would show it.
   public var maximumTextBytes: Int
+  /// The largest view or canvas side. The document's own size over it is refused; the UIKit
+  /// player clamps a resolved exact width or height to it instead (`layoutDimension`).
   public var maximumCanvasDimension: Double
+  /// The largest coordinate magnitude. The UIKit player clamps resolved layout and draw values to
+  /// it rather than refusing the frame (`layoutCoordinate`, `drawCoordinate`); the AppKit policy
+  /// still refuses a frame over it.
   public var maximumCoordinateMagnitude: Double
   public var maximumFrameWork: Int
 
@@ -21,7 +34,7 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
     maximumNestingDepth: Int = 256,
     maximumDrawCommandCount: Int = 50_000,
     maximumPathElementCount: Int = 100_000,
-    maximumTextBytes: Int = 16 * 1024,
+    maximumTextBytes: Int = 128 * 1024,
     maximumCanvasDimension: Double = 16_384,
     maximumCoordinateMagnitude: Double = 1_000_000,
     maximumFrameWork: Int = 200_000
@@ -38,6 +51,50 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   }
 
   public static let `default` = RemoteComposeNativeExecutionLimits()
+
+  /// A resolved layout float (a padding, spacing, offset, constraint or z-index) as UIKit can take
+  /// it, whatever a host wrote: NaN reads 0, as Java's `(int)` and `Math.round` read it where the
+  /// Kotlin player rounds a padding or offset, and the rest is held within
+  /// ±`maximumCoordinateMagnitude`, so layout arithmetic stays finite and a `CALayer` never sees a
+  /// NaN position. AndroidX takes the raw float (`PaddingModifierOperation.updateVariables`,
+  /// `OffsetModifierOperation.updateVariables`), so a host's value must not fail the frame.
+  func layoutCoordinate(_ value: Float) -> CGFloat {
+    value.isNaN ? 0 : Self.clamped(CGFloat(value), to: maximumCoordinateMagnitude)
+  }
+
+  /// An exact width or height, held within ±`maximumCanvasDimension` so no view outgrows the
+  /// largest canvas the player backs; NaN reads 0. Within a parent it is clamped to the parent's
+  /// constraints anyway, as AndroidX's measure clamps it
+  /// (`BaseModernMeasurePolicy.measure`: `Math.min(maxWidth, computeModifierDefinedWidth(..))`).
+  /// Any other dimension type keeps NaN, which a fill reads as a bare `fillMaxWidth()`.
+  func layoutDimension(_ value: Float, type: Int) -> CGFloat {
+    switch type {
+    case NativeSwiftDimensionType.exact, NativeSwiftDimensionType.exactDp:
+      return value.isNaN ? 0 : Self.clamped(CGFloat(value), to: maximumCanvasDimension)
+    default:
+      return value.isNaN ? .nan : Self.clamped(CGFloat(value), to: maximumCoordinateMagnitude)
+    }
+  }
+
+  /// A draw command's float within ±`maximumCoordinateMagnitude`. NaN is kept: it is a sentinel
+  /// some commands carry (`unsetValueIndices`), and `isDrawable` already dropped a command whose
+  /// geometry is non-finite.
+  func drawCoordinate(_ value: Float) -> CGFloat {
+    value.isNaN ? .nan : Self.clamped(CGFloat(value), to: maximumCoordinateMagnitude)
+  }
+
+  /// Whether a draw command's geometry, paint and path are all finite. AndroidX hands the raw
+  /// floats to `Canvas` (`DrawRect.paint`: `context.drawRect(mX1, mY1, mX2, mY2)`), which draws
+  /// nothing for a non-finite shape; the player drops such a command and draws the rest of the
+  /// frame, rather than failing it.
+  func isDrawable(_ command: NativeSwiftDrawCommandSnapshot) -> Bool {
+    command.geometryValues.allSatisfy(\.isFinite) && command.strokeWidth.isFinite
+      && command.alpha.isFinite && command.path.allSatisfy { $0.values.allSatisfy(\.isFinite) }
+  }
+
+  private static func clamped(_ value: CGFloat, to bound: Double) -> CGFloat {
+    min(max(value, -CGFloat(bound)), CGFloat(bound))
+  }
 }
 
 public enum RemoteComposeNativeLimitError: Error, Equatable, LocalizedError, Sendable {
@@ -228,8 +285,8 @@ struct NativeFrameBudget: Equatable, Sendable {
   ) throws {
     switch type {
     case NativeSwiftDimensionType.exact, NativeSwiftDimensionType.exactDp:
-      try validateNumbers([value], componentID: componentID, field: field, limits: limits)
-      try validateCanvasDimensions([abs(value)], limits: limits)
+      // Any exact size renders: `layoutDimension(_:type:)` holds it within the canvas limit.
+      break
     case NativeSwiftDimensionType.fill, NativeSwiftDimensionType.fillParentMaxWidth,
       NativeSwiftDimensionType.fillParentMaxHeight:
       if value.isNaN { return }
