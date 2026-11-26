@@ -21,6 +21,18 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private var requestedTheme = NativeSwiftTheme.unspecified
   private var colors: [Int: UInt32]
   private var integers: [Int: Int]
+  /// The ids the document itself fills as integers: its integer constants and the outputs of its
+  /// integer expressions, id lookups and data-map lookups. With the ids a host or an action wrote
+  /// (`writtenIntegerAndTextIDs`) they are every integer slot the float evaluator may need
+  /// projected; the rest of `integers` is the integer view of a float, which already has its float.
+  /// Kept apart so a frame does not walk every float constant's integer view.
+  private let integerSlotIDs: Set<Int>
+  /// Each `ImageAttribute` output's size. The reference writes it again on every pass, so every
+  /// resolution puts it back over whatever a write left there.
+  private let imageSizeByID: [Int: Float]
+  /// The ids a float expression computes: their float view is the expression's, which an integer
+  /// write that changes nothing leaves as it was.
+  private let floatExpressionIDs: Set<Int>
   /// Set once a document operation is seen writing `EPOCH_SECOND`'s id itself.
   private var documentClaimsEpochSecond = false
   /// The colours a host has set by name, which a theme switch leaves alone.
@@ -61,9 +73,63 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     namedVariableDeclarations = NativeSwiftNamedVariableDeclarations(
       variables: document.namedVariables)
     texts = document.texts
-    floats = document.floats
     colors = document.colors
-    integers = document.integers
+    (floats, integers) = Self.seededNumericViews(of: document)
+    var imageSizeByID: [Int: Float] = [:]
+    for case .imageSize(let id, let value) in document.numericConstants {
+      imageSizeByID[id] = value
+    }
+    self.imageSizeByID = imageSizeByID
+    floatExpressionIDs = Set(document.expressions.map(\.id))
+    var slotIDs = Set(document.integers.keys)
+    slotIDs.formUnion(document.integerExpressionOrder)
+    slotIDs.formUnion(document.idLookups.map(\.outputID))
+    slotIDs.formUnion(document.dataMapLookups.map(\.outputID))
+    slotIDs.insert(NativeSwiftSystemVariables.epochSecond)
+    integerSlotIDs = slotIDs
+  }
+
+  /// The document's own floats and integers, each float also its integer view.
+  ///
+  /// Literal constants are applied in wire order, as `RcSeedValues.load` applies them: a float
+  /// publishes both views, and a later integer at the same id replaces both unless the id already
+  /// holds that integer. Image sizes are applied after them, as the reference's
+  /// `applyImageAttribute` runs again on every pass after the constants were loaded once. Every
+  /// float the decoder settles is one of these.
+  private static func seededNumericViews(of document: ParsedDocument) -> ([Int: Float], [Int: Int])
+  {
+    var floats = document.floats
+    var integers = document.integers
+    var constantFloatByID: [Int: Float] = [:]
+    var constantIntegerByID: [Int: Int] = [:]
+    var imageSizes: [(id: Int, value: Float)] = []
+    for constant in document.numericConstants {
+      switch constant {
+      case .float(let id, let value):
+        constantFloatByID[id] = value
+        constantIntegerByID[id] = nativeSwiftIntegerView(value)
+      case .integer(let id, let value):
+        guard constantIntegerByID[id] != value else { continue }
+        constantIntegerByID[id] = value
+        // An id only ever declared an integer keeps no float of its own: its float view is the
+        // projection of the integer, which follows later integer writes.
+        if constantFloatByID[id] != nil { constantFloatByID[id] = Float(value) }
+      case .imageSize(let id, let value):
+        imageSizes.append((id, value))
+      }
+    }
+    for (id, value) in imageSizes {
+      constantFloatByID[id] = value
+      constantIntegerByID[id] = nativeSwiftIntegerView(value)
+    }
+    // An id a float expression computes takes its float from the expression; the constant's
+    // integer view would be stale the moment it runs, so none is seeded.
+    let floatExpressionIDs = Set(document.expressions.map(\.id))
+    for (id, value) in constantFloatByID {
+      floats[id] = value
+      if !floatExpressionIDs.contains(id) { integers[id] = constantIntegerByID[id] }
+    }
+    return (floats, integers)
   }
 
   /// Opens a document.
@@ -121,6 +187,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     floatOverrides = other.floatOverrides
     colors = other.colors
     integers = other.integers
+    integerSlotIDs = other.integerSlotIDs
+    imageSizeByID = other.imageSizeByID
+    floatExpressionIDs = other.floatExpressionIDs
     documentClaimsEpochSecond = other.documentClaimsEpochSecond
     hostSetColors = other.hostSetColors
     writtenIntegerAndTextIDs = other.writtenIntegerAndTextIDs
@@ -273,7 +342,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       case NativeSwiftDataMapType.string:
         if let value = texts[entry.valueID] { texts[lookup.outputID] = value }
       case NativeSwiftDataMapType.int, NativeSwiftDataMapType.long, NativeSwiftDataMapType.boolean:
-        integers[lookup.outputID] = integers[entry.valueID] ?? 0
+        storeInteger(lookup.outputID, integers[entry.valueID] ?? 0)
       case NativeSwiftDataMapType.float:
         values[lookup.outputID] = values[entry.valueID] ?? floats[entry.valueID] ?? 0
       default:
@@ -484,10 +553,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     var events: [NativeSwiftEvent] = []
     for handler in document.eventHandlers where handler.type == type && handler.filter == metadata {
       try resolveIntegerExpressions()
-      // The reference's `overrideFloat`: the float slot only, as `setFloat` writes it.
+      // The reference's `overrideFloat`, which publishes both numeric views as `storeFloat` does.
       for (id, value) in zip(handler.dataIDs, data) where id != 0 && value.isFinite {
         staticSnapshotCache = nil
-        floatOverrides[id] = value
+        storeFloat(id, value)
       }
       var values = try resolvedFloats(timeSeconds: timeSeconds)
       if let condition = handler.condition {
@@ -528,18 +597,24 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private func execute(_ actions: [ParsedAction], values: inout [Int: Float]) throws
     -> [NativeSwiftEvent]
   {
-    func storeInteger(_ id: Int, _ value: Int) {
-      integers[id] = value
+    func storeActionInteger(_ id: Int, _ value: Int) {
       writtenIntegerAndTextIDs.insert(id)
-      floatOverrides.removeValue(forKey: id)
+      guard storeInteger(id, value) else {
+        // Unchanged, so Kotlin leaves `floats[id]`: a float expression's value stays; any other
+        // id's float view is its integer, which an earlier action may have moved this frame.
+        if !floatExpressionIDs.contains(id) {
+          values[id] = floatOverrides[id] ?? floats[id] ?? Float(value)
+        }
+        return
+      }
+      // A document float at the id took the integer; an override records it as this action's
+      // write, so a float variable carries it into a reopen as a host's float write would.
+      if let float = floats[id] { floatOverrides[id] = float }
       values[id] = Float(value)
     }
-    // A float write is published into the integer view too, truncated, as
-    // `RcPlayerState.storeFloat` does: the two numeric views share ids.
-    func storeFloat(_ id: Int, _ value: Float) {
-      floatOverrides[id] = value
+    func storeActionFloat(_ id: Int, _ value: Float) {
+      storeFloat(id, value)
       values[id] = value
-      integers[id] = Int(Int32(clamping: nativeSwiftClampedInt(value)))
       writtenIntegerAndTextIDs.insert(id)
     }
     // A sequence can mutate state before a later expression fails. Invalidate before executing the
@@ -550,27 +625,27 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       switch action {
       case .integerExpression(let targetID, let expressionID):
         if let expression = document.integerExpressions[expressionID] {
-          storeInteger(
+          storeActionInteger(
             targetID,
             try NativeSwiftIntegerExpression.evaluate(
               mask: expression.mask, tokens: expression.tokens, values: integers,
               offset: expression.offset))
         } else if let value = integers[expressionID] {
-          storeInteger(targetID, value)
+          storeActionInteger(targetID, value)
         }
       case .floatExpression(let targetID, let expressionID):
         guard let expression = document.expressions.first(where: { $0.id == expressionID })
         else { continue }
-        storeFloat(
+        storeActionFloat(
           targetID,
           try NativeSwiftFloatExpression.evaluate(
             expression.words, values: values, opcode: expression.opcode,
             offset: expression.offset))
       case .integerValue(let targetID, let value):
-        storeInteger(targetID, value)
+        storeActionInteger(targetID, value)
       case .floatValue(let targetID, let value):
         let resolved = NativeSwiftFloatExpression.resolve(value, values: values)
-        if resolved.isFinite { storeFloat(targetID, resolved) }
+        if resolved.isFinite { storeActionFloat(targetID, resolved) }
       case .textValue(let targetID, let textID):
         if let text = texts[textID] {
           texts[targetID] = text
@@ -636,7 +711,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       case NativeSwiftDataMapType.string:
         if let value = texts[entry.valueID] { texts[lookup.outputID] = value }
       case NativeSwiftDataMapType.int, NativeSwiftDataMapType.long, NativeSwiftDataMapType.boolean:
-        integers[lookup.outputID] = integers[entry.valueID] ?? 0
+        storeInteger(lookup.outputID, integers[entry.valueID] ?? 0)
       case NativeSwiftDataMapType.float:
         values[lookup.outputID] = values[entry.valueID] ?? floats[entry.valueID] ?? 0
       default:
@@ -781,7 +856,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     let id = variable.id
     switch value {
     case .float(let value):
-      floatOverrides[id] = value
+      storeFloat(id, value)
     case .text(let value):
       texts[id] = value
       writtenIntegerAndTextIDs.insert(id)
@@ -789,12 +864,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       colors[id] = argb
       hostSetColors.insert(id)
     case .integer(let value, let float):
-      integers[id] = value
       writtenIntegerAndTextIDs.insert(id)
       if let float {
+        // A carried value restores both views exactly as the previous session left them.
+        integers[id] = value
         floatOverrides[id] = float
       } else {
-        floatOverrides.removeValue(forKey: id)
+        storeInteger(id, value)
       }
     }
     staticSnapshotCache = nil
@@ -814,7 +890,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     stateLock.lock()
     defer { stateLock.unlock() }
     guard value.isFinite else { return false }
-    floatOverrides[id] = value
+    storeFloat(id, value)
     staticSnapshotCache = nil
     return true
   }
@@ -870,7 +946,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       let targetID = NativeSwiftFloatExpression.referenceID(
         UInt32(bitPattern: Int32(property.valueBits)))
     else { return false }
-    floatOverrides[targetID] = value
+    storeFloat(targetID, value)
     staticSnapshotCache = nil
     return true
   }
@@ -900,7 +976,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     if let source = node.text {
       // `size > 0` used to be a parse-time guard. It still holds, but a computed size has no value
       // to check until here, so the check moved with it rather than being dropped.
-      let size = try resolvedFloat(source.sizeWord, "text size", values: values, positive: true)
+      let size = try resolvedFloat(
+        source.sizeWord, NativeSwiftWireField.textSize, values: values, positive: true)
       let weight = resolveOptionalFloat(source.weightWord, values: values) ?? 400
       text = NativeSwiftTextSnapshot(
         value: texts[source.textID] ?? "",
@@ -995,17 +1072,22 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         })
     }
 
-    let maximumWidth = try resolvedFloat(node.maximumWidthWord, "maximum width", values: values)
-    let maximumHeight = try resolvedFloat(node.maximumHeightWord, "maximum height", values: values)
+    let maximumWidth = try resolvedFloat(
+      node.maximumWidthWord, NativeSwiftWireField.maximumWidth, values: values)
+    let maximumHeight = try resolvedFloat(
+      node.maximumHeightWord, NativeSwiftWireField.maximumHeight, values: values)
     let cornerRadii = try node.cornerRadiusWords.map {
-      try resolvedFloat($0, "corner radius", values: values)
+      try resolvedFloat($0, NativeSwiftWireField.cornerRadius, values: values)
     }
     let cornerRadius = cornerRadii.max() ?? 0
 
     let resolvedWidth = try resolvedDimension(
-      node.widthWord, type: stateLayoutDimension(node, isWidth: true), "width", values: values)
+      node.widthWord, type: stateLayoutDimension(node, isWidth: true), NativeSwiftWireField.width,
+      values: values)
     let resolvedHeight = try resolvedDimension(
-      node.heightWord, type: stateLayoutDimension(node, isWidth: false), "height", values: values)
+      node.heightWord, type: stateLayoutDimension(node, isWidth: false),
+      NativeSwiftWireField.height,
+      values: values)
 
     return NativeSwiftNodeSnapshot(
       kind: node.kind,
@@ -1046,13 +1128,19 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       padding: node.stateIndexID != nil
         ? NativeSwiftInsets()
         : NativeSwiftInsets(
-          left: try resolvedFloat(node.paddingWords.left, "padding left", values: values),
-          top: try resolvedFloat(node.paddingWords.top, "padding top", values: values),
-          right: try resolvedFloat(node.paddingWords.right, "padding right", values: values),
-          bottom: try resolvedFloat(node.paddingWords.bottom, "padding bottom", values: values)),
-      minimumWidth: try resolvedFloat(node.minimumWidthWord, "minimum width", values: values),
+          left: try resolvedFloat(
+            node.paddingWords.left, NativeSwiftWireField.paddingLeft, values: values),
+          top: try resolvedFloat(
+            node.paddingWords.top, NativeSwiftWireField.paddingTop, values: values),
+          right: try resolvedFloat(
+            node.paddingWords.right, NativeSwiftWireField.paddingRight, values: values),
+          bottom: try resolvedFloat(
+            node.paddingWords.bottom, NativeSwiftWireField.paddingBottom, values: values)),
+      minimumWidth: try resolvedFloat(
+        node.minimumWidthWord, NativeSwiftWireField.minimumWidth, values: values),
       maximumWidth: maximumWidth > 1_000_000 ? -1 : maximumWidth,
-      minimumHeight: try resolvedFloat(node.minimumHeightWord, "minimum height", values: values),
+      minimumHeight: try resolvedFloat(
+        node.minimumHeightWord, NativeSwiftWireField.minimumHeight, values: values),
       maximumHeight: maximumHeight > 1_000_000 ? -1 : maximumHeight,
       cornerRadius: cornerRadius,
       clipsToBounds: node.clipsToBounds,
@@ -1083,7 +1171,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       visibility: visibility,
       backgroundARGB: node.backgroundColorID.flatMap { resolvedColors[$0] } ?? node.backgroundARGB,
       borderARGB: node.borderColorID.flatMap { resolvedColors[$0] } ?? node.borderARGB,
-      borderWidth: try resolvedFloat(node.borderWidthWord, "border width", values: values),
+      borderWidth: try resolvedFloat(
+        node.borderWidthWord, NativeSwiftWireField.borderWidth, values: values),
       horizontalPositioning: node.horizontalPositioning,
       verticalPositioning: node.verticalPositioning,
       animationID: node.animationID,
@@ -1101,7 +1190,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       flowMaximumLines: node.flowMaximumLines,
       isCollapsible: node.isCollapsible,
       collapsiblePriority: try node.collapsiblePriorityWord.map {
-        try resolvedFloat($0, "collapsible priority", values: values)
+        try resolvedFloat($0, NativeSwiftWireField.collapsiblePriority, values: values)
       },
       collapsiblePriorityOrientation: node.collapsiblePriorityOrientation,
       scrollDirection: node.scrollDirection,
@@ -1121,11 +1210,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         NativeSwiftMarqueeSnapshot(
           iterations: node.marqueeIterations, animationMode: node.marqueeAnimationMode,
           repeatDelayMillis: try resolvedFloat(
-            node.marqueeRepeatDelayWord, "marquee repeat delay", values: values),
+            node.marqueeRepeatDelayWord, NativeSwiftWireField.marqueeRepeatDelay, values: values),
           initialDelayMillis: try resolvedFloat(
-            node.marqueeInitialDelayWord, "marquee initial delay", values: values),
-          spacing: try resolvedFloat(node.marqueeSpacingWord, "marquee spacing", values: values),
-          velocity: try resolvedFloat($0, "marquee velocity", values: values, positive: true))
+            node.marqueeInitialDelayWord, NativeSwiftWireField.marqueeInitialDelay, values: values),
+          spacing: try resolvedFloat(
+            node.marqueeSpacingWord, NativeSwiftWireField.marqueeSpacing, values: values),
+          velocity: try resolvedFloat(
+            $0, NativeSwiftWireField.marqueeVelocity, values: values, positive: true))
       },
       text: text,
       custom: custom,
@@ -1290,15 +1381,42 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     return value
   }
 
+  /// A float write: the float view, and the integer view under the same id, truncated toward zero
+  /// and clamped to 32 bits — `RcPlayerState.storeFloat`, as AndroidX
+  /// `RemoteComposeState.updateFloat` / `overrideFloat` publish both. Integer expressions, a state
+  /// layout's index and visibility read the integer view.
+  private func storeFloat(_ id: Int, _ value: Float) {
+    floatOverrides[id] = value
+    integers[id] = nativeSwiftIntegerView(value)
+  }
+
+  /// An integer write — `RcPlayerState.setInteger`, as AndroidX `RemoteComposeState.updateInteger`:
+  /// nothing for the integer the id already holds, else both views, the float being the integer.
+  /// A float override is dropped and a document float at the id takes the integer, so the float
+  /// view is the integer without marking the id written (`writtenNamedValues` reads overrides);
+  /// with no document float the view is the integer's projection. Returns whether the id changed.
+  @discardableResult
+  private func storeInteger(_ id: Int, _ value: Int) -> Bool {
+    guard integers[id] != value else { return false }
+    integers[id] = value
+    floatOverrides.removeValue(forKey: id)
+    if floats[id] != nil { floats[id] = Float(value) }
+    return true
+  }
+
   /// Integer expressions are retained document state. Re-evaluate them in wire declaration order
   /// whenever a frame or gesture observes state, so an action that changes an input propagates to
   /// conditionals, text lookup and integer-to-float projections in that same frame.
   private func resolveIntegerExpressions() throws {
     for id in document.integerExpressionOrder {
       guard let expression = document.integerExpressions[id] else { continue }
-      integers[id] = try NativeSwiftIntegerExpression.evaluate(
-        mask: expression.mask, tokens: expression.tokens, values: integers,
-        offset: expression.offset)
+      // As the reference's `applyIntegerExpression`: a `setInteger`, both views. Unlike it, an id a
+      // document action wrote is not skipped (a known gap: the session keeps no action override).
+      storeInteger(
+        id,
+        try NativeSwiftIntegerExpression.evaluate(
+          mask: expression.mask, tokens: expression.tokens, values: integers,
+          offset: expression.offset))
     }
   }
 
@@ -1366,10 +1484,16 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // expressions that read it, not after them. Whether the document claims the id instead is
     // learned below from what the document itself writes there, not from the slot being empty:
     // after the first frame the slot holds the previous frame's epoch.
+    for (id, size) in imageSizeByID where floats[id] != size || floatOverrides[id] != nil {
+      floats[id] = size
+      floatOverrides.removeValue(forKey: id)
+      integers[id] = nativeSwiftIntegerView(size)
+    }
     let epochSecond = NativeSwiftSystemVariables.epochSecond
     let hostOwnsEpochSecond =
       !documentClaimsEpochSecond && document.integers[epochSecond] == nil
-      && document.integerExpressions[epochSecond] == nil && floatOverrides[epochSecond] == nil
+      && document.floats[epochSecond] == nil && document.integerExpressions[epochSecond] == nil
+      && floatOverrides[epochSecond] == nil
     if hostOwnsEpochSecond, let wallClock {
       integers[epochSecond] = Int(NativeSwiftWallClock.floorDiv(wallClock.epochMillis, 1000))
     }
@@ -1380,12 +1504,16 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // RemoteInt.toRemoteFloat(). Expose integer slots to the float evaluator without overriding a
     // real float that deliberately shares an id.
     var projectedIntegers: Set<Int> = []
-    for (id, value) in integers where result[id] == nil {
+    func projectIntegerSlot(_ id: Int) {
       // The player's own epoch is published after the document's producers have had their say.
-      if hostOwnsEpochSecond, id == epochSecond { continue }
+      guard result[id] == nil, let value = integers[id], !(hostOwnsEpochSecond && id == epochSecond)
+      else { return }
       result[id] = Float(value)
       projectedIntegers.insert(id)
     }
+    // O(slots + written ids) per resolution, not O(every integer view).
+    for id in integerSlotIDs { projectIntegerSlot(id) }
+    for id in writtenIntegerAndTextIDs where !integerSlotIDs.contains(id) { projectIntegerSlot(id) }
     // A copied dynamic colour is encoded as colour expression → channel attributes → colour
     // expression. Resolve the source colours before extracting their channels so the final colour
     // pass can preserve copies such as a selected tint with reduced alpha. Only a channel attribute
@@ -1588,17 +1716,22 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
           guard let ids = document.idLists[lookup.listID] else { continue }
           let index = nativeSwiftClampedInt(
             NativeSwiftFloatExpression.resolve(lookup.index, values: result))
-          guard ids.indices.contains(index), integers[lookup.outputID] != ids[index] else {
+          // The reference's `setInteger`, as every integer write.
+          guard ids.indices.contains(index), storeInteger(lookup.outputID, ids[index]) else {
             continue
           }
-          integers[lookup.outputID] = ids[index]
-          if floatOverrides[lookup.outputID] == nil { result[lookup.outputID] = Float(ids[index]) }
+          result[lookup.outputID] = Float(ids[index])
           changed = true
         }
         guard changed else { break }
         try resolveIntegerExpressions()
         for id in projectedIntegers {
           if let value = integers[id] { result[id] = Float(value) }
+        }
+        // An integer expression moved its id's float view with it (a document float, or the
+        // projection once a float override was dropped).
+        for id in document.integerExpressionOrder where floatOverrides[id] == nil {
+          if let value = floats[id] ?? integers[id].map(Float.init) { result[id] = value }
         }
         try evaluateExpressions()
       }
@@ -1671,7 +1804,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         // renderer replaces these for each child; publishing the last value is still the
         // reference's externally observable register state when no loop child is painted.
         for (index, variableID) in system.variableIDs.enumerated() {
-          floats[variableID] = system.particles.last?[index] ?? 0
+          publishParticleFloat(variableID, system.particles.last?[index] ?? 0)
         }
       case .compare(let compare):
         guard let system = particleSystems[compare.id] else { continue }
@@ -1682,11 +1815,19 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         // per particle (or pair) that passes.
         guard let published = result.published else { continue }
         for (index, variableID) in system.variableIDs.enumerated() {
-          floats[variableID] = published[index]
+          publishParticleFloat(variableID, published[index])
         }
       }
     }
     staticSnapshotCache = nil
+  }
+
+  /// A particle register: the reference publishes it through `setFloat`, both numeric views, and
+  /// it replaces whatever an earlier write left there, an integer write's float view included.
+  private func publishParticleFloat(_ id: Int, _ value: Float) {
+    floats[id] = value
+    floatOverrides.removeValue(forKey: id)
+    integers[id] = nativeSwiftIntegerView(value)
   }
 
   /// Resolves text producers in wire order. The output of an operation is immediately visible to
@@ -1833,7 +1974,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         result[id] = dark
       }
     }
-    for expression in document.colorExpressions {
+    // Nor a colour expression: a host-set colour ignores the document's writes, as AndroidX
+    // `RemoteComposeState.updateColor` and `RcPlayerState.setColor` do, or an expression-backed
+    // named colour would replace the host's value every frame.
+    for expression in document.colorExpressions where !hostSetColors.contains(expression.outputID) {
       let mode = expression.modeAndAlpha & 0xff
       switch mode {
       case NativeSwiftColorExpressionMode.colorColorInterpolate...NativeSwiftColorExpressionMode.idIDInterpolate:

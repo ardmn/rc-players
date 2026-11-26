@@ -9,3 +9,9 @@ func nativeSwiftClampedInt(_ value: Float) -> Int {
   if value <= Float(Int.min) { return Int.min }
   return Int(value)
 }
+
+/// The integer view of a float: truncated toward zero and clamped to 32 bits, NaN as 0 — Kotlin's
+/// `Float.toInt()`, which `RcPlayerState.storeFloat` publishes beside every float.
+func nativeSwiftIntegerView(_ value: Float) -> Int {
+  Int(Int32(clamping: nativeSwiftClampedInt(value)))
+}
