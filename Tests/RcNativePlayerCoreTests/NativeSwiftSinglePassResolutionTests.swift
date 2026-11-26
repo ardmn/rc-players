@@ -4,7 +4,7 @@ import Testing
 @testable @_spi(Conformance) @_spi(RemoteComposeController) import RcNativePlayerCore
 
 /// Value-resolution tests of the Kotlin player and AndroidX that had no Swift counterpart, ported
-/// to the session ahead of a resolver that runs one wire-order pass as `RcPlayerState` does. Each
+/// to the session for the resolver that runs one wire-order pass as `RcPlayerState` does. Each
 /// test names the test it ports; the value asserted is Kotlin's, from that Kotlin test or, for an
 /// AndroidX case or an extension of a Kotlin one, from `RcValueOrderReferenceTest`. Where the
 /// session gives something else today the assertion sits in a `withKnownIssue` that says what
@@ -14,7 +14,7 @@ import Testing
 ///
 /// The known issues left are not resolution order: the decoder's decode-time conditionals and
 /// unrolled loops, the float evaluator's refusals and the float animation runtime
-/// (ardmn/work#136, #137).
+/// (ardmn/work#136, ardmn/work#137).
 ///
 /// The cases `NativeSwiftValueOrderTests`, `NativeSwiftKotlinParityTests`,
 /// `NativeSwiftFloatIntegerViewTests` and `NativeSwiftIntegerWriteTests` already port are not
@@ -1018,6 +1018,153 @@ import Testing
       widths += Self.drawnWidths(snapshot)
     }
     #expect(widths == [80, 80, 120], "\(widths)")
+  }
+
+  /// A measurement that moves runs the frame's steps once more (`resolveAgain`), so a text built
+  /// from the measured width draws it in the same snapshot, not one frame late.
+  @Test func aTextOverAMeasuredWidthDrawsTheMeasurementInItsFrame() throws {
+    let document = Writer()
+    document.header(width: 400, height: 400)
+    document.u8(Op.componentValue).int(NativeSwiftComponentValueType.width).int(5).int(90)
+    document.u8(Op.textFromFloat).int(91).int(Writer.nanReference(90))
+      .int(Self.digits(before: 2, after: 0)).int(0)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(5).int(-1).int(1).int(1)
+    document.u8(Op.layoutContent).int(-1).u8(Op.containerEnd)
+    document.u8(Op.containerEnd)
+    Self.drawText(document, id: 91)
+    document.u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    let measured = [5: NativeSwiftMeasuredSize(width: 40, height: 10)]
+    let drawn = Self.drawnTexts(try session.snapshot(timeSeconds: 0, measuredComponents: measured))
+    #expect(drawn == ["40"], "\(drawn)")
+  }
+
+  /// A `RUN_ACTION`'s write runs the frame's steps once more (`resolveAgain`): F21 = [20] * 2,
+  /// declared before the action that sets I20 to 4, draws 8 in that frame.
+  @Test func aValueDerivedFromARunActionsWriteDrawsInItsFrame() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataInt).int(20).int(0)
+    document.u8(Op.animatedFloat).int(21).int(3).int(Writer.nanReference(20)).float(2)
+      .int(Self.mul)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.runAction)
+    document.u8(Op.valueIntegerChangeAction).int(20).int(4)
+    document.u8(Op.containerEnd)
+    Self.drawWidth(document, of: 21)
+    document.u8(Op.containerEnd)
+    let widths = Self.drawnWidths(
+      try NativeSwiftDocumentSession.open(data: document.data).snapshot(timeSeconds: 0))
+    #expect(widths == [8], "\(widths)")
+  }
+
+  /// A conformance read (a matrix, a float list) at the instant the last resolution ran reads what
+  /// it left: it does not move a cycle on, and keeps the calendar that frame's wall clock loaded.
+  @Test func aConformanceReadAtTheResolvedInstantDoesNotMoveTheDocumentOn() throws {
+    let session = try NativeSwiftDocumentSession.open(
+      data: NativeSwiftValueOrderTests.cycleDocument(), toleratingRootlessData: true)
+    let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
+    _ = try session.probeValues(timeSeconds: 0, wallClock: clock)
+    _ = try session.probeMatrix(id: 1, timeSeconds: 0)
+    _ = try session.probeFloatList(id: 1, dynamic: true, timeSeconds: 0)
+    let values = session.currentValues()
+    #expect(values.integers[60] == 1 && values.floats[70] == 2, "\(values.integers[60] as Any)")
+    #expect(values.floats[System.year] == Float(clock.fields.year))
+  }
+
+  /// An event's data runs the steps once more before its condition (`resolveAgain`): F41 = [40] * 2
+  /// over the data slot 40 reads 6 for the data 3, so the condition max([41] - 5, 0) is not zero
+  /// and the handler runs; read before the data, F41 is 0 and the condition 0.
+  @Test func anEventConditionReadsAValueDerivedFromItsData() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(40).float(0)
+    document.u8(Op.animatedFloat).int(41).int(3).int(Writer.nanReference(40)).float(2)
+      .int(Self.mul)
+    let sub = Writer.floatOperator(NativeSwiftFloatOperator.sub)
+    let max = Writer.floatOperator(NativeSwiftFloatOperator.max)
+    document.u8(Op.eventAction).int(NativeSwiftEventActionWire.version)
+      .int(5).int(7).u16(0).u16(1)
+      .int(1).int(40)
+      .int(5).int(Writer.nanReference(41)).float(5).int(sub).float(0).int(max)
+    document.u8(Op.valueIntegerChangeAction).int(60).int(1)
+    document.u8(Op.containerEnd)
+    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.snapshot(timeSeconds: 0)
+    let dispatch = try session.dispatchEvent(type: 5, metadata: 7, data: [3], timeSeconds: 0)
+    #expect(dispatch.handledFlags == [1], "\(dispatch.handledFlags)")
+    #expect(session.currentValues().integers[60] == 1)
+  }
+
+  /// `RcPlayerState.setHostDensity` publishes the density at once, so an action that runs before
+  /// the next frame reads it: F50 := [DENSITY] * 10 after the host reports 3 is 30.
+  @Test func aHostDensityIsReadByInputBeforeTheNextFrame() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(51).int(3).int(Writer.nanReference(System.density))
+      .float(10).int(Self.mul)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
+    document.u8(Op.modifierClick).u8(Op.valueFloatExpressionChangeAction).int(50).int(51)
+      .u8(Op.containerEnd)
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.snapshot(timeSeconds: 0)
+    session.setHostDensity(3)
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    #expect(session.currentValues().floats[50] == 30)
+  }
+
+  /// A float-expression action evaluates the last expression declared at its id, as Kotlin's
+  /// `floatExpressions` map holds it: F51 = 3, then F51 = 9, so the click writes 9.
+  @Test func aFloatExpressionActionEvaluatesTheLastExpressionAtItsID() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(51).int(1).float(3)
+    document.u8(Op.animatedFloat).int(51).int(1).float(9)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
+    document.u8(Op.modifierClick).u8(Op.valueFloatExpressionChangeAction).int(50).int(51)
+      .u8(Op.containerEnd)
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    #expect(session.currentValues().floats[50] == 9)
+  }
+
+  /// `RcPlayerState.clearNamedValue` keeps a document action's override: F50 = 3 named "v", a
+  /// click writes 7, the host clears "v". Kotlin writes the recorded value (0, none being
+  /// recorded) and the expression keeps leaving it, frame after frame.
+  @Test func aClearKeepsADocumentActionsOverride() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(50).int(1).float(3)
+    document.namedVariable(id: 50, type: Named.float, name: "v")
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
+    document.u8(Op.modifierClick).u8(Op.valueFloatChangeAction).int(50).float(7)
+      .u8(Op.containerEnd)
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.snapshot(timeSeconds: 0)
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    #expect(session.clearNamedValue("v"))
+    let seen = try [0.0, 1.0].map { try session.probeValues(timeSeconds: $0).floats[50] }
+    #expect(seen == [0, 0], "\(seen)")
+  }
+
+  /// A frame with no wall clock after one with a clock leaves EPOCH_SECOND unset, as it leaves the
+  /// calendar.
+  @Test func anUnclockedFrameLeavesTheEpochSecondUnset() throws {
+    let session = try Self.openWithRoot { _ in }
+    let clocked = try session.probeValues(
+      timeSeconds: 0, wallClock: NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis))
+    #expect(clocked.integers[System.epochSecond] != nil)
+    let unclocked = try session.probeValues(timeSeconds: 1)
+    #expect(unclocked.integers[System.epochSecond] == nil)
+    #expect(unclocked.floats[System.epochSecond] == nil && unclocked.floats[System.year] == nil)
   }
 
   /// A document action's override is state the session carries: a detached copy keeps it, so

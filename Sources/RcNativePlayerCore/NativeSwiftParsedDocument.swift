@@ -4,17 +4,25 @@ import Foundation
 enum ParsedNumericConstant {
   case float(id: Int, value: Float)
   case integer(id: Int, value: Int)
+
+  /// The id the constant is declared at.
+  var id: Int {
+    switch self {
+    case .float(let id, _), .integer(let id, _): id
+    }
+  }
 }
 
 /// One value operation a resolution runs, as `RcPlayerState.applyContentStateOperation` (and, for a
 /// time attribute or matrix-vector math, the canvas draw pass) applies it. The document keeps them
-/// in wire order, so a step reads what the steps before it wrote in the same pass and what the
-/// steps after it wrote in the previous one.
+/// in wire order, so a step reads what the steps before it wrote in the same pass, and a number or
+/// colour the steps after it wrote in the previous one (texts start each pass from the document's).
 enum ParsedResolutionStep {
   case floatExpression(ParsedFloatExpression)
   case integerExpression(id: Int, ParsedIntegerExpression)
   case colorExpression(ParsedColorExpression)
-  /// `ColorTheme`: the fallback for the requested theme (light unless dark is requested).
+  /// `ColorTheme`: the fallback for the requested theme (light unless dark is requested, where
+  /// Kotlin picks dark for anything but light).
   case colorTheme(id: Int, light: UInt32, dark: UInt32)
   case colorAttribute(ParsedColorAttribute)
   /// `ImageAttribute`: a bitmap's declared width or height.
@@ -49,40 +57,28 @@ struct ParsedDocument {
   let integerExpressions: [Int: ParsedIntegerExpression]
   let namedVariables: [String: ParsedNamedVariable]
   let expressions: [ParsedFloatExpression]
+  /// The last float expression declared at each id, for an action that evaluates one by id.
+  let floatExpressions: [Int: ParsedFloatExpression]
   let componentValues: [ParsedComponentValue]
-  let colorAttributes: [ParsedColorAttribute]
   /// Epoch-millisecond instants declared with `LongConstant`.
   let longConstants: [Int: Int64]
   /// `BooleanConstant` values; retained as the reference retains them, read by nothing yet.
   let booleanConstants: [Int: Bool]
   let timeAttributes: [ParsedTimeAttribute]
-  let idLookups: [ParsedIdLookup]
-  let textLengths: [ParsedTextLength]
-  let colorExpressions: [ParsedColorExpression]
   let images: [Int: ParsedImageResource]
   let sounds: [Int: ParsedSound]
   let clickAreas: [ParsedClickArea]
   let frameEffects: [ParsedFrameEffect]
-  /// Text producers in exactly the order the wire declared them. A later operation may consume an
-  /// earlier result regardless of their concrete operation types.
-  let textOperations: [ParsedTextOperation]
   /// The one text operation that computes each text an action can compute again, by its output
   /// (`ParsedTextOperation.producers`); see `NativeSwiftDocumentSession.currentText`.
   let textProducers: [Int: ParsedTextOperation]
-  let textFromFloats: [ParsedTextFromFloat]
-  let textMerges: [ParsedTextMerge]
-  let textTransforms: [ParsedTextTransform]
   let idLists: [Int: [Int]]
   let floatLists: [Int: [UInt32]]
   let floatListUpdates: [Int: [(index: UInt32, value: UInt32)]]
   let dynamicFloatLists: [Int: ParsedDynamicFloatList]
-  let textLookups: [ParsedTextLookupInt]
-  let textFloatLookups: [ParsedTextLookup]
   let dataMaps: [Int: [String: (type: Int, valueID: Int)]]
-  let dataMapLookups: [ParsedDataMapLookup]
   let matrixConstants: [Int: NativeSwiftMatrixSnapshot]
   let matrixExpressions: [Int: ParsedMatrixExpression]
-  let matrixVectorMath: [ParsedMatrixVectorMath]
   let animationSpecs: [Int: NativeSwiftAnimationSpec]
   let animationSpecOrder: [Int]
   let pathIDs: Set<Int>
@@ -195,6 +191,12 @@ struct ParsedColorExpression {
   /// keeps a display link or a one-second wakeup alive for a document that never changes.
   /// Modes 4...6 build a colour from float channels, so all three are words, and mode 6 carries its
   /// alpha as a reference in the high half of `modeAndAlpha`.
+  /// `ID_ARGB`'s alpha: the float id the mode word's high half names, as a reference word.
+  var alphaReferenceWord: UInt32 {
+    NativeSwiftFloatExpression.referenceWord(
+      UInt32(truncatingIfNeeded: modeAndAlpha >> 16) & 0xffff)
+  }
+
   var floatWords: [UInt32] {
     func word(_ value: Int) -> UInt32 { UInt32(bitPattern: Int32(truncatingIfNeeded: value)) }
     switch modeAndAlpha & 0xff {
@@ -203,10 +205,7 @@ struct ParsedColorExpression {
     case NativeSwiftColorExpressionMode.hsv, NativeSwiftColorExpressionMode.argb:
       return [word(first), word(second), word(third)]
     case NativeSwiftColorExpressionMode.idARGB:
-      return [
-        word(first), word(second), word(third),
-        0x7fc0_0000 | (UInt32(truncatingIfNeeded: modeAndAlpha >> 16) & 0xffff),
-      ]
+      return [word(first), word(second), word(third), alphaReferenceWord]
     default:
       return []
     }

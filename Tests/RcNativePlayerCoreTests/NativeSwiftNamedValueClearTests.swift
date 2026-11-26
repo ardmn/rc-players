@@ -123,9 +123,10 @@ import Testing
     #expect(session.writtenNamedValues().isEmpty)
   }
 
-  /// Clearing an integer variable whose id also declared a float constant restores the seeded
-  /// float view too, not only the integer slot `storeInteger` wrote.
-  @Test func clearingAnIntegerRestoresASeededFloatViewOnTheSameID() throws {
+  /// Clearing an integer variable whose id also declared a float constant writes the recorded
+  /// integer back as Kotlin's clear does, through `setInteger`: both views are the integer, 2 and
+  /// 2.0, not the constant's 2.5 (Kotlin's `RcPlayerState` gives 2 / 2.0 for this document).
+  @Test func clearingAnIntegerWritesTheRecordedIntegerToBothViews() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
     document.u8(Op.dataFloat).int(12).float(2.5)
@@ -142,7 +143,7 @@ import Testing
     #expect(session.clearNamedValue("count"))
     let restored = try values(session)
     #expect(restored.integers[12] == 2)
-    #expect(restored.floats[12] == 2.5)
+    #expect(restored.floats[12] == 2)
     #expect(session.writtenNamedValues().isEmpty)
   }
 

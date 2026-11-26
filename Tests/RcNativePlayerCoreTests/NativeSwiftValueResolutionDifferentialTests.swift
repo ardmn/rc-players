@@ -25,6 +25,8 @@ import Testing
     let epochMillis: Int64
     let frameTimes: [Double]
     let observedIds: [Int]
+    /// Kotlin's `RcSystemVariables.ALL`.
+    let systemIds: [Int]
     let textIds: [Int]
     let colorIds: [Int]
     let clickComponent: Int
@@ -53,6 +55,16 @@ import Testing
       argument = try container.decode(Int.self)
       id = try container.decode(Int.self)
       changes = try container.decode([Change].self)
+      try Self.expectEnd(of: container)
+    }
+
+    /// An element the Kotlin side added and this suite does not read fails the decode rather than
+    /// being dropped.
+    static func expectEnd(of container: UnkeyedDecodingContainer) throws {
+      guard container.isAtEnd else {
+        throw DecodingError.dataCorruptedError(
+          in: container, debugDescription: "an element this suite does not read")
+      }
     }
   }
 
@@ -65,6 +77,7 @@ import Testing
       var container = try decoder.unkeyedContainer()
       slot = try container.decode(Int.self)
       value = try container.decode(String?.self)
+      try Step.expectEnd(of: container)
     }
   }
 
@@ -88,16 +101,21 @@ import Testing
     let fixture = try Self.fixture()
     try #require(fixture.format == Self.fixtureFormat)
     #expect(fixture.cases.count >= 100, "\(fixture.cases.count) cases")
+    let labels = Self.labels(fixture)
     var mismatches: [String] = []
     for testCase in fixture.cases {
       let data = try #require(Data(base64Encoded: testCase.document))
       let session = try NativeSwiftDocumentSession.open(data: data)
-      var expected = [String?](repeating: nil, count: Self.labels(fixture).count)
+      var expected = [String?](repeating: nil, count: labels.count)
       for (index, step) in testCase.steps.enumerated() {
-        for change in step.changes { expected[change.slot] = change.value }
+        for change in step.changes {
+          try #require(expected.indices.contains(change.slot), "slot \(change.slot)")
+          expected[change.slot] = change.value
+        }
         let observed: NativeSwiftProbeValues
         switch step.kind {
         case .frame:
+          try #require(fixture.frameTimes.indices.contains(step.argument), "time \(step.argument)")
           let time = fixture.frameTimes[step.argument]
           observed = try session.probeValues(
             timeSeconds: time,
@@ -116,9 +134,9 @@ import Testing
           _ = try session.click(componentID: fixture.clickComponent, timeSeconds: 0)
           observed = session.currentValues()
         }
-        let swift = Self.views(observed, fixture)
-        let differences = zip(Self.labels(fixture), zip(expected, swift)).filter {
-          $0.1.0 != $0.1.1
+        let actual = Self.views(observed, fixture)
+        let differences = zip(labels, zip(expected, actual)).filter { _, views in
+          views.0 != views.1
         }
         if !differences.isEmpty {
           let shown = differences.prefix(4).map { label, views in
@@ -138,6 +156,19 @@ import Testing
   /// A float step argument: the value's bits, as the Kotlin test writes them.
   private static func float(_ bits: Int) -> Float {
     Float(bitPattern: UInt32(truncatingIfNeeded: bits))
+  }
+
+  /// The ids this core loads are Kotlin's, less the three it does not supply (`allIDs`), and each
+  /// fits the 64-bit mask `isSystem` reads.
+  @Test func theSystemIDsAreKotlinsLessTheOnesThisCoreDoesNotLoad() throws {
+    let fixture = try Self.fixture()
+    let notSupplied: Set<Int> = [5, 6, 31]  // WINDOW_WIDTH, WINDOW_HEIGHT, ANIMATION_DELTA_TIME
+    #expect(
+      Set(NativeSwiftSystemVariables.allIDs) == Set(fixture.systemIds).subtracting(notSupplied))
+    #expect(NativeSwiftSystemVariables.allIDs.allSatisfy { (0..<64).contains($0) })
+    #expect(NativeSwiftSystemVariables.allIDs.allSatisfy(NativeSwiftSystemVariables.isSystem))
+    let unlisted = (0..<64).filter { !NativeSwiftSystemVariables.allIDs.contains($0) }
+    #expect(!unlisted.contains(where: NativeSwiftSystemVariables.isSystem))
   }
 
   /// What each observed slot is, for a mismatch report.

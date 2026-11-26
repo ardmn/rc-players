@@ -1,5 +1,6 @@
 package ee.schimke.composeai.rcplayer.runtime
 
+import ee.schimke.composeai.rcplayer.protocol.RcBitmapData
 import ee.schimke.composeai.rcplayer.protocol.RcBoxLayout
 import ee.schimke.composeai.rcplayer.protocol.RcClickModifier
 import ee.schimke.composeai.rcplayer.protocol.RcColorAttribute
@@ -16,6 +17,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcHeader
 import ee.schimke.composeai.rcplayer.protocol.RcIdList
 import ee.schimke.composeai.rcplayer.protocol.RcIdLookup
 import ee.schimke.composeai.rcplayer.protocol.RcIdMap
+import ee.schimke.composeai.rcplayer.protocol.RcImageAttribute
 import ee.schimke.composeai.rcplayer.protocol.RcIntegerConstant
 import ee.schimke.composeai.rcplayer.protocol.RcIntegerExpression
 import ee.schimke.composeai.rcplayer.protocol.RcLayoutContent
@@ -28,7 +30,10 @@ import ee.schimke.composeai.rcplayer.protocol.RcSystemVariables
 import ee.schimke.composeai.rcplayer.protocol.RcTextData
 import ee.schimke.composeai.rcplayer.protocol.RcTextFromFloat
 import ee.schimke.composeai.rcplayer.protocol.RcTextLength
+import ee.schimke.composeai.rcplayer.protocol.RcTextLookup
 import ee.schimke.composeai.rcplayer.protocol.RcTextMerge
+import ee.schimke.composeai.rcplayer.protocol.RcTextSubtext
+import ee.schimke.composeai.rcplayer.protocol.RcTextTransform
 import ee.schimke.composeai.rcplayer.protocol.RcValueFloatChangeAction
 import ee.schimke.composeai.rcplayer.protocol.RcValueFloatExpressionChangeAction
 import ee.schimke.composeai.rcplayer.protocol.RcValueIntegerChangeAction
@@ -62,7 +67,8 @@ import kotlin.test.fail
  * pass's operations are not, and no value is generated that the Swift session would refuse (a
  * non-finite float, a stack deeper than AndroidX's 128).
  *
- * This test fails when the committed fixture is not what the Kotlin player produces now. After a
+ * This test fails when the committed fixture is not what the Kotlin player produces now (a deleted
+ * fixture fails Gradle's input check first; restore it from git, then update it). After a
  * deliberate change to the generator or the Kotlin player, rewrite it — the same run then passes —
  * with `scripts/agent-gradle.sh :rc-player-runtime:jvmTest --tests
  * '*RcValueResolutionDifferentialTest*' -Prc.valueResolutionDifferential.update=true`, then run the
@@ -101,7 +107,6 @@ class RcValueResolutionDifferentialTest {
   /** The generator reaches every kind of operation and step, so a change cannot drop one. */
   @Test
   fun theGeneratedDocumentsCoverEveryKind() {
-    val cases = (0 until DOCUMENTS).map { generate(SplitMix64(FIRST_SEED + it)) }
     assertEquals(OperationKind.entries.toSet(), cases.flatMap { it.kinds }.toSet())
     assertEquals(StepKind.entries.toSet(), cases.flatMap { it.steps }.map { it.kind }.toSet())
   }
@@ -117,6 +122,10 @@ class RcValueResolutionDifferentialTest {
     TEXT_MERGE,
     TEXT_LENGTH,
     TEXT_FROM_FLOAT,
+    TEXT_SUBTEXT,
+    TEXT_TRANSFORM,
+    TEXT_LOOKUP,
+    IMAGE_ATTRIBUTE,
     COLOR_EXPRESSION,
     COLOR_ATTRIBUTE,
   }
@@ -139,6 +148,9 @@ class RcValueResolutionDifferentialTest {
    */
   private data class Step(val kind: StepKind, val argument: Int, val id: Int = 0)
 
+  /** The generated documents, built once for both tests. */
+  private val cases by lazy { (0 until DOCUMENTS).map { generate(SplitMix64(FIRST_SEED + it)) } }
+
   private class Case(
     val seed: Long,
     val document: RcDocument,
@@ -149,8 +161,8 @@ class RcValueResolutionDifferentialTest {
   private fun generate(random: SplitMix64): Case {
     val operations = mutableListOf<RcOperation>()
     val kinds = mutableSetOf<OperationKind>()
-    val floatExpressionIds = mutableListOf<Int>()
-    val integerExpressionIds = mutableListOf<Int>()
+    val floatExpressionIds = mutableSetOf<Int>()
+    val integerExpressionIds = mutableSetOf<Int>()
 
     fun numeric(): Int =
       if (random.nextInt(8) == 0) SYSTEM_IDS[random.nextInt(SYSTEM_IDS.size)]
@@ -162,12 +174,17 @@ class RcValueResolutionDifferentialTest {
 
     fun quarter(range: Int): Float = random.nextInt(-range, range + 1) / 4f
 
+    fun smallInteger(): Int = random.nextInt(-INTEGER_LIMIT, INTEGER_LIMIT + 1)
+
     fun floatOperand(): RcFloatWord =
-      if (random.nextBoolean()) reference(numeric()) else RcFloatWord.literal(quarter(16))
+      if (random.nextBoolean()) reference(numeric())
+      else RcFloatWord.literal(quarter(OPERAND_QUARTERS))
 
     operations += TEXT_IDS.mapIndexed { index, id -> RcTextData(id, TEXTS[index]) }
     operations += COLOR_IDS.mapIndexed { index, id -> RcColorConstant(id, COLORS[index]) }
     operations += RcIdList(ID_LIST, LOOKUP_IDS)
+    operations += RcIdList(TEXT_LIST, TEXT_IDS)
+    operations += RcBitmapData(BITMAP, BITMAP_WIDTH, BITMAP_HEIGHT, 0, 0, ByteArray(4))
     // The map's keys and values are ids nothing else writes: the Kotlin player refuses a missing
     // key or an unset value, where the Swift session leaves the output as it was.
     operations += DATA_MAP_KEYS.mapIndexed { index, id -> RcTextData(id, TEXTS[index]) }
@@ -185,17 +202,16 @@ class RcValueResolutionDifferentialTest {
     // unset id to the reference's own NaN bits, the Swift session to 0 (and its evaluator refuses a
     // non-finite result), which is a difference in how a missing value reads, not in order.
     operations += NUMERIC_IDS.map { id ->
-      if (random.nextBoolean()) RcFloatConstant(id, RcFloatWord.literal(quarter(32)))
-      else RcIntegerConstant(id, random.nextInt(-20, 21))
+      if (random.nextBoolean()) RcFloatConstant(id, RcFloatWord.literal(quarter(QUARTERS)))
+      else RcIntegerConstant(id, smallInteger())
     }
     repeat(random.nextInt(6, 18)) {
       val kind = OperationKind.entries[random.nextInt(OperationKind.entries.size)]
-      kinds += kind
-      operations +=
+      val operation =
         when (kind) {
           OperationKind.FLOAT_CONSTANT ->
-            RcFloatConstant(target(), RcFloatWord.literal(quarter(32)))
-          OperationKind.INTEGER_CONSTANT -> RcIntegerConstant(target(), random.nextInt(-20, 21))
+            RcFloatConstant(target(), RcFloatWord.literal(quarter(QUARTERS)))
+          OperationKind.INTEGER_CONSTANT -> RcIntegerConstant(target(), smallInteger())
           OperationKind.FLOAT_EXPRESSION -> {
             // `a (b op)*`. A product's second operand is a literal, so a cycle multiplying itself
             // over a sequence of frames stays finite.
@@ -203,16 +219,25 @@ class RcValueResolutionDifferentialTest {
             repeat(random.nextInt(3)) {
               val operator = FLOAT_OPERATORS[random.nextInt(FLOAT_OPERATORS.size)]
               words +=
-                if (operator == FLOAT_MUL) RcFloatWord.literal(MULTIPLIERS[random.nextInt(3)])
-                else floatOperand()
+                if (operator == FLOAT_MUL) {
+                  RcFloatWord.literal(MULTIPLIERS[random.nextInt(MULTIPLIERS.size)])
+                } else {
+                  floatOperand()
+                }
               words += RcFloatExpressionEvaluator.operatorWord(operator)
             }
             // One float expression per id: the Kotlin player memoises an expression's inputs by
             // the id it writes, so a second expression at that id is skipped while the first's
-            // inputs stand still (a Kotlin bug, not an order the Swift session should copy).
-            val id = generateSequence { target() }.take(8).firstOrNull { it !in floatExpressionIds }
+            // inputs stand still (a Kotlin bug, ardmn/work#135, not an order the Swift session
+            // should
+            // copy). A few draws find a free id; with none, the operation is a constant instead.
+            val id = generateSequence {
+              target()
+            }
+              .take(FREE_ID_DRAWS)
+              .firstOrNull { it !in floatExpressionIds }
             if (id == null) {
-              RcFloatConstant(target(), RcFloatWord.literal(quarter(32)))
+              RcFloatConstant(target(), RcFloatWord.literal(quarter(QUARTERS)))
             } else {
               floatExpressionIds += id
               RcFloatExpression(id, words, null)
@@ -226,7 +251,7 @@ class RcValueResolutionDifferentialTest {
                 mask = mask or (1 shl values.size)
                 values += numeric()
               } else {
-                values += random.nextInt(-10, 11)
+                values += random.nextInt(-LITERAL_LIMIT, LITERAL_LIMIT + 1)
               }
             }
             operand()
@@ -256,7 +281,44 @@ class RcValueResolutionDifferentialTest {
           OperationKind.TEXT_LENGTH ->
             RcTextLength(target(), TEXT_IDS[random.nextInt(TEXT_IDS.size)])
           OperationKind.TEXT_FROM_FLOAT ->
-            RcTextFromFloat(TEXT_IDS[random.nextInt(TEXT_IDS.size)], reference(numeric()), 3, 2, 0)
+            RcTextFromFloat(
+              outId = TEXT_IDS[random.nextInt(TEXT_IDS.size)],
+              value = reference(numeric()),
+              digitsBefore = 3,
+              digitsAfter = 2,
+              flags = 0,
+            )
+          OperationKind.TEXT_SUBTEXT ->
+            RcTextSubtext(
+              TEXT_IDS[random.nextInt(TEXT_IDS.size)],
+              TEXT_IDS[random.nextInt(TEXT_IDS.size)],
+              RcFloatWord.literal(random.nextInt(3).toFloat()),
+              RcFloatWord.literal(random.nextInt(-1, 3).toFloat()),
+            )
+          // From the start, to the end: Kotlin's substring refuses a range past a shorter text,
+          // where Swift clamps it.
+          OperationKind.TEXT_TRANSFORM ->
+            RcTextTransform(
+              TEXT_IDS[random.nextInt(TEXT_IDS.size)],
+              TEXT_IDS[random.nextInt(TEXT_IDS.size)],
+              RcFloatWord.literal(0f),
+              RcFloatWord.literal(-1f),
+              TEXT_TRANSFORMS[random.nextInt(TEXT_TRANSFORMS.size)],
+            )
+          OperationKind.TEXT_LOOKUP ->
+            RcTextLookup(
+              TEXT_IDS[random.nextInt(TEXT_IDS.size)],
+              TEXT_LIST,
+              RcFloatWord.literal(random.nextInt(TEXT_IDS.size).toFloat()),
+            )
+          OperationKind.IMAGE_ATTRIBUTE ->
+            RcImageAttribute(
+              target(),
+              BITMAP,
+              if (random.nextBoolean()) RcImageAttribute.IMAGE_WIDTH
+              else RcImageAttribute.IMAGE_HEIGHT,
+              emptyList(),
+            )
           OperationKind.COLOR_EXPRESSION ->
             RcColorExpression(
               COLOR_IDS[random.nextInt(COLOR_IDS.size)],
@@ -266,8 +328,15 @@ class RcValueResolutionDifferentialTest {
               RcFloatWord.literal(random.nextInt(5) / 4f).bits,
             )
           OperationKind.COLOR_ATTRIBUTE ->
-            RcColorAttribute(target(), COLOR_IDS[random.nextInt(COLOR_IDS.size)], random.nextInt(7))
+            RcColorAttribute(
+              target(),
+              COLOR_IDS[random.nextInt(COLOR_IDS.size)],
+              COLOR_ATTRIBUTES[random.nextInt(COLOR_ATTRIBUTES.size)],
+            )
         }
+      // What was emitted, not what was drawn: a float expression with no free id is a constant.
+      kinds += if (operation is RcFloatConstant) OperationKind.FLOAT_CONSTANT else kind
+      operations += operation
     }
     operations += RcNamedVariable(NAMED_FLOAT_ID, RcNamedVariable.FLOAT_TYPE, NAMED_FLOAT)
     operations += RcNamedVariable(NAMED_INTEGER_ID, RcNamedVariable.INT_TYPE, NAMED_INTEGER)
@@ -275,16 +344,16 @@ class RcValueResolutionDifferentialTest {
     val actions =
       List(random.nextInt(1, 4)) {
         when (random.nextInt(4)) {
-          0 -> RcValueIntegerChangeAction(target(), random.nextInt(-20, 21))
-          1 -> RcValueFloatChangeAction(target(), RcFloatWord.literal(quarter(32)))
+          0 -> RcValueIntegerChangeAction(target(), smallInteger())
+          1 -> RcValueFloatChangeAction(target(), RcFloatWord.literal(quarter(QUARTERS)))
           2 ->
             integerExpressionIds.randomOrNull(random)?.let {
               RcValueIntegerExpressionChangeAction(target().toLong(), it.toLong())
-            } ?: RcValueIntegerChangeAction(target(), random.nextInt(-20, 21))
+            } ?: RcValueIntegerChangeAction(target(), smallInteger())
           else ->
             floatExpressionIds.randomOrNull(random)?.let {
               RcValueFloatExpressionChangeAction(target(), it)
-            } ?: RcValueFloatChangeAction(target(), RcFloatWord.literal(quarter(32)))
+            } ?: RcValueFloatChangeAction(target(), RcFloatWord.literal(quarter(QUARTERS)))
         }
       }
     val document =
@@ -304,9 +373,9 @@ class RcValueResolutionDifferentialTest {
         add(
           when (kind) {
             StepKind.FRAME -> Step(kind, random.nextInt(FRAME_TIMES.size))
-            StepKind.SET_FLOAT_BY_ID -> Step(kind, quarter(32).toRawBits(), target())
-            StepKind.SET_NAMED_FLOAT -> Step(kind, quarter(32).toRawBits())
-            StepKind.SET_NAMED_INTEGER -> Step(kind, random.nextInt(-20, 21))
+            StepKind.SET_FLOAT_BY_ID -> Step(kind, quarter(QUARTERS).toRawBits(), target())
+            StepKind.SET_NAMED_FLOAT -> Step(kind, quarter(QUARTERS).toRawBits())
+            StepKind.SET_NAMED_INTEGER -> Step(kind, smallInteger())
             StepKind.CLICK -> Step(kind, 0)
           },
         )
@@ -353,26 +422,19 @@ class RcValueResolutionDifferentialTest {
   /**
    * Every observed id as `integer/floatBits` (`-` for none), then each text (as JSON, `null` for
    * none) and colour (unsigned hex, `-` for none), each already a JSON value. The integer view is
-   * read raw: `integer()` answers an unwritten id below 42 with the id itself, which the Swift
-   * session's views have no counterpart for.
+   * the stored one: `integer()` answers an unwritten id below 42 with the id itself, which the
+   * Swift session's views have no counterpart for.
    */
   private fun observe(state: RcPlayerState): List<String> {
     val numbers = OBSERVED_IDS.map { id ->
-      val signature = state.valueSignature(id).toString()
-      val integer = INTEGER_FIELD.find(signature)?.groupValues?.get(1)?.takeUnless { it == "null" }
-      "${integer ?: "-"}/${state.float(id)?.toRawBits()?.toUInt()?.toString(16) ?: "-"}"
+      val integer = state.storedInteger(id)?.toString() ?: "-"
+      jsonString("$integer/${state.float(id)?.toRawBits()?.toUInt()?.toString(16) ?: "-"}")
     }
     val texts = TEXT_IDS.map { id -> state.text(id)?.let(::jsonString) ?: "null" }
     val colors = COLOR_IDS.map { id ->
-      COLOR_FIELD.find(state.valueSignature(id).toString())
-        ?.groupValues
-        ?.get(1)
-        ?.takeUnless { it == "null" }
-        ?.toInt()
-        ?.toUInt()
-        ?.toString(16) ?: "-"
+      jsonString(state.storedColor(id)?.toUInt()?.toString(16) ?: "-")
     }
-    return numbers.map(::jsonString) + texts + colors.map(::jsonString)
+    return numbers + texts + colors
   }
 
   private fun fixture(): String = buildString {
@@ -381,13 +443,13 @@ class RcValueResolutionDifferentialTest {
     appendLine("  \"epochMillis\": $EPOCH_MILLIS,")
     appendLine("  \"frameTimes\": [${FRAME_TIMES.joinToString(", ")}],")
     appendLine("  \"observedIds\": [${OBSERVED_IDS.joinToString(", ")}],")
+    appendLine("  \"systemIds\": [${RcSystemVariables.ALL.sorted().joinToString(", ")}],")
     appendLine("  \"textIds\": [${TEXT_IDS.joinToString(", ")}],")
     appendLine("  \"colorIds\": [${COLOR_IDS.joinToString(", ")}],")
     appendLine("  \"clickComponent\": $CLICK_COMPONENT,")
     appendLine("  \"namedFloat\": ${jsonString(NAMED_FLOAT)},")
     appendLine("  \"namedInteger\": ${jsonString(NAMED_INTEGER)},")
     appendLine("  \"cases\": [")
-    val cases = (0 until DOCUMENTS).map { generate(SplitMix64(FIRST_SEED + it)) }
     appendLine(
       cases.joinToString(",\n") { case ->
         val bytes = RcDocumentCodec.encode(case.document)
@@ -476,8 +538,9 @@ class RcValueResolutionDifferentialTest {
     fun nextBoolean(): Boolean = nextInt(2) == 1
   }
 
-  private fun <T> List<T>.randomOrNull(random: SplitMix64): T? =
-    if (isEmpty()) null else this[random.nextInt(size)]
+  /** One element, chosen by [random]; insertion order, so a seed always picks the same one. */
+  private fun <T> Set<T>.randomOrNull(random: SplitMix64): T? =
+    if (isEmpty()) null else elementAt(random.nextInt(size))
 
   private fun reference(id: Int) = RcFloatWord(0x7fc00000 or id)
 
@@ -513,6 +576,15 @@ class RcValueResolutionDifferentialTest {
     val COLORS = listOf(0xff000000.toInt(), 0xffffffff.toInt(), 0x80336699.toInt())
     const val ID_LIST = 400
     val LOOKUP_IDS = listOf(61, 62, 7)
+    const val TEXT_LIST = 420
+    const val BITMAP = 430
+    const val BITMAP_WIDTH = 8
+    const val BITMAP_HEIGHT = 4
+
+    /**
+     * `RcTextTransform`'s operations the codec writes: lower, upper, trim, capitalise words, first.
+     */
+    val TEXT_TRANSFORMS = (1..5).toList()
     const val DATA_MAP = 410
     val DATA_MAP_KEYS = listOf(210, 211)
     const val DATA_MAP_FLOAT = 80
@@ -524,10 +596,39 @@ class RcValueResolutionDifferentialTest {
     const val CLICK_COMPONENT = 3
     val CONTAINER_END = RcNoArg(RcOpcodes.CONTAINER_END)
 
+    // RcFloatExpressionEvaluator's operators, by their AndroidX numbers.
+    const val FLOAT_ADD = RcFloatExpressionEvaluator.OFFSET + 1
+    const val FLOAT_SUB = RcFloatExpressionEvaluator.OFFSET + 2
     const val FLOAT_MUL = RcFloatExpressionEvaluator.OFFSET + 3
-    val FLOAT_OPERATORS =
-      listOf(1, 2, 3, 6, 7).map { RcFloatExpressionEvaluator.OFFSET + it } // + - * min max
+    const val FLOAT_MIN = RcFloatExpressionEvaluator.OFFSET + 6
+    const val FLOAT_MAX = RcFloatExpressionEvaluator.OFFSET + 7
+    val FLOAT_OPERATORS = listOf(FLOAT_ADD, FLOAT_SUB, FLOAT_MUL, FLOAT_MIN, FLOAT_MAX)
+    /**
+     * A product's second operand, so a value that multiplies itself frame after frame stays finite.
+     */
     val MULTIPLIERS = listOf(-1f, 0.5f, 2f)
+
+    /** The range of an integer constant or action value, and of an integer expression's literal. */
+    const val INTEGER_LIMIT = 20
+    const val FREE_ID_DRAWS = 8
+    const val LITERAL_LIMIT = 10
+
+    /**
+     * Float constants and writes are quarters in `-QUARTERS / 4 .. QUARTERS / 4`; operands
+     * narrower.
+     */
+    const val QUARTERS = 32
+    const val OPERAND_QUARTERS = 16
+    val COLOR_ATTRIBUTES =
+      listOf(
+        RcColorAttribute.COLOR_HUE,
+        RcColorAttribute.COLOR_SATURATION,
+        RcColorAttribute.COLOR_BRIGHTNESS,
+        RcColorAttribute.COLOR_RED,
+        RcColorAttribute.COLOR_GREEN,
+        RcColorAttribute.COLOR_BLUE,
+        RcColorAttribute.COLOR_ALPHA,
+      )
     val INTEGER_OPERATORS =
       listOf(
         RcIntegerExpression.ADD,
@@ -537,7 +638,5 @@ class RcValueResolutionDifferentialTest {
         RcIntegerExpression.MIN,
         RcIntegerExpression.MAX,
       )
-    val INTEGER_FIELD = Regex("""integer=(-?\d+|null)""")
-    val COLOR_FIELD = Regex("""color=(-?\d+|null)""")
   }
 }

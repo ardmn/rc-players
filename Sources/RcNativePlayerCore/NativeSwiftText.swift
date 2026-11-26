@@ -59,42 +59,47 @@ enum ParsedTextOperation {
   /// qualify themselves. Any other text is sent as the last frame left it. Settled once per
   /// document in O(text operations + their inputs), with an explicit stack rather than recursion,
   /// as a document can chain texts as deep as its length allows.
+  ///
+  /// - Parameter scopedOutputs: texts a producer writes inside a container that does not run every
+  ///   frame (a conditional, a function body, an impulse), which never qualify.
   static func producers(
-    of operations: [ParsedTextOperation], idLists: [Int: [Int]]
+    of operations: [ParsedTextOperation], idLists: [Int: [Int]], excluding scopedOutputs: Set<Int>
   ) -> [Int: ParsedTextOperation] {
-    var producers: [Int: [ParsedTextOperation]] = [:]
-    for operation in operations { producers[operation.outputID, default: []].append(operation) }
-    var qualifies: [Int: Bool] = [:]
-    for root in producers.keys where qualifies[root] == nil {
-      // Each frame is an id and whether its inputs have been pushed; a grey id on the path is a
-      // cycle, which disqualifies every id on it.
+    var writersByOutput: [Int: [ParsedTextOperation]] = [:]
+    for operation in operations {
+      writersByOutput[operation.outputID, default: []].append(operation)
+    }
+    var isReplayable: [Int: Bool] = [:]
+    for root in writersByOutput.keys where isReplayable[root] == nil {
+      // Each frame is an id and whether its inputs have been pushed; reaching an id already on the
+      // path is a cycle, which rules that id out, and with it every id that reads it.
       var stack: [(id: Int, expanded: Bool)] = [(root, false)]
       var onPath: Set<Int> = []
       while let (id, expanded) = stack.popLast() {
-        guard let written = producers[id] else {
-          qualifies[id] = true
+        guard let writers = writersByOutput[id] else {
+          isReplayable[id] = true
           continue
         }
-        if qualifies[id] != nil { continue }
-        guard written.count == 1, let operation = written.first else {
-          qualifies[id] = false
+        if isReplayable[id] != nil { continue }
+        guard writers.count == 1, !scopedOutputs.contains(id), let operation = writers.first else {
+          isReplayable[id] = false
           continue
         }
         let inputs = operation.textInputs(idLists: idLists)
         if expanded {
           onPath.remove(id)
-          qualifies[id] = inputs.allSatisfy { $0 != id && qualifies[$0] == true }
+          isReplayable[id] = inputs.allSatisfy { $0 != id && isReplayable[$0] == true }
           continue
         }
         if onPath.contains(id) || inputs.contains(id) {
-          qualifies[id] = false
+          isReplayable[id] = false
           continue
         }
         onPath.insert(id)
         stack.append((id, true))
-        for input in inputs where qualifies[input] == nil {
+        for input in inputs where isReplayable[input] == nil {
           if onPath.contains(input) {
-            qualifies[input] = false
+            isReplayable[input] = false
           } else {
             stack.append((input, false))
           }
@@ -102,7 +107,9 @@ enum ParsedTextOperation {
       }
     }
     var result: [Int: ParsedTextOperation] = [:]
-    for (id, written) in producers where qualifies[id] == true { result[id] = written.first }
+    for (id, writers) in writersByOutput where isReplayable[id] == true {
+      result[id] = writers.first
+    }
     return result
   }
 

@@ -149,6 +149,11 @@ enum NativeSwiftFloatExpression {
     return values[Int(word & referenceMask)] ?? 0
   }
 
+  /// A reference to float `id` as the wire spells one: the id in a quiet NaN's payload.
+  static func referenceWord(_ id: UInt32) -> UInt32 { referencePrefix | id }
+
+  private static let referencePrefix: UInt32 = 0x7fc0_0000
+
   /// The exact word AndroidX writes for an operator, `asNan(OFFSET + operation)`: a negative NaN.
   static func operatorWord(_ operation: Int) -> UInt32 {
     0xff80_0000 | UInt32(operatorOffset + operation)

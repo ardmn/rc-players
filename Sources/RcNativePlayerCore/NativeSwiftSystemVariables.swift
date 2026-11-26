@@ -6,10 +6,7 @@ import Foundation
 /// contract. A reference to an id the player does not load resolves to 0 and poisons the arithmetic
 /// downstream, so naming one here without loading it would be worse than leaving it out.
 ///
-/// `ANIMATION_DELTA_TIME` (31) and `EPOCH_SECOND` (32) are deliberately absent: a delta needs the
-/// previous frame, which this core's stateless snapshot does not keep, and the epoch second is an
-/// *integer* variable whose expressions are evaluated at decode time, before a host clock can be
-/// supplied.
+/// `ANIMATION_DELTA_TIME` (31) is deliberately absent: this core does not supply a frame delta.
 public enum NativeSwiftSystemVariables {
   /// Device pixels per dp, as the player is playing the document.
   public static let density = 27
@@ -63,22 +60,22 @@ public enum NativeSwiftSystemVariables {
   public static let year = 35
 
   /// Every id this player loads at the start of a resolution, so the session can tell one from a
-  /// document's own: a write to one claims it from the player (`RcPlayerState.claimedSystemIds`),
-  /// and an integer expression reads an unclaimed one as its float truncated. The reference also
-  /// loads `WINDOW_WIDTH` and `WINDOW_HEIGHT` (5, 6) and `ANIMATION_DELTA_TIME` (31), which this
-  /// core does not supply; at those ids a document's value is its own.
-  static let all: Set<Int> = Set(allIDs)
-
-  private static let allIDs = [
+  /// document's own (`isSystem`): a write to one claims it from the player
+  /// (`RcPlayerState.claimedSystemIds`), and an integer expression reads an unclaimed one as its
+  /// float truncated. The reference's `RcSystemVariables.ALL` also has `WINDOW_WIDTH` and
+  /// `WINDOW_HEIGHT` (5, 6) and `ANIMATION_DELTA_TIME` (31), which this core does not supply; at
+  /// those ids a document's value is its own. The differential fixture carries Kotlin's set, and
+  /// `NativeSwiftValueResolutionDifferentialTests` fails when the two drift.
+  static let allIDs = [
     continuousSeconds, timeInSeconds, timeInMinutes, timeInHours, calendarMonth, offsetToUTC,
     weekDay, dayOfMonth, density, animationTime, epochSecond, fontSize, dayOfYear, year,
   ]
 
-  /// `all` as bits, every id being below 64: a resolution asks of every value it writes whether it
-  /// is a system id, so the answer is a shift rather than a hash.
+  /// `allIDs` as bits, every id being below 64 (a test holds it to that): a resolution asks of
+  /// every value it writes whether it is a system id, so the answer is a shift rather than a hash.
   private static let allMask: UInt64 = allIDs.reduce(0) { $0 | (1 << UInt64($1)) }
 
-  /// Whether `id` is in `all`.
+  /// Whether `id` is one of `allIDs`.
   @inline(__always) static func isSystem(_ id: Int) -> Bool {
     id >= 0 && id < 64 && allMask & (1 << UInt64(id)) != 0
   }
