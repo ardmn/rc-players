@@ -23,8 +23,8 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   /// player clamps a resolved exact width or height to it instead (`layoutDimension`).
   public var maximumCanvasDimension: Double
   /// The largest coordinate magnitude. The UIKit player clamps resolved layout and draw values to
-  /// it rather than refusing the frame (`layoutCoordinate`, `drawCoordinate`); the AppKit policy
-  /// still refuses a frame over it.
+  /// it rather than refusing the frame (`layoutCoordinate`, `drawCoordinate`); the AppKit player
+  /// clamps layout the same way (`NativeLayoutNode`) and drops non-finite draw commands.
   public var maximumCoordinateMagnitude: Double
   public var maximumFrameWork: Int
 

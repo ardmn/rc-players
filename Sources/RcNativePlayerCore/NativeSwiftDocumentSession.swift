@@ -1243,8 +1243,15 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
             .map { value in
               value.isFinite ? nativeSwiftClampedInt(value) : NativeSwiftCompositingStrategy.auto
             } ?? NativeSwiftCompositingStrategy.auto),
-      offsetX: node.offsetXWord.map { NativeSwiftFloatExpression.resolve($0, values: values) } ?? 0,
-      offsetY: node.offsetYWord.map { NativeSwiftFloatExpression.resolve($0, values: values) } ?? 0,
+      // Saturated as `resolvedFloat` saturates a padding: the Kotlin player rounds an offset with
+      // Java's `Math.round` (`javaRoundToInt`), which reads NaN as 0 and holds an infinity at its
+      // bound, and the UIKit player's `layoutCoordinate` reads it the same way.
+      offsetX: node.offsetXWord.map {
+        nativeSwiftSaturated(NativeSwiftFloatExpression.resolve($0, values: values))
+      } ?? 0,
+      offsetY: node.offsetYWord.map {
+        nativeSwiftSaturated(NativeSwiftFloatExpression.resolve($0, values: values))
+      } ?? 0,
       zIndex: node.zIndexWord.map { NativeSwiftFloatExpression.resolve($0, values: values) } ?? 0,
       visibility: visibility,
       backgroundARGB: node.backgroundColorID.flatMap { resolvedColors[$0] } ?? node.backgroundARGB,

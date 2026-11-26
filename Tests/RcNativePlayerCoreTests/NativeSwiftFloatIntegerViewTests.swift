@@ -71,16 +71,33 @@ import Testing
     }
   }
 
-  /// Swift refuses non-finite host writes; both views must stay untouched (consistently by id and
-  /// by name). Kotlin would store NaN and integer 0 — a documented API difference.
-  @Test(arguments: [false, true])
-  func nonFiniteHostWritesLeaveBothViews(byName: Bool) throws {
+  /// A non-finite host write by name is stored, as AndroidX's `RemoteComposeState.updateFloat`
+  /// stores any float. Its integer view is Java's `(int) v` (RemoteComposeState.java:264): NaN
+  /// reads 0 and the infinities saturate to the Int32 bounds.
+  @Test func nonFiniteHostWritesReachBothViews() throws {
+    let session = try NativeSwiftDocumentSession.open(data: Self.valuesDocument())
+    #expect(session.setFloat(-2.75, for: "page"))
+    let cases: [(Float, Int)] = [
+      (.nan, 0), (.infinity, Int(Int32.max)), (-.infinity, Int(Int32.min)), (-Float.nan, 0),
+      (Float.signalingNaN, 0),
+    ]
+    for (value, expected) in cases {
+      #expect(session.setFloat(value, for: "page"), "\(value) refused")
+      let values = try session.probeValues(timeSeconds: 0)
+      #expect(values.integers[51] == expected && values.integers[53] == expected, "\(value)")
+      let stored = values.floats[51]
+      #expect(value.isNaN ? stored?.isNaN == true : stored == value, "\(value)")
+    }
+  }
+
+  /// `setFloat(_:forID:)` is not a host API: the player writes a gesture's own value through it
+  /// (touch position, scroll offset), which is always finite, and it keeps refusing a non-finite
+  /// one, leaving both views untouched.
+  @Test func aNonFiniteGestureWriteByIDLeavesBothViews() throws {
     let session = try NativeSwiftDocumentSession.open(data: Self.valuesDocument())
     #expect(session.setFloat(-2.75, forID: 51))
-    for value in [Float.nan, .infinity, -.infinity, -Float.nan, Float.signalingNaN] {
-      let accepted =
-        byName ? session.setFloat(value, for: "page") : session.setFloat(value, forID: 51)
-      #expect(!accepted, "\(value) accepted")
+    for value in [Float.nan, .infinity, -.infinity] {
+      #expect(!session.setFloat(value, forID: 51), "\(value) accepted")
       let values = try session.probeValues(timeSeconds: 0)
       #expect(values.integers[51] == -2 && values.integers[53] == -2, "\(value)")
       #expect(values.floats[51] == -2.75, "\(value)")

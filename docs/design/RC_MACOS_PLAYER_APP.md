@@ -79,9 +79,11 @@ the application is inactive or the view is detached and observes AppKit's Reduce
 Decorative continuous animation pauses under Reduce Motion.
 
 Malformed or over-budget input is reported in the control window. Safety is independent of
-compatibility: both modes enforce a 16 MiB encoded-document limit, finite and bounded geometry,
-20,000 nodes, 256 levels of nesting, 50,000 draw commands, 100,000 path elements, 16 KiB of text,
-and 200,000 work units per frame. Validation runs before the initial AppKit hierarchy is created and again before animated
+compatibility: both modes enforce a 16 MiB encoded-document limit, a bounded document size,
+20,000 nodes, 256 levels of nesting, 50,000 draw commands, 100,000 path elements, 128 KiB of text,
+and 200,000 work units per frame. A resolved value never fails the frame by itself, as AndroidX
+takes every host value: layout floats are normalised as on UIKit (NaN reads 0, the rest is held
+within the coordinate limit) and a draw command with non-finite geometry is dropped. Validation runs before the initial AppKit hierarchy is created and again before animated
 or event-driven snapshots replace the current frame. Host events share that frame budget and are
 validated before delivery.
 

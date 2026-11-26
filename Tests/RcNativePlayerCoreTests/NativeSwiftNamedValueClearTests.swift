@@ -445,10 +445,12 @@ import Testing
     #expect(declarations.acceptsFloatArray([], for: "series"))
     #expect(declarations.acceptsFloatArray(Array(repeating: 1, count: limit), for: "series"))
     #expect(!declarations.acceptsFloatArray(Array(repeating: 1, count: limit + 1), for: "series"))
-    #expect(!declarations.acceptsFloatArray([1, .nan], for: "series"))
-    #expect(!declarations.acceptsFloatArray([.infinity], for: "series"))
+    // Any element value is taken, as AndroidX's UpdateDynamicFloatList.apply takes it: only the
+    // length is bounded.
+    #expect(declarations.acceptsFloatArray([1, .nan], for: "series"))
+    #expect(declarations.acceptsFloatArray([.infinity], for: "series"))
     #expect(!declarations.acceptsFloatArray([1], for: "scalar"))
-    #expect(!session.setFloatArray([1, .nan], for: "series"))
+    #expect(session.setFloatArray([1, .nan], for: "series"))
     #expect(!session.setFloatArray([1], for: "when"))
     #expect(session.setFloatArray([4], for: "series"))
     #expect(try session.probeFloatList(id: 2, dynamic: false, timeSeconds: 0) == [4])

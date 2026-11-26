@@ -107,6 +107,12 @@ public enum NativeMacPolicy {
     }
   }
 
+  /// The UIKit player's frame rules (`NativeRenderSnapshot.init`): a host value never fails the
+  /// frame by its size. Width and height follow `validateLayoutDimension`; padding, spacing,
+  /// constraints and offsets are normalised by `NativeLayoutNode` (`layoutCoordinate`); a draw
+  /// command with non-finite geometry is dropped (`isDrawable`) and the rest only counts against
+  /// the budget. AndroidX takes every such value (`PaddingModifierOperation.updateVariables`,
+  /// `DrawRect.paint`).
   private static func validateSnapshot(_ snapshot: NativeSwiftDocumentSnapshot) throws
     -> NativeFrameBudget
   {
@@ -116,33 +122,24 @@ public enum NativeMacPolicy {
     var pending: [(NativeSwiftNodeSnapshot, Int)] = [(snapshot.root, 1)]
     while let (node, depth) = pending.popLast() {
       try budget.recordNode(depth: depth, limits: executionLimits)
+      try budget.validateLayoutDimension(
+        value: Double(node.widthValue), type: node.widthType, componentID: node.componentID,
+        field: "width", limits: executionLimits)
+      try budget.validateLayoutDimension(
+        value: Double(node.heightValue), type: node.heightType, componentID: node.componentID,
+        field: "height", limits: executionLimits)
       try budget.recordStrings(
         [
           node.text?.value, node.custom?.config, node.accessibility?.contentDescription,
           node.accessibility?.text, node.accessibility?.stateDescription,
         ], limits: executionLimits)
-      try budget.validateNumbers(
-        [
-          node.widthValue, node.heightValue, node.padding.left, node.padding.top,
-          node.padding.right, node.padding.bottom, node.minimumWidth, node.maximumWidth,
-          node.minimumHeight, node.maximumHeight, node.cornerRadius,
-          node.spacing,
-        ].map(Double.init), componentID: node.componentID, field: "layout",
-        limits: executionLimits)
+      if let text = node.text {
+        try budget.validateFinite(
+          [text.size, text.weight].map(Double.init), componentID: node.componentID,
+          field: "text")
+      }
       for command in node.commands {
         try budget.recordCommand(pathElementCount: command.path.count, limits: executionLimits)
-        try budget.validateNumbers(
-          command.geometryValues.map(Double.init), componentID: node.componentID,
-          field: "draw geometry",
-          limits: executionLimits)
-        try budget.validateNumbers(
-          [command.alpha, command.strokeWidth].map(Double.init), componentID: node.componentID,
-          field: "paint", limits: executionLimits)
-        for element in command.path {
-          try budget.validateNumbers(
-            element.values.map(Double.init), componentID: node.componentID, field: "path",
-            limits: executionLimits)
-        }
       }
       pending.append(contentsOf: node.children.map { ($0, depth + 1) })
     }

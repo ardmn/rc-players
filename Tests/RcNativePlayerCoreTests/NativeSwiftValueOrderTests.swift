@@ -129,7 +129,11 @@ import Testing
     let result = Result { try session.probeValues(timeSeconds: 0) }
     switch result {
     case .success(let values):
-      #expect(values.floats[52] == 2, "\(String(describing: values.floats[52]))")
+      // The integer view reads 0, so 8 / 0 = inf. That result used to be refused (the failure
+      // branch below); a non-finite result is now kept, as AndroidX keeps it.
+      withKnownIssue("the integer view of a computed float reads 0") {
+        #expect(values.floats[52] == 2, "\(String(describing: values.floats[52]))")
+      }
     case .failure(let error):
       withKnownIssue("the integer view of a computed float reads 0") {
         Issue.record("Kotlin 52 = 2; Swift threw \(error)")

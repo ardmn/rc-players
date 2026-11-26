@@ -256,14 +256,16 @@ import Testing
     #expect(try session.probeFloatList(id: 14, dynamic: false, timeSeconds: 0) == [])
     #expect(session.setFloatArray(Array(repeating: 3, count: limit), for: "series"))
     #expect(try session.probeFloatList(id: 14, dynamic: false, timeSeconds: 0)?.count == limit)
-    // Refused, as the Kotlin controller refuses them, and the previous value stands.
+    // Over the limit is refused, as the Kotlin controller refuses it, and the previous value stands.
     #expect(!session.setFloatArray(Array(repeating: 3, count: limit + 1), for: "series"))
-    #expect(!session.setFloatArray([.nan], for: "series"))
-    #expect(!session.setFloatArray([.infinity], for: "series"))
-    #expect(!session.setFloatArray([-.infinity], for: "series"))
     #expect(try session.probeFloatList(id: 14, dynamic: false, timeSeconds: 0)?.count == limit)
+    // Non-finite elements are taken, as AndroidX's UpdateDynamicFloatList.apply takes them.
+    #expect(session.setFloatArray([.nan, .infinity, -.infinity], for: "series"))
+    let stored = try session.probeFloatList(id: 14, dynamic: false, timeSeconds: 0)
+    #expect(stored?.count == 3 && stored?[0].isNaN == true, "\(String(describing: stored))")
+    #expect(stored?[1] == .infinity && stored?[2] == -.infinity)
     // The same rule through the seed path a reopen uses.
-    #expect(!session.restoreNamedValue(.floatArray([.nan]), forDeclaredName: "USER:series"))
+    #expect(session.restoreNamedValue(.floatArray([.nan]), forDeclaredName: "USER:series"))
     #expect(
       !session.restoreNamedValue(
         .floatArray(Array(repeating: 1, count: limit + 1)), forDeclaredName: "USER:series"))

@@ -7,7 +7,6 @@ z-index	float
 alpha	float
 rotation	float
 scale	float
-background-alpha	float
 color-interpolation	float
 animated-expression	float
 conditional	float

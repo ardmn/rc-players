@@ -1590,8 +1590,8 @@ private final class NativeMacDocumentView: NSView {
           "id": view.node.componentID,
           "kind": kind,
           "x": Double(
-            frame.origin.x - parentPadding.left - CGFloat(view.node.offsetX) - parentShift),
-          "y": Double(frame.origin.y - parentPadding.top - CGFloat(view.node.offsetY)),
+            frame.origin.x - parentPadding.left - view.layoutNode.offset.x - parentShift),
+          "y": Double(frame.origin.y - parentPadding.top - view.layoutNode.offset.y),
           "width": Double(frame.size.width),
           "height": Double(frame.size.height),
           "depth": depth,
@@ -2947,7 +2947,12 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
 
   private static func canvasCommands(for node: NativeMacNode) -> [NativeMacDrawCommand] {
     let promotesImage = node.kind == .image
-    return node.commands.filter { !(promotesImage && $0.kind == NativeSwiftDrawKind.bitmap) }
+    // A command with non-finite geometry draws nothing, as on AndroidX's Canvas; the UIKit player
+    // drops it the same way (`isDrawable`).
+    return node.commands.filter {
+      !(promotesImage && $0.kind == NativeSwiftDrawKind.bitmap)
+        && NativeMacPolicy.executionLimits.isDrawable($0)
+    }
   }
 
   private static func labelTexts(for node: NativeMacNode) -> [NativeSwiftTextSnapshot] {
@@ -2961,7 +2966,8 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
     guard node.kind == .image else { return [] }
     return node.commands.compactMap {
       command -> (image: NSImage, draw: NativeSwiftImageDrawSnapshot, alpha: Float)? in
-      guard command.kind == NativeSwiftDrawKind.bitmap, let draw = command.image,
+      guard command.kind == NativeSwiftDrawKind.bitmap,
+        NativeMacPolicy.executionLimits.isDrawable(command), let draw = command.image,
         let image = images[draw.imageID]
       else { return nil }
       return (image, draw, command.alpha)
@@ -3414,8 +3420,8 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
   /// (§2.7: padding is modifier translation, not the layout manager's assignment).
   var insets: MacInsets {
     MacInsets(
-      top: CGFloat(node.paddingTop), left: CGFloat(node.paddingLeft),
-      bottom: CGFloat(node.paddingBottom), right: CGFloat(node.paddingRight))
+      top: layoutNode.padding.top, left: layoutNode.padding.left,
+      bottom: layoutNode.padding.bottom, right: layoutNode.padding.right)
   }
   private var contentRect: CGRect {
     CGRect(

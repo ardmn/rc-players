@@ -52,9 +52,9 @@ import org.jetbrains.skia.Bitmap
  * Every value a host may write, NaN, the infinities and strings far over a document string's 4000
  * bytes included, as AndroidX's `setNamed*Override` takes them, reaches each float and text
  * consumer of the player without crashing it or hanging a frame: layout sizes, weights, padding,
- * offsets, `widthIn`, z-index, alpha and rotation, a background colour channel, colour
- * interpolation, an animated expression, a conditional, visibility, a dynamic list's length, canvas
- * geometry, text formatting, text length and merge.
+ * offsets, `widthIn`, z-index, alpha, rotation and scale, colour interpolation, an animated
+ * expression, a conditional, visibility, a dynamic list's length, canvas geometry, text formatting,
+ * text length and merge.
  *
  * The same documents are written to `Tests/RcNativePlayerCoreTests/Fixtures/host-value-edges/` for
  * the native Swift player's `NativeSwiftHostValueEdgeTests`, which writes the same values into

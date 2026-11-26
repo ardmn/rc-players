@@ -34,6 +34,33 @@ import Testing
       try HostValueEdgeFixtures.frames(session, "\(name) with \(text.utf16.count) units")
     }
   }
+
+  /// A host offset reaches the snapshot as a finite number: NaN reads 0 and an infinity is held at
+  /// the largest finite float of its sign, as the Kotlin player's `javaRoundToInt` reads it and as
+  /// `resolvedFloat` saturates a padding.
+  @Test func aHostOffsetIsSaturatedInTheSnapshot() throws {
+    let data = try HostValueEdgeFixtures.document("offset")
+    let cases: [(Float, Float)] = [
+      (.nan, 0), (.infinity, .greatestFiniteMagnitude), (-.infinity, -.greatestFiniteMagnitude),
+      (3e9, 3e9), (-12.5, -12.5),
+    ]
+    for (value, expected) in cases {
+      let session = try NativeSwiftDocumentSession.open(data: data)
+      #expect(session.setFloat(value, for: HostValueEdgeFixtures.floatName))
+      let snapshot = try session.snapshot(timeSeconds: 0)
+      var offsets: [(Float, Float)] = []
+      var pending = [snapshot.root]
+      while let node = pending.popLast() {
+        offsets.append((node.offsetX, node.offsetY))
+        pending.append(contentsOf: node.children)
+      }
+      #expect(offsets.allSatisfy { $0.0.isFinite && $0.1.isFinite }, "\(value): \(offsets)")
+      #expect(
+        offsets.contains { $0.0 == expected && $0.1 == expected }
+          || (expected == 0 && offsets.allSatisfy { $0.0 == 0 && $0.1 == 0 }),
+        "\(value): \(offsets)")
+    }
+  }
 }
 
 /// `Fixtures/host-value-edges`: one document per consumer, and `index.tsv` naming each with the
