@@ -92,10 +92,10 @@
       #expect(first.setFloat(2.75, forID: id))
       let carried = first.writtenNamedValues()
       #expect(carried.map(\.name) == ["i"])
-      #expect(carried.map(\.value) == [.integer(3, float: 2.75)])
+      #expect(carried.map(\.value) == [.integer(2, float: 2.75)])
       let (second, _) = try await NativePlayerEngine.open(
         data: data, maximumDocumentBytes: 1 << 20, namedValues: carried)
-      #expect(await second.writtenNamedValues().map(\.value) == [.integer(3, float: 2.75)])
+      #expect(await second.writtenNamedValues().map(\.value) == [.integer(2, float: 2.75)])
     }
 
     /// A value carried by its declared name lands in that variable, not in the one the host's

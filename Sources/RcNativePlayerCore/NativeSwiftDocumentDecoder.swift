@@ -128,6 +128,7 @@ enum NativeSwiftDocumentDecoder {
     var floats: [Int: Float] = [:]
     var colors: [Int: UInt32] = [:]
     var integers: [Int: Int] = [:]
+    var numericConstants: [ParsedNumericConstant] = []
     var integerExpressions: [Int: ParsedIntegerExpression] = [:]
     var integerExpressionOrder: [Int] = []
     var namedVariables: [String: ParsedNamedVariable] = [:]
@@ -574,6 +575,7 @@ enum NativeSwiftDocumentDecoder {
             let value = Float(bitPattern: word)
             guard value.isFinite else { throw input.malformed("float value must be finite") }
             floats[id] = value
+            numericConstants.append(.float(id: id, value: value))
           }
           steps.append(.float(id: id, words: [word], offset: opcodeOffset))
         case NativeSwiftWireOpcode.animatedFloat:
@@ -1563,6 +1565,7 @@ enum NativeSwiftDocumentDecoder {
           let value = Float(bitPattern: constantWord)
           guard value.isFinite else { throw input.malformed("float value must be finite") }
           floats[floatID] = value
+          numericConstants.append(.float(id: floatID, value: value))
         }
       case NativeSwiftWireOpcode.dataBitmap:  // Bitmap data
         let imageID = try input.int("bitmap id")
@@ -1700,7 +1703,10 @@ enum NativeSwiftDocumentDecoder {
         colors[colorID] = UInt32(bitPattern: Int32(lightFallback))
         darkColors[colorID] = UInt32(bitPattern: Int32(darkFallback))
       case NativeSwiftWireOpcode.dataInt:  // Integer constant
-        integers[try input.int("integer id")] = try input.int("integer value")
+        let id = try input.int("integer id")
+        let value = try input.int("integer value")
+        integers[id] = value
+        numericConstants.append(.integer(id: id, value: value))
       case NativeSwiftWireOpcode.integerExpression:  // Integer expression
         let outputID = try input.int("integer expression output id")
         let mask = try input.int("integer expression mask")
@@ -2051,7 +2057,10 @@ enum NativeSwiftDocumentDecoder {
           throw NativeSwiftCoreError.unsupported(
             opcode: opcode, offset: opcodeOffset, reason: "image attribute type \(type)")
         }
-        floats[outputID] = Float(type == NativeSwiftImageAttributeType.width ? image.width : image.height)
+        let size = Float(
+          type == NativeSwiftImageAttributeType.width ? image.width : image.height)
+        floats[outputID] = size
+        numericConstants.append(.float(id: outputID, value: size))
       case NativeSwiftWireOpcode.layoutRoot:  // Root
         let root = ParsedNode(kind: .root, componentID: try input.int("root component id"))
         root.componentKind = "RootLayoutComponent"
@@ -3081,7 +3090,8 @@ enum NativeSwiftDocumentDecoder {
     return ParsedDocument(
       width: width, height: height, density: density, densityBehavior: densityBehavior,
       root: root, nodes: nodes, texts: texts, floats: floats,
-      colors: colors, integers: integers, integerExpressions: integerExpressions,
+      colors: colors, integers: integers, numericConstants: numericConstants,
+      integerExpressions: integerExpressions,
       integerExpressionOrder: integerExpressionOrder,
       namedVariables: namedVariables, expressions: expressions,
       componentValues: componentValues, colorAttributes: colorAttributes,
