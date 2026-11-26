@@ -838,16 +838,15 @@
               else { continue }
               resolvedByName[declared] = coreValue
             }
-            var initialStarting: [NativeStartingValue] = []
-            var takenHostWrites = startedFrom.takenHostWrites
             // In name order, so the session applies them, and reports any it refuses, in the
             // same order every time. O(n log n) in the initial values, a handful.
             let initialByName = resolvedByName.sorted { $0.key < $1.key }  // lint-ok: reason above
-            for (name, value) in initialByName {
-              initialStarting.append(NativeStartingValue(name: name, value: value))
-              if takenHostWrites[name] == nil {
-                takenHostWrites[name] = NativeHostValue(value: value, writeNumber: 0)
-              }
+            let initialStarting = initialByName.map {
+              NativeStartingValue(name: $0.key, value: $0.value)
+            }
+            var takenHostWrites = startedFrom.takenHostWrites
+            for (name, value) in initialByName where takenHostWrites[name] == nil {
+              takenHostWrites[name] = NativeHostValue(value: value, writeNumber: 0)
             }
             startedFrom = NativeCarriedValues(
               values: NativeStartingValue.merging(initialStarting, with: startedFrom.values),

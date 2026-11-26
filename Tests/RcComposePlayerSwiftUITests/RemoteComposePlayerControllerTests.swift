@@ -249,15 +249,15 @@ import Testing
     // newer value starts; the signal only keeps a missed cancellation from hanging the test.
     let superseded = RecordingTarget()
     superseded.answers = [.deferred]
-    var supersededDelivery: Task<Void, Never>?
-    superseded.onCall = { [unowned superseded] in
-      supersededDelivery?.cancel()
-      superseded.inputAvailability.signal()
-    }
-    supersededDelivery = Task { @MainActor in
+    // The task starts only once this test yields, so `onCall` is in place before the first offer.
+    let supersededDelivery = Task { @MainActor in
       await Value.integer(5).deliver(for: "USER:count", to: { superseded })
     }
-    await supersededDelivery?.value
+    superseded.onCall = { [unowned superseded] in
+      supersededDelivery.cancel()
+      superseded.inputAvailability.signal()
+    }
+    await supersededDelivery.value
     #expect(superseded.calls == [.integer(5)])
   }
 

@@ -39,7 +39,7 @@ public enum NativeTestDocuments {
   public static let textLimitBytes = 64
 
   /// A string twice ``textLimitBytes`` long, of the one-byte `character` repeated: over the limit.
-  public static func overLimitText(_ character: Character = "x") -> String {
+  public static func overLimitText(repeating character: Character = "x") -> String {
     String(repeating: character, count: 2 * textLimitBytes)
   }
 

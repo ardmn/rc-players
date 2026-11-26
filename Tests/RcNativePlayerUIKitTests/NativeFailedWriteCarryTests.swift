@@ -166,9 +166,11 @@
       try await until("input is outstanding") { view.hasOutstandingInput }
       var bad: RemoteComposeNativeInputAdmission?
       var good: RemoteComposeNativeInputAdmission?
-      Task { @MainActor in bad = await view.submit(.text(long), for: NativeTestDocuments.labelName)
+      Task { @MainActor in
+        bad = await view.submit(.text(long), for: NativeTestDocuments.labelName)
       }
-      Task { @MainActor in good = await view.submit(.text("T2"), for: NativeTestDocuments.titleName)
+      Task { @MainActor in
+        good = await view.submit(.text("T2"), for: NativeTestDocuments.titleName)
       }
       try await until("both answered") { bad != nil && good != nil }
       try await settled(view)
