@@ -323,8 +323,9 @@ protocol ControllerBackendProtocol: AnyObject {
     /// reopens is seeded with it (`seedValues`) and judges it afresh: there a value that breaks an
     /// execution limit is left out of the first frame and reported through `onError` once per
     /// session, and that session stays open and takes later writes. It stops as soon as the player
-    /// is gone, the task is cancelled, or `isCurrent` says a newer value for this name has
-    /// started, the player was rebuilt, or a reopen took the value in its seed.
+    /// is gone or has closed its input availability, the task is cancelled, or `isCurrent` says a
+    /// newer value for this name has started, the player was rebuilt, or a reopen took the value in
+    /// its seed.
     @MainActor
     func deliver<Target: NativeNamedValueTarget>(
       for name: String, to target: () -> Target?, isCurrent: () -> Bool
@@ -350,6 +351,9 @@ protocol ControllerBackendProtocol: AnyObject {
       do {
         guard !Task.isCancelled, let target = target(), isCurrent() else { return nil }
         availability = target.inputAvailability
+        // A closed availability returns from every wait at once: its player is gone, and offering
+        // again would spin.
+        guard !availability.isClosed else { return nil }
         mark = availability.mark
         let admission =
           if let value {

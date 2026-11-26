@@ -47,7 +47,7 @@ public enum RemoteComposeNativeInputAdmission: Equatable, Sendable {
 public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
   private let lock = NSLock()
   private var epoch: UInt64 = 0
-  private var isClosed = false
+  private var closed = false
   private var nextWaiter: UInt64 = 0
   private var waiters: [UInt64: CheckedContinuation<Void, Never>] = [:]
   /// Waiter ids in arrival order, from `orderHead` on; an id no longer in `waiters` (cancelled) is
@@ -61,6 +61,10 @@ public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
   /// write is being answered is not missed.
   public var mark: UInt64 { locked { epoch } }
 
+  /// Whether the player has gone away. Every wait returns at once from then on, so a caller that
+  /// offers and waits in a loop stops here rather than offering again without end.
+  public var isClosed: Bool { locked { closed } }
+
   /// How many callers are waiting now. Tests use it to know a waiter has started waiting.
   var waiterCount: Int { locked { waiters.count } }
 
@@ -73,7 +77,7 @@ public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
     await withTaskCancellationHandler {
       await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
         let resumeNow = locked { () -> Bool in
-          if epoch != mark || isClosed || Task.isCancelled { return true }
+          if epoch != mark || closed || Task.isCancelled { return true }
           waiters[id] = continuation
           order.append(id)
           return false
@@ -123,7 +127,7 @@ public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
 
   /// Releases every waiter, present and future: the player is gone.
   func close() {
-    locked { isClosed = true }
+    locked { closed = true }
     signal()
   }
 

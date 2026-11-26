@@ -6,9 +6,9 @@ import Testing
 
 /// `deliverNamedUpdate` loops until the player answers finally, and the loop must never spin: a
 /// deferred write is offered once per signal, plus once for a signal that arrived during the offer,
-/// and the loop ends on a final answer, cancellation or a gone player. Each test counts the offers
-/// exactly. The target stops deferring after `cap` offers, so a loop that spins fails the count
-/// instead of hanging the run. No test sleeps: each lets the main actor run a
+/// and the loop ends on a final answer, cancellation, a gone player or a closed availability. Each
+/// test counts the offers exactly. The target stops deferring after `cap` offers, so a loop that
+/// spins fails the count instead of hanging the run. No test sleeps: each lets the main actor run a
 /// bounded number of turns.
 @MainActor
 @Suite struct NativeDeliveryLoopTests {
@@ -132,6 +132,24 @@ import Testing
     availability.close()
     #expect(await delivery.value == nil)
     #expect(target.submits == 1)
+  }
+
+  /// 5b. A closed availability means its player is gone. Should a target still hand it out and
+  /// defer, the delivery returns rather than offering again in a hot loop: a closed availability
+  /// returns from every wait at once. Closed while the delivery waits, it ends after its one offer;
+  /// closed before it starts, it never offers.
+  @Test func aClosedAvailabilityEndsTheDeliveryEvenWhileTheTargetDefers() async {
+    let target = CountingTarget(answers: { _ in .deferred })
+    let delivery = Self.deliver(.integer(5), to: Holder(target))
+    #expect(await Self.run { target.availability.waiterCount == 1 }, "the delivery waits")
+    target.availability.close()
+    #expect(await delivery.value == nil)
+    #expect(target.submits == 1, "no offer after close")
+
+    let closed = CountingTarget(answers: { _ in .deferred })
+    closed.availability.close()
+    #expect(await Self.deliver(.integer(5), to: Holder(closed)).value == nil)
+    #expect(closed.submits == 0)
   }
 
   /// 6. A refusal returns at once: one offer, and no wait.
