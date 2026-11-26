@@ -28,7 +28,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// The integer and text slots a write has reached since the session opened — the host's, or one
   /// of the document's own actions — as opposed to ones only the document's computations fill (a
   /// text operation's output, an integer expression). A float write is in `floatOverrides`.
-  private var writtenIDs: Set<Int> = []
+  private var writtenIntegerAndTextIDs: Set<Int> = []
   private var floatAnimationRuntimes: [Int: NativeSwiftFloatAnimationRuntime] = [:]
   private var particleSystems: [Int: NativeSwiftParticleSystemRuntime] = [:]
   /// AndroidX's per-impulse "first frame in the window" bit, and each impulse's phase at the frame
@@ -123,7 +123,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     integers = other.integers
     documentClaimsEpochSecond = other.documentClaimsEpochSecond
     hostSetColors = other.hostSetColors
-    writtenIDs = other.writtenIDs
+    writtenIntegerAndTextIDs = other.writtenIntegerAndTextIDs
     hostDensity = other.hostDensity
     hostFontScale = other.hostFontScale
     floatAnimationRuntimes = other.floatAnimationRuntimes.mapValues { $0.detachedCopy() }
@@ -530,7 +530,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   {
     func storeInteger(_ id: Int, _ value: Int) {
       integers[id] = value
-      writtenIDs.insert(id)
+      writtenIntegerAndTextIDs.insert(id)
       floatOverrides.removeValue(forKey: id)
       values[id] = Float(value)
     }
@@ -540,7 +540,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       floatOverrides[id] = value
       values[id] = value
       integers[id] = Int(Int32(clamping: nativeSwiftClampedInt(value)))
-      writtenIDs.insert(id)
+      writtenIntegerAndTextIDs.insert(id)
     }
     // A sequence can mutate state before a later expression fails. Invalidate before executing the
     // first action so an error cannot leave a stale static snapshot cached over that mutation.
@@ -574,7 +574,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       case .textValue(let targetID, let textID):
         if let text = texts[textID] {
           texts[targetID] = text
-          writtenIDs.insert(targetID)
+          writtenIntegerAndTextIDs.insert(targetID)
         }
       case .hostAction(let id):
         events.append(.action(id: id))
@@ -737,13 +737,17 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       let id = variable.id
       switch variable.type {
       case NativeSwiftNamedVariableType.int:
-        if writtenIDs.contains(id) || floatOverrides[id] != nil, let value = integers[id] {
+        if writtenIntegerAndTextIDs.contains(id) || floatOverrides[id] != nil,
+          let value = integers[id]
+        {
           written.append((name, .integer(value, float: floatOverrides[id])))
         }
       case NativeSwiftNamedVariableType.float:
         if let value = floatOverrides[id] { written.append((name, .float(value))) }
       case NativeSwiftNamedVariableType.string:
-        if writtenIDs.contains(id), let value = texts[id] { written.append((name, .text(value))) }
+        if writtenIntegerAndTextIDs.contains(id), let value = texts[id] {
+          written.append((name, .text(value)))
+        }
       case NativeSwiftNamedVariableType.color:
         // Only a host writes a colour by name; the document's own are restored by its bytes.
         if hostSetColors.contains(id), let value = colors[id] {
@@ -780,13 +784,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       floatOverrides[id] = value
     case .text(let value):
       texts[id] = value
-      writtenIDs.insert(id)
+      writtenIntegerAndTextIDs.insert(id)
     case .color(let argb):
       colors[id] = argb
       hostSetColors.insert(id)
     case .integer(let value, let float):
       integers[id] = value
-      writtenIDs.insert(id)
+      writtenIntegerAndTextIDs.insert(id)
       if let float {
         floatOverrides[id] = float
       } else {
@@ -851,7 +855,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       })
     else { return false }
     texts[property.valueBits] = value
-    writtenIDs.insert(property.valueBits)
+    writtenIntegerAndTextIDs.insert(property.valueBits)
     staticSnapshotCache = nil
     return true
   }
