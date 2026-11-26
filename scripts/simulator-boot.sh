@@ -48,8 +48,10 @@ rc_run_bounded() {
 # jobs we checked on hosted macos-26 runners, passing and failing alike, and the erased re-boots
 # that followed took 182-232s. So a slow but healthy device was erased, and the tests then ran on a
 # factory-fresh simulator still doing its first-boot work, where the accessibility audit once gave
-# up with "Audit failed to complete in time". 300s lets a healthy first boot finish; only a device
-# that is really wedged reaches the erase.
+# up with "Audit failed to complete in time". 300s covers the slowest erased re-boot measured
+# there with room to spare (the first boot itself was never seen to finish, being cut at 120s), so
+# only a device that is really wedged reaches the erase. The price is paid by that wedged device
+# alone: up to 180s more before its erase.
 rc_await_boot() {
   local udid="$1"
   local timeout="${2:-300}"

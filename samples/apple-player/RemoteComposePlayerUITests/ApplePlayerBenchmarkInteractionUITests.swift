@@ -2,6 +2,11 @@ import XCTest
 
 @MainActor
 final class ApplePlayerBenchmarkInteractionUITests: XCTestCase {
+  override func setUp() async throws {
+    try await super.setUp()
+    AppWarmUp.once()
+  }
+
   func testBothPlayersAcceptAUserScrollGesture() throws {
     for renderer in ["cmp", "nativeUIKit"] {
       let app = XCUIApplication()

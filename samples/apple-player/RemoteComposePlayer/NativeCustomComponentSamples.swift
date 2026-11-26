@@ -26,10 +26,24 @@ enum NativeCustomComponentSamples {
 /// adopting it would overwrite the newer local edit: on a slow simulator, typing " Lovelace" after
 /// "Ada" left "Ada ace". So the control remembers what it sent and has not yet seen come back. A
 /// snapshot equal to one of those is its own echo and is dropped together with every older one;
-/// any other value was changed elsewhere in the document and is adopted.
+/// any other value was changed elsewhere in the document and is adopted, without being sent back.
+///
+/// Known gap: a sent value whose snapshot never shows (the player refused it, or SwiftUI merged two
+/// snapshots into one change) stays remembered until a newer echo clears it, and an outside write of
+/// that same value in the meantime is taken for an echo.
 struct DocumentEchoFilter<Value: Equatable> {
   /// Values sent to the document, oldest first, whose snapshot has not arrived yet.
   private var inFlight: [Value] = []
+  /// The document value most recently adopted into the control, until the control's change to it
+  /// has been seen; that change came from the document and is not an edit to send back.
+  private var adopted: Value?
+
+  /// Whether a change of the control's value is the user's edit, to be sent to the document, rather
+  /// than the control taking a value it just adopted.
+  mutating func isEdit(_ value: Value) -> Bool {
+    defer { adopted = nil }
+    return value != adopted
+  }
 
   mutating func sent(_ value: Value) {
     inFlight.append(value)
@@ -43,15 +57,18 @@ struct DocumentEchoFilter<Value: Equatable> {
       return nil
     }
     inFlight.removeAll()
+    adopted = documentValue
     return documentValue
   }
 }
 
 /// How the sample's controls deliver a return value to the document.
 ///
-/// `--return-latency-ms=<n>` delays every return by `n` milliseconds, keeping their order, so a UI
-/// test can reproduce a document that lags behind fast input the way a loaded CI simulator does.
-struct DocumentReturn {
+/// `--return-latency-ms=<n>` delays every return by `n` milliseconds after it was sent, in send
+/// order, so a UI test can reproduce a document that lags behind fast input the way a loaded CI
+/// simulator does.
+@MainActor
+final class DocumentReturn {
   static let latencyArgument = "--return-latency-ms="
   static let fromLaunchArguments = DocumentReturn(
     latency: ProcessInfo.processInfo.arguments
@@ -59,14 +76,23 @@ struct DocumentReturn {
       .flatMap { Int($0.dropFirst(latencyArgument.count)) }
       .map { .milliseconds($0) })
 
-  let latency: Duration?
+  private let latency: Duration?
+  /// The newest delayed return. The next one waits for it, so returns arrive in send order even
+  /// when their deadlines are microseconds apart.
+  private var newestDelayed: Task<Void, Never>?
+
+  init(latency: Duration?) {
+    self.latency = latency
+  }
 
   /// Returns whether the value was handed to the document (a delayed send is assumed accepted).
-  @MainActor
   func send<Value>(_ value: Value, by deliver: @escaping @MainActor (Value) -> Bool) -> Bool {
     guard let latency else { return deliver(value) }
-    Task { @MainActor in
-      try? await Task.sleep(for: latency)
+    let due = ContinuousClock.now + latency
+    let previous = newestDelayed
+    newestDelayed = Task { @MainActor in
+      await previous?.value
+      try? await Task.sleep(until: due, clock: .continuous)
       _ = deliver(value)
     }
     return true
@@ -95,7 +121,9 @@ private struct NativeEditableText: View {
       .padding(.horizontal, 8)
       .padding(.vertical, 4)
       .onChange(of: editing) { _, value in
-        if documentReturn.send(value, by: { component.send($0, to: Self.textReturn) }) {
+        if sentEdits.isEdit(value),
+          documentReturn.send(value, by: { component.send($0, to: Self.textReturn) })
+        {
           sentEdits.sent(value)
         }
       }
@@ -148,12 +176,16 @@ private struct NativeBoundControls: View {
     .padding(12)
     .background(.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     .onChange(of: name) { _, value in
-      if documentReturn.send(value, by: { component.send($0, to: Self.nameReturn) }) {
+      if sentNames.isEdit(value),
+        documentReturn.send(value, by: { component.send($0, to: Self.nameReturn) })
+      {
         sentNames.sent(value)
       }
     }
     .onChange(of: level) { _, value in
-      if documentReturn.send(value, by: { component.send($0, to: Self.levelReturn) }) {
+      if sentLevels.isEdit(value),
+        documentReturn.send(value, by: { component.send($0, to: Self.levelReturn) })
+      {
         sentLevels.sent(value)
       }
     }
