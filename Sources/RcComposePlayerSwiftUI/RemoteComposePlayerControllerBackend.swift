@@ -275,7 +275,7 @@ protocol ControllerBackendProtocol: AnyObject {
     /// in, since a dictionary's own order changes from run to run. O(n log n) in the stored names,
     /// a handful.
     fileprivate var sortedByName: [(key: String, value: Value)] {
-      sorted { $0.key < $1.key }  // lint-ok: reason above
+      sorted { $0.key < $1.key }
     }
   }
 

@@ -840,7 +840,7 @@
             }
             // In name order, so the session applies them, and reports any it refuses, in the
             // same order every time. O(n log n) in the initial values, a handful.
-            let initialByName = resolvedByName.sorted { $0.key < $1.key }  // lint-ok: reason above
+            let initialByName = resolvedByName.sorted { $0.key < $1.key }
             let initialStarting = initialByName.map {
               NativeStartingValue(name: $0.key, value: $0.value)
             }
