@@ -29,7 +29,9 @@ import Foundation
 
 /// A value the controller writes to a named variable, with its type, so a colour and an integer —
 /// both carried as integers — reach the setter that type-checks each. The overlay keeps its own
-/// type rather than a player's because it also compiles with no native player linked at all.
+/// type rather than a player's because it also compiles with no native player linked at all, and
+/// because it keeps a boolean apart from an integer, as the controller's API does, until
+/// `nativeValue` writes it as 1 or 0 into the native player's `RemoteComposeNativeNamedValue`.
 enum ControllerNamedValue: Equatable {
   case float(Float)
   case text(String)
@@ -117,8 +119,10 @@ protocol ControllerBackendProtocol: AnyObject {
     func attach(_ declarations: NativeSwiftNamedVariableDeclarations) {
       self.declarations = declarations
       var kept: [String: ControllerNamedValue] = [:]
-      for name in values.keys.sorted() {
-        guard let value = values[name], let declared = declarations.declaredName(for: name),
+      // In name order, so that when two stored names resolve to one declared name ("foo" and
+      // "USER:foo") the same one wins every time.
+      for (name, value) in values.sortedByName {
+        guard let declared = declarations.declaredName(for: name),
           declarations.accepts(value, for: declared)
         else { continue }
         kept[declared] = value
@@ -157,15 +161,16 @@ protocol ControllerBackendProtocol: AnyObject {
       updateHandlers[owner] = handler
       guard let handler else { return }
       var seeded: [String: ControllerNamedValue] = [:]
-      for name in initial.keys.sorted() {
-        guard let value = initial[name], let declared = declarations.declaredName(for: name),
+      // Name order, as in `attach`: two initial names that resolve to one declared name always
+      // leave the same one seeded.
+      for (name, value) in initial.sortedByName {
+        guard let declared = declarations.declaredName(for: name),
           declarations.accepts(value, for: declared)
         else { continue }
         seeded[declared] = value
       }
-      for name in values.keys.sorted() {
-        guard let value = values[name] else { continue }
-        if seeded[name] == value { continue }
+      // Replayed in name order, so the player receives the values in the same order every time.
+      for (name, value) in values.sortedByName where seeded[name] != value {
         handler(name, value)
       }
     }
@@ -175,11 +180,10 @@ protocol ControllerBackendProtocol: AnyObject {
     var storedValues: [String: ControllerNamedValue] { values }
 
     /// Every value stored so far, sorted by key, for seeding a brand-new player's first open
-    /// before its declarations finish loading on the main actor.
+    /// before its declarations finish loading on the main actor. Sorted because a seed is applied
+    /// in order and a dictionary's order changes from run to run.
     var initialSeedValues: [(name: String, value: RemoteComposeNativeNamedValue)] {
-      values.keys.sorted().compactMap { name in
-        values[name].map { (name: name, value: $0.nativeValue) }
-      }
+      values.sortedByName.map { (name: $0.key, value: $0.value.nativeValue) }
     }
 
     /// The values written so far, by the name the player's document declares them under, which
@@ -240,19 +244,20 @@ protocol ControllerBackendProtocol: AnyObject {
     /// value stays with the controller, as on the Kotlin player, and each session the player
     /// reopens is seeded with it (`seedValues`) and judges it afresh: there a value that breaks an
     /// execution limit is left out of the first frame and reported through `onError` once per
-    /// session, and that session stays open and takes later writes. It stops as soon as the player
-    /// is gone, the task is cancelled, or `isCurrent` says a newer value for this name has
-    /// started, the player was rebuilt, or a reopen took the value in its seed.
+    /// session, and that session stays open and takes later writes. It stops at its next check
+    /// once the player is gone or the task is cancelled (an offer already being answered still
+    /// gets its answer): the player view cancels a delivery's task when a newer value for its name
+    /// starts, the player is rebuilt, or a reopen takes the value in its seed.
     @MainActor
     func deliver<Target: NativeNamedValueTarget>(
-      for name: String, to target: () -> Target?, isCurrent: () -> Bool
+      for name: String, to target: () -> Target?
     ) async {
       while true {
         let availability: RemoteComposeNativeInputAvailability
         let mark: UInt64
         // The strong reference lives only for the offer, not across the wait below.
         do {
-          guard !Task.isCancelled, let target = target(), isCurrent() else { return }
+          guard !Task.isCancelled, let target = target() else { return }
           availability = target.inputAvailability
           mark = availability.mark
           switch await target.submit(nativeValue, for: name) {
@@ -262,6 +267,15 @@ protocol ControllerBackendProtocol: AnyObject {
         }
         await availability.wait(after: mark)
       }
+    }
+  }
+
+  extension Dictionary where Key == String {
+    /// The entries in name order: the order the controller re-keys, replays and seeds its values
+    /// in, since a dictionary's own order changes from run to run. O(n log n) in the stored names,
+    /// a handful.
+    fileprivate var sortedByName: [(key: String, value: Value)] {
+      sorted { $0.key < $1.key }
     }
   }
 

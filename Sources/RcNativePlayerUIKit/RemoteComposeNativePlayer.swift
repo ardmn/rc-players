@@ -233,12 +233,12 @@
     let value: NativeSwiftNamedValue
     /// The player's count of the host's writes to the name when this one reached it
     /// (`hostWriteCounts`).
-    let write: UInt64
+    let writeNumber: UInt64
   }
 
   /// What a session over the same bytes starts from.
   private struct NativeCarriedValues {
-    static let none = NativeCarriedValues(values: [], hostValues: [:])
+    static let none = NativeCarriedValues(values: [], takenHostWrites: [:])
     /// Applied, in order, before its first frame.
     let values: [NativeStartingValue]
     /// The seeding host's write of each name the sessions so far took — through `submit`, or
@@ -246,7 +246,7 @@
     /// it is that same write: the session's own value, which the document may have changed since,
     /// is newer. It is applied when the host has written the name since, even back to an equal
     /// value.
-    let hostValues: [String: NativeHostValue]
+    let takenHostWrites: [String: NativeHostValue]
   }
 
   /// A starting value a reopened session was opened without, and why.
@@ -287,7 +287,7 @@
     /// The seeding host's write of each name this session holds or took: `startedFrom`'s, then
     /// each `submit` write it applied — also one it applied after a reopen superseded it, since
     /// its written values are carried.
-    var hostValues: [String: NativeHostValue]
+    var takenHostWrites: [String: NativeHostValue]
     /// Each named write that failed this session — applying it, or the frame it produced, broke a
     /// limit or the policy — and was refused, by the name the document declares, with its value.
     /// While the session stays failed its variable may still hold that value, which is what
@@ -304,7 +304,7 @@
       self.engine = engine
       self.resources = resources
       self.leftOut = leftOut
-      hostValues = startedFrom.hostValues
+      takenHostWrites = startedFrom.takenHostWrites
     }
 
     var hasOutstandingInput: Bool { activity == .input || !inputs.isEmpty }
@@ -762,7 +762,7 @@
           values: NativeStartingValue.merging(presentation.leftOut, with: written).filter {
             failedWrites[$0.name] != $0.value
           },
-          hostValues: presentation.hostValues)
+          takenHostWrites: presentation.takenHostWrites)
       }
     }
 
@@ -803,22 +803,22 @@
       let onFirstFrameModelBuilt = onFirstFrameModelBuilt
       let hostWriteCounts = hostWriteCounts
       let seed = (namedValueSeed?() ?? []).map { entry in
-        let write = NativeHostValue(
-          value: entry.value.coreValue, write: hostWriteCounts[entry.name] ?? 0)
-        return (name: entry.name, write: write)
+        let seedWrite = NativeHostValue(
+          value: entry.value.coreValue, writeNumber: hostWriteCounts[entry.name] ?? 0)
+        return (name: entry.name, seedWrite: seedWrite)
       }
       // A reopen that supersedes this open before it presents starts from the same values.
       let startingValues = Task {
         let carried = await carried?.value ?? .none
         var seeded: [NativeStartingValue] = []
-        var hostValues = carried.hostValues
-        for (name, write) in seed where carried.hostValues[name] != write {
-          seeded.append(NativeStartingValue(name: name, value: write.value))
-          hostValues[name] = write
+        var takenHostWrites = carried.takenHostWrites
+        for (name, seedWrite) in seed where carried.takenHostWrites[name] != seedWrite {
+          seeded.append(NativeStartingValue(name: name, value: seedWrite.value))
+          takenHostWrites[name] = seedWrite
         }
         return NativeCarriedValues(
           values: NativeStartingValue.merging(carried.values, with: seeded),
-          hostValues: hostValues)
+          takenHostWrites: takenHostWrites)
       }
       carriedNamedValues = startingValues
       // Reduce Motion stops the frames a visibility animation needs, so it lands at once instead.
@@ -839,19 +839,19 @@
               else { continue }
               resolvedByName[declared] = coreValue
             }
-            var initialStarting: [NativeStartingValue] = []
-            var hostValues = startedFrom.hostValues
-            for name in resolvedByName.keys.sorted() {
-              if let value = resolvedByName[name] {
-                initialStarting.append(NativeStartingValue(name: name, value: value))
-                if hostValues[name] == nil {
-                  hostValues[name] = NativeHostValue(value: value, write: 0)
-                }
-              }
+            // In name order, so the session applies them, and reports any it refuses, in the
+            // same order every time. O(n log n) in the initial values, a handful.
+            let initialByName = resolvedByName.sorted { $0.key < $1.key }
+            let initialStarting = initialByName.map {
+              NativeStartingValue(name: $0.key, value: $0.value)
+            }
+            var takenHostWrites = startedFrom.takenHostWrites
+            for (name, value) in initialByName where takenHostWrites[name] == nil {
+              takenHostWrites[name] = NativeHostValue(value: value, writeNumber: 0)
             }
             startedFrom = NativeCarriedValues(
               values: NativeStartingValue.merging(initialStarting, with: startedFrom.values),
-              hostValues: hostValues)
+              takenHostWrites: takenHostWrites)
           }
           let namedValues = startedFrom.values
           // The local functions below are nonisolated, so they run on the global executor, off the
@@ -955,10 +955,12 @@
             // Only this failure path pays the extra opens.
             var kept: [NativeStartingValue] = []
             var refusals: [NativeLeftOutValue] = []
-            func keep(_ group: ArraySlice<NativeStartingValue>, failing knownError: (any Error)?)
+            func keepRenderable(
+              _ group: ArraySlice<NativeStartingValue>, knownFailure: (any Error)?
+            )
               async throws
             {
-              var failure = knownError
+              var failure = knownFailure
               if failure == nil {
                 do {
                   opened = try await openRendering(kept + group)
@@ -978,10 +980,10 @@
                 return
               }
               let middle = group.startIndex + group.count / 2
-              try await keep(group[..<middle], failing: nil)
-              try await keep(group[middle...], failing: nil)
+              try await keepRenderable(group[..<middle], knownFailure: nil)
+              try await keepRenderable(group[middle...], knownFailure: nil)
             }
-            try await keep(namedValues[...], failing: firstError)
+            try await keepRenderable(namedValues[...], knownFailure: firstError)
             // `opened` is the last attempt that passed `checkRendering`.
             return (opened, refusals, [], nil)
           }
@@ -1005,7 +1007,7 @@
           guard let self, generation == self.generation else { return }
           self.presentOpened(
             model, engine: opened.engine, resources: resources, effects: opened.frame.effects,
-            startedFrom: startedFrom, reporting: refusals, alsoLeftOut: unreported,
+            startedFrom: startedFrom, reporting: refusals, unreportedLeftOut: unreported,
             failing: firstFrameError)
         } catch {
           guard !Task.isCancelled, let self, generation == self.generation else { return }
@@ -1017,18 +1019,18 @@
 
     /// Install the first frame of a freshly opened session, then report `refusals` — starting
     /// values it was opened without because each broke a limit — as refused writes are reported.
-    /// `alsoLeftOut` are starting values it was opened without that are not reported.
+    /// `unreportedLeftOut` are starting values it was opened without that are not reported.
     /// `firstFrameError` is why the first frame breaks the limits, as the open judged it.
     private func presentOpened(
       _ model: NativeDocument, engine: NativePlayerEngine, resources: NativeResourceStore,
       effects: [RemoteComposeNativePlayerEvent], startedFrom: NativeCarriedValues,
-      reporting refusals: [NativeLeftOutValue], alsoLeftOut: [NativeStartingValue],
+      reporting refusals: [NativeLeftOutValue], unreportedLeftOut: [NativeStartingValue],
       failing firstFrameError: (any Error)?
     ) {
       pendingInitialNamedValues = []
       let presentation = NativePlayerPresentation(
         engine: engine, resources: resources, startedFrom: startedFrom,
-        leftOut: refusals.map(\.value) + alsoLeftOut)
+        leftOut: refusals.map(\.value) + unreportedLeftOut)
       defer {
         for refusal in refusals { report(refusal.error) }
         announceOpened()
@@ -1293,7 +1295,7 @@
         // callbacks; a named value it set is carried into a session reopened over the same bytes,
         // which then holds the host's value too.
         if case .success(let update) = result, update.accepted {
-          note(.accepted, of: pending, on: presentation)
+          recordOutcome(.accepted, of: pending, on: presentation)
         }
         pending.reply?(.deferred)
         return
@@ -1304,12 +1306,12 @@
         // Evaluated first: an optional-chained call skips its argument when a gesture has no reply.
         let outcome = presentInput(
           update, of: pending.input, on: presentation, generation: generation)
-        note(outcome, of: pending, on: presentation)
+        recordOutcome(outcome, of: pending, on: presentation)
         pending.reply?(outcome == .accepted ? .accepted : .refused)
       case .failure(let error):
         if !(error is CancellationError) {
           show(error: error, retaining: presentation)
-          note(.failed, of: pending, on: presentation)
+          recordOutcome(.failed, of: pending, on: presentation)
         }
         pending.reply?(.refused)
       }
@@ -1331,7 +1333,7 @@
     ///   change by the document (or by a `set*` call) at the next reopen — keyed by the name the
     ///   host wrote, as `hostWriteCounts` and the seed are;
     /// - a write that failed it, whose value the next session is not handed (`failedWrites`).
-    private func note(
+    private func recordOutcome(
       _ outcome: NativeInputOutcome, of pending: NativePendingInput,
       on presentation: NativePlayerPresentation
     ) {
@@ -1343,8 +1345,9 @@
       switch outcome {
       case .accepted:
         presentation.failedWrites[declared] = nil
-        if let write = pending.hostWrite {
-          presentation.hostValues[name] = NativeHostValue(value: value.coreValue, write: write)
+        if let writeNumber = pending.hostWrite {
+          presentation.takenHostWrites[name] = NativeHostValue(
+            value: value.coreValue, writeNumber: writeNumber)
         }
       case .failed:
         presentation.failedWrites[declared] = value.coreValue

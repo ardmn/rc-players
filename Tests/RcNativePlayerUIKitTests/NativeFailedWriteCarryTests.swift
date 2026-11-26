@@ -38,18 +38,18 @@
       typealias Op = NativeSwiftWireOpcode
       let wire = NativeTestWire()
       wire.header(width: 200, height: 100)
-      wire.u8(Op.dataText).int(60).utf8("Idle").named(
-        60, NativeTestWire.NamedType.string, "USER:label")
-      wire.u8(Op.dataText).int(61).utf8("Title").named(
-        61, NativeTestWire.NamedType.string, "USER:title")
+      typealias Documents = NativeTestDocuments
+      wire.u8(Op.dataText).int(Documents.labelDocumentLabelStringID).utf8(Documents.labelInitial)
+        .named(
+          Documents.labelDocumentLabelStringID, NativeTestWire.NamedType.string,
+          "USER:\(Documents.labelName)")
+      wire.u8(Op.dataText).int(Documents.labelDocumentTitleStringID).utf8(Documents.titleInitial)
+        .named(
+          Documents.labelDocumentTitleStringID, NativeTestWire.NamedType.string,
+          "USER:\(Documents.titleName)")
       wire.u8(Op.layoutRoot).int(1)
-      for (componentID, text) in [(labelID, 60), (titleID, 61)] {
-        wire.u8(Op.layoutText)
-        for value in [componentID, 0, text, Int(Int32(bitPattern: 0xFF00_0000))] { wire.int(value) }
-        wire.float(16).int(0).float(400)
-        for value in [-1, 1, 1, 1] { wire.int(value) }
-        wire.u8(Op.containerEnd)
-      }
+      wire.text(id: labelID, reading: Documents.labelDocumentLabelStringID)
+      wire.text(id: titleID, reading: Documents.labelDocumentTitleStringID)
       wire.u8(Op.containerEnd)
       return wire.data
     }
@@ -76,11 +76,11 @@
 
     private var lowTextLimit: RemoteComposeNativeExecutionLimits {
       var limits = RemoteComposeNativeExecutionLimits.default
-      limits.maximumTextBytes = 64
+      limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       return limits
     }
 
-    private let long = String(repeating: "x", count: 100)
+    private let long = NativeTestDocuments.overLimitText()
 
     // MARK: - A failed write is recognised under either spelling of its name
 
@@ -97,7 +97,7 @@
       view.load(Self.userLabel())
       try await settled(view, "retry settles")
       #expect(errors.count == 1, "replayed: \(errors)")
-      #expect(text(Self.labelID, in: view) == "Idle")
+      #expect(text(Self.labelID, in: view) == NativeTestDocuments.labelInitial)
     }
 
     /// The host writes "label" (the documented spelling for a `USER:` variable). The write that
@@ -110,7 +110,7 @@
         onError: { errors.append($0) })
       try await settled(view, "opens")
       try #require(errors.isEmpty, "\(errors)")
-      #expect(await view.setString(long, for: "label") == false)
+      #expect(await view.setString(long, for: NativeTestDocuments.labelName) == false)
       try #require(errors.count == 1, "\(errors)")
       view.load(Self.userLabel())
       try await settled(view, "retry settles")
@@ -118,7 +118,7 @@
       view.configureHostDensity(2)
       try await settled(view, "density reopen settles")
       #expect(errors.count == 1, "the failed write is reported again at each reopen: \(errors)")
-      #expect(text(Self.labelID, in: view) == "Idle")
+      #expect(text(Self.labelID, in: view) == NativeTestDocuments.labelInitial)
     }
 
     // MARK: - Stale failedWrites after a repair
@@ -132,11 +132,16 @@
         data: NativeTestDocuments.label(), executionLimits: lowTextLimit, resourceResolver: nil,
         onError: { errors.append($0) })
       try await settled(view, "opens")
-      #expect(await view.setString(long, for: "label") == false)
-      #expect(await view.setString("T2", for: "title") == false, "refused: the frame still fails")
-      #expect(await view.setString("ok", for: "label") == true, "repairs the session")
+      #expect(await view.setString(long, for: NativeTestDocuments.labelName) == false)
+      #expect(
+        await view.setString("T2", for: NativeTestDocuments.titleName) == false,
+        "refused: the frame still fails")
+      #expect(
+        await view.setString("ok", for: NativeTestDocuments.labelName) == true,
+        "repairs the session")
       try #require(text(NativeTestDocuments.labelID + 1, in: view) == "T2", "the title is shown")
-      #expect(await view.setString(long, for: "label") == false, "fails it again")
+      #expect(
+        await view.setString(long, for: NativeTestDocuments.labelName) == false, "fails it again")
       view.load(NativeTestDocuments.label())
       try await settled(view, "retry settles")
       #expect(
@@ -161,8 +166,12 @@
       try await until("input is outstanding") { view.hasOutstandingInput }
       var bad: RemoteComposeNativeInputAdmission?
       var good: RemoteComposeNativeInputAdmission?
-      Task { @MainActor in bad = await view.submit(.text(long), for: "label") }
-      Task { @MainActor in good = await view.submit(.text("T2"), for: "title") }
+      Task { @MainActor in
+        bad = await view.submit(.text(long), for: NativeTestDocuments.labelName)
+      }
+      Task { @MainActor in
+        good = await view.submit(.text("T2"), for: NativeTestDocuments.titleName)
+      }
       try await until("both answered") { bad != nil && good != nil }
       try await settled(view)
       #expect(
@@ -190,14 +199,16 @@
         data: NativeTestDocuments.label(), resourceResolver: nil,
         onError: { errors.append($0) })
       try await settled(view, "opens")
-      view.namedValueSeed = { [(name: "label", value: .text(String(repeating: "x", count: 100)))] }
+      view.namedValueSeed = {
+        [(name: NativeTestDocuments.labelName, value: .text(NativeTestDocuments.overLimitText()))]
+      }
       view.configureExecutionLimits(lowTextLimit)
       try await until("left out and reported") {
         !view.isOpeningDocument && !view.isBusy && !errors.isEmpty
       }
       try #require(errors.count == 1, "\(errors)")
-      try #require(text(NativeTestDocuments.labelID, in: view) == "Idle")
-      #expect(await view.setString(long, for: "label") == false)
+      try #require(text(NativeTestDocuments.labelID, in: view) == NativeTestDocuments.labelInitial)
+      #expect(await view.setString(long, for: NativeTestDocuments.labelName) == false)
       try #require(errors.count == 2, "\(errors)")
       view.load(NativeTestDocuments.label())
       try await settled(view, "retry settles")
@@ -213,14 +224,14 @@
         onError: { errors.append($0) })
       try await settled(view, "opens")
       let long = self.long
-      view.namedValueSeed = { [(name: "label", value: .text(long))] }
+      view.namedValueSeed = { [(name: NativeTestDocuments.labelName, value: .text(long))] }
       view.configureExecutionLimits(lowTextLimit)
       try await until("left out") { !view.isOpeningDocument && !view.isBusy && !errors.isEmpty }
       try #require(errors.count == 1)
       view.configureExecutionLimits(.default)
       try await settled(view, "raised")
       #expect(text(NativeTestDocuments.labelID, in: view) == long)
-      #expect(await view.submit(.text(long), for: "label") == .accepted)
+      #expect(await view.submit(.text(long), for: NativeTestDocuments.labelName) == .accepted)
       view.configureHostDensity(2)
       try await settled(view, "density")
       #expect(text(NativeTestDocuments.labelID, in: view) == long)
@@ -243,7 +254,7 @@
       Task { @MainActor in
         while true {
           let mark = availability.mark
-          let result = await view.submit(.text("A"), for: "label")
+          let result = await view.submit(.text("A"), for: NativeTestDocuments.labelName)
           if result != .deferred {
             answer = result
             return
@@ -265,7 +276,7 @@
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.label(), resourceResolver: nil, onError: { _ in })
       try await settled(view, "opens")
-      #expect(await view.submit(.text("A"), for: "label") == .accepted)
+      #expect(await view.submit(.text("A"), for: NativeTestDocuments.labelName) == .accepted)
       for _ in 0..<20 {
         Task { @MainActor in _ = await view.submit(.integer(1), for: "missing") }
       }
@@ -275,7 +286,7 @@
       view.load(NativeTestDocuments.label())
       view.perform(NSSelectorFromString("sceneDidActivate"))
       try await settled(view, "reopen settles")
-      #expect(text(NativeTestDocuments.labelID, in: view) == "Idle")
+      #expect(text(NativeTestDocuments.labelID, in: view) == NativeTestDocuments.labelInitial)
     }
   }
 #endif
