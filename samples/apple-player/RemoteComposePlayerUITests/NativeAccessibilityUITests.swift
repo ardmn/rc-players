@@ -85,7 +85,8 @@ final class NativeAccessibilityUITests: XCTestCase {
       app.staticTexts["Ada Lovelace"].waitForExistence(timeout: uiWaitTimeout),
       "The document lost part of the edit: \(name.value ?? "nil")")
     XCTAssertEqual(name.value as? String, "Ada Lovelace", "An older echo overwrote the field")
-    // The last keystrokes' echoes may still be on their way; none of them may rewind the field.
+    // Returns arrive in order, so every echo is in by now; an echo that was taken for an outside
+    // write and sent back would replay an older value after this one and rewind the field.
     let echoRewoundName = expectation(
       for: NSPredicate(format: "value != %@", "Ada Lovelace"), evaluatedWith: name)
     echoRewoundName.isInverted = true
@@ -94,10 +95,11 @@ final class NativeAccessibilityUITests: XCTestCase {
     let level = app.sliders["swift-demo-level"]
     let levelValue = app.staticTexts["swift-demo-level-value"]
     level.adjust(toNormalizedSliderPosition: 0.25)
-    // The label shows the control's own value, so it reads where the drag ended (20–30%, with
-    // whatever spacing the locale puts before "%") at once. The values the drag passed through come
-    // back from the document one latency later; none of them may move the label out of that range.
-    let draggedTo = NSPredicate(format: "label MATCHES %@", "^(2[0-9]|30)\\D*%$")
+    // The label shows the control's own value, so it reads near where the drag ended (15–35%, with
+    // whatever spacing the locale puts before "%"; the drag lands within a few percent of 25) at
+    // once. The values the drag passed through come back one latency later; an adopted one moves
+    // the label out of that range (to 47% in a failing run).
+    let draggedTo = NSPredicate(format: "label MATCHES %@", "^(1[5-9]|2[0-9]|3[0-5])\\D*%$")
     wait(for: [expectation(for: draggedTo, evaluatedWith: levelValue)], timeout: uiWaitTimeout)
     let echoMovedIt = expectation(
       for: NSCompoundPredicate(notPredicateWithSubpredicate: draggedTo), evaluatedWith: levelValue)
