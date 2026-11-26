@@ -2294,52 +2294,46 @@ private constructor(
   public fun clearNamedValue(hostName: String) {
     val name = resolveName(hostName)
     val variable = variableNames[name] ?: return
-    if (variable.type == RcNamedVariable.FLOAT_ARRAY_TYPE) {
+    when (variable.type) {
       // The override sits on top of whatever list the document keeps; removing it is the restore.
-      floatArrayOverrides.remove(variable.id)
-      return
-    }
-    if (variable.type == RcNamedVariable.STRING_TYPE) {
-      // A text override outlives the frame it was set in: `beginFrame` rebuilds `texts` from
-      // `baseTexts` and then re-applies `textOverrides` on top, every frame. So clearing one means
-      // *removing* the override, not writing the old string back — writing it back would install a
-      // fresh override that happens to hold the document's text, and the document could never
-      // change it again.
-      textOverrides.remove(variable.id)
-      baseTexts[variable.id]?.let { texts[variable.id] = it } ?: texts.remove(variable.id)
-      return
-    }
-    if (variable.type == RcNamedVariable.COLOR_TYPE) {
-      // Drop the override before restoring, so the document's own writes (a colour expression
-      // naming this id) land again; the remembered value stands until the next one does.
-      colorOverrides.remove(variable.id)
-      (documentNamedValues[name] as? RcNamedValue.Color)?.let { colors[variable.id] = it.argb }
-      return
-    }
-    if (variable.type == RcNamedVariable.LONG_TYPE) {
-      // A long with no `LongConstant` behind it holds nothing: a time attribute reading it falls
-      // back to the clock, as AndroidX `TimeAttribute.paint` does with no constant at the id. So
-      // the document's value to go back to is that absence, not the `0L` `readNamedValue`
-      // reports for it.
-      val recorded = documentNamedValues[name] as? RcNamedValue.LongValue
-      if (variable.id in documentLongIds && recorded != null) {
-        longs[variable.id] = recorded.value
-      } else {
-        longs.remove(variable.id)
+      RcNamedVariable.FLOAT_ARRAY_TYPE -> floatArrayOverrides.remove(variable.id)
+      RcNamedVariable.STRING_TYPE -> {
+        // A text override outlives the frame it was set in: `beginFrame` rebuilds `texts` from
+        // `baseTexts` and then re-applies `textOverrides` on top, every frame. So clearing one
+        // means *removing* the override, not writing the old string back — writing it back would
+        // install a fresh override that happens to hold the document's text, and the document
+        // could never change it again.
+        textOverrides.remove(variable.id)
+        baseTexts[variable.id]?.let { texts[variable.id] = it } ?: texts.remove(variable.id)
       }
-      return
+      RcNamedVariable.COLOR_TYPE -> {
+        // Drop the override before restoring, so the document's own writes (a colour expression
+        // naming this id) land again; the remembered value stands until the next one does.
+        colorOverrides.remove(variable.id)
+        (documentNamedValues[name] as? RcNamedValue.Color)?.let { colors[variable.id] = it.argb }
+      }
+      RcNamedVariable.LONG_TYPE -> {
+        // A long with no `LongConstant` behind it holds nothing: a time attribute reading it falls
+        // back to the clock, as AndroidX `TimeAttribute.paint` does with no constant at the id. So
+        // the document's value to go back to is that absence, not the `0L` `readNamedValue`
+        // reports for it.
+        val recorded = documentNamedValues[name] as? RcNamedValue.LongValue
+        when {
+          variable.id in documentLongIds && recorded != null -> longs[variable.id] = recorded.value
+          else -> longs.remove(variable.id)
+        }
+      }
+      RcNamedVariable.FLOAT_TYPE,
+      RcNamedVariable.INT_TYPE ->
+        when {
+          // A named system variable: the value to go back to is the clock's, which the next frame
+          // loads once the host's claim is gone. Writing a remembered value back would re-claim it.
+          variable.id in RcSystemVariables.ALL && variable.id !in documentClaimedSystemIds ->
+            claimedSystemIds.remove(variable.id)
+          else -> documentNamedValues[name]?.let { setNamedValue(name, it) }
+        }
+      else -> documentNamedValues[name]?.let { setNamedValue(name, it) }
     }
-    val numeric =
-      variable.type == RcNamedVariable.FLOAT_TYPE || variable.type == RcNamedVariable.INT_TYPE
-    if (
-      numeric && variable.id in RcSystemVariables.ALL && variable.id !in documentClaimedSystemIds
-    ) {
-      // A named system variable: the value to go back to is the clock's, which the next frame
-      // loads once the host's claim is gone. Writing a remembered value back would re-claim it.
-      claimedSystemIds.remove(variable.id)
-      return
-    }
-    documentNamedValues[name]?.let { setNamedValue(name, it) }
   }
 
   /**
