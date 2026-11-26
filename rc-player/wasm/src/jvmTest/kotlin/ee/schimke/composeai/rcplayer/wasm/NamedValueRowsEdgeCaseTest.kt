@@ -1,6 +1,7 @@
 package ee.schimke.composeai.rcplayer.wasm
 
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
+import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.fields
 import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.join
 import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.read
 import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.row
@@ -142,8 +143,7 @@ class NamedValueRowsEdgeCaseTest {
     // The KDoc promises every malformed row is dropped on its own. `Main.kt` always writes
     // `encodeURIComponent` output, so this row cannot come from the bundle today, but the function
     // takes any `String`: a decoder that throws on it must not take the good row down too.
-    val notEncoded =
-      listOf("%", "x", "y", NAMED_VALUE_TEXT_MARK).joinToString(NAMED_VALUE_FIELD_SEPARATOR)
+    val notEncoded = fields("%", "x", "y", NAMED_VALUE_TEXT_MARK)
     assertEquals(orange, read(join(notEncoded, orangeRow)))
   }
 }

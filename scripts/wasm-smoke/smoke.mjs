@@ -81,7 +81,9 @@ const NAMED_COLOUR_FIXTURE = Object.freeze({
   name: 'WearM3.primary',
   colour: '#FFFF8800',
   // The RGB the override draws: `colour` without its `#` and alpha.
-  get expectRgb() { return parseInt(this.colour.slice(3), 16); },
+  get expectRgb() {
+    return Number.parseInt(this.colour.slice(3), 16);
+  },
   // A second override the `namedValues` cases set against the first.
   blueColour: '#FF0000FF',
 });
@@ -252,13 +254,13 @@ const CASES = [
           namedValues: [
             good,
             { kind: 'string', name: 'label', value: 'é \u{1F600}\u{1F3FD} של‮' },
-            { ...blue, value: blue.value + '\u200F' },
+            { ...blue, value: `${blue.value}\u200F` },
             { ...blue, value: '\u{1F600}' },
           ],
           expect: 'good',
         },
         'a JS-trimmed line separator around a colour': {
-          namedValues: [good, { ...blue, value: ' ' + blue.value + ' ' }], expect: 'blue',
+          namedValues: [good, { ...blue, value: ` ${blue.value} ` }], expect: 'blue',
         },
         // Very long values.
         'a 200k-character value of an unknown variable': {

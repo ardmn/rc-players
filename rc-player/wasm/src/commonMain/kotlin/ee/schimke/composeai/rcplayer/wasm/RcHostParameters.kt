@@ -179,25 +179,34 @@ internal fun namedValuesFromRows(
   decodeComponent: (String) -> String,
 ): Map<String, RcNamedValue> {
   if (rows.isEmpty()) return emptyMap()
-  return buildMap {
-    rows.split(NAMED_VALUE_ROW_SEPARATOR).forEach { row ->
-      val fields = row.split(NAMED_VALUE_FIELD_SEPARATOR)
-      if (fields.size != NAMED_VALUE_FIELD_COUNT) return@forEach
-      // The JS writes exactly one of the two marks; a row with any other is malformed. Checked
-      // before the fields are decoded, so a malformed row costs no decoding.
-      val isNumber =
-        when (fields[NAMED_VALUE_TEXT_FIELD_COUNT]) {
-          NAMED_VALUE_NUMBER_MARK -> true
-          NAMED_VALUE_TEXT_MARK -> false
-          else -> return@forEach
-        }
-      // A field [decodeComponent] rejects (a stray `%`) drops this row, not the whole array.
-      val (kind, name, value) =
-        runCatching { fields.take(NAMED_VALUE_TEXT_FIELD_COUNT).map(decodeComponent) }.getOrNull()
-          ?: return@forEach
-      val namedValue = parseNamedValue(typeName = kind, value = value, isNumber = isNumber)
-      if (name.isNotEmpty() && namedValue != null) put("USER:$name", namedValue)
+  return rows
+    .split(NAMED_VALUE_ROW_SEPARATOR)
+    .mapNotNull { row -> namedValueFromRow(row, decodeComponent) }
+    .toMap()
+}
+
+/** One row of [namedValuesFromRows] as its `USER:` key and value, or null when it is dropped. */
+private fun namedValueFromRow(
+  row: String,
+  decodeComponent: (String) -> String,
+): Pair<String, RcNamedValue>? {
+  val fields = row.split(NAMED_VALUE_FIELD_SEPARATOR)
+  if (fields.size != NAMED_VALUE_FIELD_COUNT) return null
+  // The JS writes exactly one of the two marks; a row with any other is malformed. Checked before
+  // the fields are decoded, so a malformed row costs no decoding.
+  val isNumber =
+    when (fields[NAMED_VALUE_TEXT_FIELD_COUNT]) {
+      NAMED_VALUE_NUMBER_MARK -> true
+      NAMED_VALUE_TEXT_MARK -> false
+      else -> return null
     }
+  // A field [decodeComponent] rejects (a stray `%`) drops this row, not the whole array.
+  val (kind, name, value) =
+    runCatching { fields.take(NAMED_VALUE_TEXT_FIELD_COUNT).map(decodeComponent) }.getOrNull()
+      ?: return null
+  if (name.isEmpty()) return null
+  return parseNamedValue(typeName = kind, value = value, isNumber = isNumber)?.let {
+    "USER:$name" to it
   }
 }
 

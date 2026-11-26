@@ -647,24 +647,24 @@ private fun flattenNamedValuesFromLocation(
   textMark: String,
 ): JsString? =
   js(
-    """(function () {
-      var values;
+    """(() => {
+      let values;
       try {
         values = JSON.parse(new URL(window.location.href).searchParams.get('namedValues') || '[]');
-      } catch (error) { return null; }
+      } catch { return null; }
       if (!Array.isArray(values)) return null;
-      var rows = [];
-      values.forEach(function (value) {
-        if (value === null || typeof value !== 'object') return;
-        if (typeof value.kind !== 'string' || typeof value.name !== 'string') return;
+      const rows = [];
+      for (const value of values) {
+        if (value === null || typeof value !== 'object') continue;
+        if (typeof value.kind !== 'string' || typeof value.name !== 'string') continue;
         try {
           // The fourth field says whether `value` was a JSON number; namedValuesFromRows reads it
           // and drops a row carrying neither mark.
           rows.push([encodeURIComponent(value.kind), encodeURIComponent(value.name),
-            encodeURIComponent(String(value.value == null ? '' : value.value)),
+            encodeURIComponent(String(value.value ?? '')),
             typeof value.value === 'number' ? numberMark : textMark].join(fieldSeparator));
-        } catch (error) { /* this element alone is malformed */ }
-      });
+        } catch { /* this element alone is malformed */ }
+      }
       return rows.join(rowSeparator);
     })()""",
   )
