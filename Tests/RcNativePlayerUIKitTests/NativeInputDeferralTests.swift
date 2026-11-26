@@ -381,8 +381,10 @@
       moveToBackground(try #require(view))
       view = nil
       // UIKit may hold the view in the current autorelease pool until the main queue turns over.
-      try await until("the player is released and signals") { availability.mark != mark }
-      #expect(availability.isClosed, "the player's deinit closes its availability")
+      try await until("the player is released and closes its availability") {
+        availability.isClosed
+      }
+      #expect(availability.mark != mark, "closing signals")
       await availability.wait(after: mark)
     }
   }
