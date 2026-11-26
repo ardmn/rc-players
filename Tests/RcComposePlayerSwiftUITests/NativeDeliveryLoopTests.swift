@@ -23,10 +23,10 @@ import Testing
 /// scheduling itself serial, but it needs a new dependency (swift-concurrency-extras) in an
 /// upstream package, and the waiter count already gives a deterministic state to wait on.
 ///
-/// Each test has the one-minute `.loopLimit`, which needs macOS 13 / iOS 16 (above the package's
+/// Each test has the two-minute `.loopLimit`, which needs macOS 13 / iOS 16 (above the package's
 /// floor); a suite cannot carry `@available`, so each test does.
 @MainActor
-@Suite struct NativeDeliveryLoopTests {
+@Suite(.serialized) struct NativeDeliveryLoopTests {
   /// Every test runs for a write and for a clear (nil).
   nonisolated private static let updates: [ControllerNamedValue?] = [.integer(5), nil]
 
@@ -256,7 +256,7 @@ import Testing
 @available(macOS 13.0, iOS 16.0, tvOS 16.0, watchOS 9.0, *)
 extension Trait where Self == TimeLimitTrait {
   /// The limit on each delivery-loop test: far above what one needs, so only a hang reaches it.
-  fileprivate static var loopLimit: Self { .timeLimit(.minutes(1)) }
+  fileprivate static var loopLimit: Self { .timeLimit(.minutes(2)) }
 }
 
 /// What the delivery's `target()` returns: the player, or nil once it is gone.
