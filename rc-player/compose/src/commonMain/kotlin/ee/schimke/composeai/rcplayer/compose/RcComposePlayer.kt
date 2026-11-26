@@ -5330,7 +5330,8 @@ internal fun rcLayerFloat(
 ): () -> Float {
   // Each reader is remembered for what it captures, so a recomposition that changed none of them
   // returns the same reader, and `RcModulateAlphaLayer.bind` sees no change (`RcLayerFloatTest`).
-  // A float is keyed by its bits: compared as a number, `-0f` would keep the `0f` reader.
+  // A float is keyed by its bits: compared as a number, `-0f` would keep the `0f` reader, and a
+  // NaN target (the frame-less clock branch below can resolve one) would never match itself.
   val word =
     (attribute as? RcGraphicsLayerAttribute.FloatValue)?.value
       ?: return remember(default.toRawBits()) { { default } }

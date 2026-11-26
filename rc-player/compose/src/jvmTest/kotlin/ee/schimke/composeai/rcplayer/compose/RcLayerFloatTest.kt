@@ -30,8 +30,9 @@ import kotlin.test.assertTrue
 /**
  * `rcLayerFloat` hands `RcModulateAlphaLayer.bind` the same reader for as long as what it captures
  * is unchanged, so a recomposition that changed nothing writes no snapshot state. Pixels cannot
- * show this, so it is checked on the readers themselves. There is no NaN literal to test: every NaN
- * float word is a variable reference, and a reference's reader is the remembered animatable's.
+ * show this, so it is checked on the readers themselves. A literal cannot be NaN (every NaN float
+ * word is a variable reference); a NaN target only reaches the bits key through the clock branch
+ * without a frame clock, which these tests do not drive (they always provide one).
  */
 class RcLayerFloatTest {
   private val state =
@@ -62,6 +63,18 @@ class RcLayerFloatTest {
   }
 
   @Test
+  fun aHostWriteToAReferencedValueKeepsItsReader() {
+    // The reader reads the eased value, so a write moves the value, not the reader.
+    val attribute = float(reference(VARIABLE_ID))
+    val readers =
+      readersAcrossRecompositions(listOf(attribute, attribute, attribute)) { step ->
+        state.setFloat(VARIABLE_ID, 3f + step)
+      }
+    assertSame(readers[0], readers[1])
+    assertSame(readers[0], readers[2])
+  }
+
+  @Test
   fun aChangedValueGivesANewReader() {
     val readers =
       readersAcrossRecompositions(
@@ -88,6 +101,7 @@ class RcLayerFloatTest {
    */
   private fun readersAcrossRecompositions(
     attributes: List<RcGraphicsLayerAttribute?>,
+    beforeStep: (Int) -> Unit = {},
   ): List<() -> Float> {
     val readers = mutableListOf<() -> Float>()
     var attribute by mutableStateOf(attributes.first())
@@ -102,6 +116,7 @@ class RcLayerFloatTest {
     try {
       scene.render(0L)
       for ((index, next) in attributes.withIndex().drop(1)) {
+        beforeStep(index)
         attribute = next
         recompositions = index
         Snapshot.sendApplyNotifications()
