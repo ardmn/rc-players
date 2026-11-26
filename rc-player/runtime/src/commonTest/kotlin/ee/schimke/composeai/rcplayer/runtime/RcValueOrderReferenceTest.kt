@@ -1,6 +1,7 @@
 package ee.schimke.composeai.rcplayer.runtime
 
 import ee.schimke.composeai.rcplayer.protocol.RcComponentValue
+import ee.schimke.composeai.rcplayer.protocol.RcConditionalOperations
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
 import ee.schimke.composeai.rcplayer.protocol.RcFloatConstant
 import ee.schimke.composeai.rcplayer.protocol.RcFloatExpression
@@ -15,6 +16,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcOperation
 import ee.schimke.composeai.rcplayer.protocol.RcTextData
 import ee.schimke.composeai.rcplayer.protocol.RcTextLength
 import ee.schimke.composeai.rcplayer.protocol.RcTextLookupInt
+import ee.schimke.composeai.rcplayer.protocol.RcTextMerge
 import ee.schimke.composeai.rcplayer.protocol.RcValueFloatExpressionChangeAction
 import ee.schimke.composeai.rcplayer.protocol.RcValueIntegerExpressionChangeAction
 import ee.schimke.composeai.rcplayer.protocol.RcVersion
@@ -24,7 +26,9 @@ import kotlin.test.assertEquals
 /**
  * Kotlin's answers for the Swift `NativeSwiftValueOrderTests` and
  * `NativeSwiftSinglePassResolutionTests` cases that no other Kotlin test pins: one wire-order pass
- * each. The AndroidX-derived cases name their AndroidX test; the value asserted is Kotlin's.
+ * each. The AndroidX-derived cases name their AndroidX test; the value asserted is Kotlin's. A case
+ * the document plays through a measure pass or a draw-pass loop is driven through the entry point
+ * the Kotlin player uses for it (`publishComponentGeometry`, `forEachLoopValue`).
  */
 class RcValueOrderReferenceTest {
   private fun ref(id: Int) = RcFloatWord(0x7fc00000 or id)
@@ -305,5 +309,52 @@ class RcValueOrderReferenceTest {
     state.setNamedValue("compWidth", RcNamedValue.FloatValue(999f))
     state.publishComponentGeometry(5, geometry)
     assertEquals(100f, state.float(90))
+  }
+
+  /** A conditional over a computed float: F50 = 1 + 1, then `[50] == 2` holds. */
+  @Test
+  fun aConditionalReadsAComputedFloat() {
+    val expression =
+      RcFloatExpression(50, listOf(RcFloatWord.literal(1f), RcFloatWord.literal(1f), add), null)
+    val state = RcPlayerState(document(expression))
+    state.beginFrame()
+    state.applyAll(expression)
+    assertEquals(
+      true,
+      state.evaluateConditional(
+        RcConditionalOperations(RcConditionalOperations.EQUAL, ref(50), RcFloatWord.literal(2f)),
+      ),
+    )
+  }
+
+  /** A host write by name onto F43 = 2 + 3 is replaced by the next evaluation: 5. */
+  @Test
+  fun aNamedWriteToAnExpressionsOutputIsReplacedByTheNextEvaluation() {
+    val expression =
+      RcFloatExpression(43, listOf(RcFloatWord.literal(2f), RcFloatWord.literal(3f), add), null)
+    val state =
+      RcPlayerState(
+        document(expression, RcNamedVariable(43, RcNamedVariable.FLOAT_TYPE, "sum")),
+      )
+    state.beginFrame()
+    state.applyAll(expression)
+    state.setNamedValue("sum", RcNamedValue.FloatValue(42f))
+    state.beginFrame()
+    state.applyAll(expression)
+    assertEquals(5f, state.float(43))
+  }
+
+  /** T5 = T5 + T3 appends once per frame: "ab" on the first frame and on the next. */
+  @Test
+  fun aMergeOntoItsOwnOutputAppendsOncePerFrame() {
+    val merge = RcTextMerge(5, 5, 3)
+    val state = RcPlayerState(document(RcTextData(3, "b"), RcTextData(5, "a"), merge))
+    val drawn =
+      List(2) {
+        state.beginFrame()
+        state.applyAll(merge)
+        state.text(5)
+      }
+    assertEquals(listOf("ab", "ab"), drawn)
   }
 }

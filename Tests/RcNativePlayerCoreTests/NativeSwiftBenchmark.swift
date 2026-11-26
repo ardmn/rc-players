@@ -54,8 +54,8 @@ import Testing
   }
 
   /// Steady per-frame cost of value resolution alone (no layout to speak of) against the number of
-  /// float expressions, for the shapes a wire-order resolver treats differently. The base line the
-  /// single-pass resolution (ardmn/work#96) must not regress.
+  /// float expressions, for the shapes a wire-order resolver treats differently. The base line a
+  /// rewrite of the session's value resolution must not regress.
   private struct ResolutionCostReport: Codable {
     enum Shape: String, Codable, CaseIterable {
       /// n float constants and n float expressions over one moving float.
@@ -68,10 +68,17 @@ import Testing
       case interleavedChain
     }
     let shape: Shape
-    let floatCount: Int
-    let frames: Int
+    /// n: float expressions (and as many float constants) for the first three shapes, integer-float
+    /// expression pairs for `interleavedChain`.
+    let size: Int
+    /// The frames the median is taken over, after `resolutionWarmUpFrames` left out.
+    let sampledFrames: Int
     let medianFrameMilliseconds: Double
   }
+
+  /// Frames each resolution-cost session renders before timing: the first frames fill the
+  /// session's value tables and per-document caches.
+  private static let resolutionWarmUpFrames = 20
 
   private struct Scenarios: Codable {
     let feedArrival: FeedArrivalReport
@@ -201,7 +208,7 @@ import Testing
     for cost in scenarios.resolutionCost {
       print(
         String(
-          format: "resolution %@ n=%d: %.4fms/frame", cost.shape.rawValue, cost.floatCount,
+          format: "resolution %@ n=%d: %.4fms/frame", cost.shape.rawValue, cost.size,
           cost.medianFrameMilliseconds))
     }
     #expect(
@@ -331,23 +338,24 @@ import Testing
   }
 
   private static func measureResolutionCost() throws -> [ResolutionCostReport] {
-    // Each shape and size runs `frames` frames of one session; the first 20 warm the animation
-    // runtimes and are left out. 4 shapes x 3 sizes x 120 frames: well under a second in release.
+    // Each shape and size runs `frames` frames of one session and times the ones after the
+    // warm-up. Cost is linear in n: 4 shapes x 3 sizes x 120 frames, about 0.25 s in release.
     var reports: [ResolutionCostReport] = []
     for shape in ResolutionCostReport.Shape.allCases {
-      for floatCount in [100, 1000, 5000] {
+      for size in [100, 1000, 5000] {
         let session = try NativeSwiftDocumentSession.open(
-          data: makeResolutionDocument(shape: shape, floatCount: floatCount))
+          data: makeResolutionDocument(shape: shape, size: size))
         var samples: [Double] = []
         for frame in 0..<frames {
           let started = ProcessInfo.processInfo.systemUptime
           _ = try session.snapshot(timeSeconds: TimeInterval(frame) / 60)
           samples.append(milliseconds(since: started))
         }
+        let timed = Array(samples.dropFirst(resolutionWarmUpFrames))
         reports.append(
           ResolutionCostReport(
-            shape: shape, floatCount: floatCount, frames: frames,
-            medianFrameMilliseconds: median(Array(samples.dropFirst(20)))))
+            shape: shape, size: size, sampledFrames: timed.count,
+            medianFrameMilliseconds: median(timed)))
       }
     }
     return reports
@@ -356,7 +364,7 @@ import Testing
   /// The documents `measureResolutionCost` times; see `ResolutionCostReport.shape`. Float 20000 is
   /// `ANIMATION_TIME * 100`, so every frame resolves something new.
   private static func makeResolutionDocument(
-    shape: ResolutionCostReport.Shape, floatCount: Int
+    shape: ResolutionCostReport.Shape, size: Int
   ) -> Data {
     typealias Op = NativeSwiftWireOpcode
     let add = Writer.floatOperator(NativeSwiftFloatOperator.add)
@@ -371,18 +379,19 @@ import Testing
       // I(2k+1) = [2k] + 1, F(2k+2) = [2k+1] + 0.5 from F 30000 = [moving]: a wire-order chain.
       let base = 30000
       writer.u8(Op.animatedFloat).int(base).int(1).int(Writer.nanReference(movingID))
-      for step in 0..<floatCount {
+      for step in 0..<size {
         let floatIn = base + step * 2
+        // Mask 0b101: token 0 is a variable id, token 2 an operator.
         writer.u8(Op.integerExpression).int(floatIn + 1).int(0b101).int(3).int(floatIn).int(1)
           .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
         writer.u8(Op.animatedFloat).int(floatIn + 2).int(3).int(Writer.nanReference(floatIn + 1))
           .int(Writer.literal(0.5)).int(add)
       }
     case .floats, .integerOverStatic, .integerOverMoving:
-      for index in 0..<floatCount {
+      for index in 0..<size {
         writer.u8(Op.dataFloat).int(1000 + index).float(Float(index) + 0.5)
       }
-      for index in 0..<floatCount {
+      for index in 0..<size {
         writer.u8(Op.animatedFloat).int(30000 + index).int(3)
           .int(Writer.nanReference(1000 + index)).int(Writer.nanReference(movingID)).int(add)
       }

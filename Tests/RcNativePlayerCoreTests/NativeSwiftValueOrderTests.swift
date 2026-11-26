@@ -7,8 +7,12 @@ import Testing
 /// runs `applyContentStateOperation` once per pass in wire order, integer expressions read
 /// `integerVariable`, float expressions publish both views through `setFloat`, integer expressions
 /// through `setInteger`, and a document action's integer write is an `overrideInteger` that
-/// `applyIntegerExpression` respects. Kotlin's answers for the cases no other Kotlin test pins are
-/// in `RcValueOrderReferenceTest` (runtime commonTest).
+/// `applyIntegerExpression` respects. Kotlin's answers: `RcValueOrderReferenceTest` for the cycle,
+/// the chain, the one-id interleavings, the constants, the division and the host write onto an
+/// integer expression; `RcPlayerStateTest.anActionWriteSurvivesTheDeclarationsThatReplayEveryFrame`
+/// for the action write; `RcSystemVariableTest.anIntegerExpressionOverTheClockReadsItTruncated`
+/// for the clock and density reads (both through `integerVariable`); `RcPlayerStateTest`'s
+/// image-attribute and collection-lookup tests for the image size and the data-map float.
 @Suite struct NativeSwiftValueOrderTests {
   private typealias Op = NativeSwiftWireOpcode
   private typealias Named = NativeSwiftNamedVariableType

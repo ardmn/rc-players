@@ -3,16 +3,17 @@ import Testing
 
 @testable @_spi(Conformance) @_spi(RemoteComposeController) import RcNativePlayerCore
 
-/// The Kotlin player's value-resolution tests that had no Swift counterpart, ported to the session
-/// (ardmn/work#96, phase 1). Each test names the Kotlin test it ports and asserts the value that
-/// test pins. Where the session gives something else today the assertion sits in a
-/// `withKnownIssue` that says what differs, so the single-pass resolver is driven by these tests
-/// going green.
+/// Value-resolution tests of the Kotlin player and AndroidX that had no Swift counterpart, ported
+/// to the session ahead of a resolver that runs one wire-order pass as `RcPlayerState` does. Each
+/// test names the test it ports; the value asserted is Kotlin's, from that Kotlin test or, for an
+/// AndroidX case or an extension of a Kotlin one, from `RcValueOrderReferenceTest`. Where the
+/// session gives something else today the assertion sits in a `withKnownIssue` that says what
+/// differs. Values a frame produces are read from what the snapshot drew, not from
+/// `probeValues`, which resolves again on its own.
 ///
 /// The cases `NativeSwiftValueOrderTests`, `NativeSwiftKotlinParityTests`,
 /// `NativeSwiftFloatIntegerViewTests` and `NativeSwiftIntegerWriteTests` already port are not
-/// repeated here. Cases ported from AndroidX tests have their Kotlin answer pinned in
-/// `RcValueOrderReferenceTest`.
+/// repeated here.
 @Suite struct NativeSwiftSinglePassResolutionTests {
   private typealias Op = NativeSwiftWireOpcode
   private typealias Named = NativeSwiftNamedVariableType
@@ -40,6 +41,43 @@ import Testing
 
   private static func argb(_ value: UInt32) -> Int { Int(Int32(bitPattern: value)) }
 
+  /// Integer-expression masks: bit n marks token n as a variable id (the low bits) or an operator.
+  private static let variableThenOperator = 0b101
+  private static let operatorAtThirdToken = 0b100
+
+  /// `TextFromFloat`'s digits word: digits before the point in the high half, after it in the low.
+  private static func digits(before: Int, after: Int) -> Int { (before << 16) | after }
+
+  /// A root-level `DrawTextRun` of the whole of text `id`.
+  private static func drawText(_ document: Writer, id: Int) {
+    document.u8(Op.drawText).int(id).int(0).int(-1).int(0).int(0).float(0).float(0).u8(0)
+  }
+
+  /// A root-level rect whose width is `[id]`, so a snapshot shows what the frame resolved there.
+  private static func drawWidth(_ document: Writer, of id: Int) {
+    document.u8(Op.drawRect).float(0).float(0).int(Writer.nanReference(id)).float(10)
+  }
+
+  private static func allCommands(_ node: NativeSwiftNodeSnapshot)
+    -> [NativeSwiftDrawCommandSnapshot]
+  {
+    node.commands + node.children.flatMap(allCommands)
+  }
+
+  /// The texts and rect widths `snapshot` drew, in draw order.
+  private static func drawnTexts(_ snapshot: NativeSwiftDocumentSnapshot) -> [String?] {
+    allCommands(snapshot.root).filter { $0.kind == NativeSwiftDrawKind.text }.map(\.text)
+  }
+
+  private static func drawnWidths(_ snapshot: NativeSwiftDocumentSnapshot) -> [Float] {
+    allCommands(snapshot.root).filter { $0.kind == NativeSwiftDrawKind.rect }.map { $0.values[2] }
+  }
+
+  /// A known issue that is the session refusing the document with `reason`, not any other error.
+  private static func isRefusal(_ issue: Issue, _ reason: String) -> Bool {
+    "\(issue)".contains(reason)
+  }
+
   // MARK: - RcPlayerStateTest: loops and conditionals
 
   /// `RcPlayerStateTest.loopRefreshesHoistedExpressionsThatReadItsIndex` (and the compose
@@ -65,29 +103,33 @@ import Testing
   }
 
   /// `RcPlayerStateTest.evaluatesEveryAndroidXConditionalTypeIncludingChangedState`, the literal
-  /// half: 2 against 3 for each comparison type. The branch's box is drawn when it holds.
+  /// half: 2 against 3 for each comparison type, plus 3 against 3 so `<` and `<=` differ. The
+  /// branch's box is drawn when it holds. Not ported: CHANGED, whose state this core's
+  /// decode-time conditionals do not keep (see `aConditionalReadsAComputedFloat`).
   @Test(arguments: [
-    (NativeSwiftConditionalType.equal, false),
-    (NativeSwiftConditionalType.notEqual, true),
-    (NativeSwiftConditionalType.lessThan, true),
-    (NativeSwiftConditionalType.lessThanOrEqual, true),
-    (NativeSwiftConditionalType.greaterThan, false),
-    (NativeSwiftConditionalType.greaterThanOrEqual, false),
+    (NativeSwiftConditionalType.equal, 2, false), (NativeSwiftConditionalType.equal, 3, true),
+    (NativeSwiftConditionalType.notEqual, 2, true), (NativeSwiftConditionalType.notEqual, 3, false),
+    (NativeSwiftConditionalType.lessThan, 2, true), (NativeSwiftConditionalType.lessThan, 3, false),
+    (NativeSwiftConditionalType.lessThanOrEqual, 2, true),
+    (NativeSwiftConditionalType.lessThanOrEqual, 3, true),
+    (NativeSwiftConditionalType.greaterThan, 2, false),
+    (NativeSwiftConditionalType.greaterThan, 3, false),
+    (NativeSwiftConditionalType.greaterThanOrEqual, 2, false),
+    (NativeSwiftConditionalType.greaterThanOrEqual, 3, true),
   ])
-  func eachConditionalTypeComparesAsKotlinDoes(type: Int, holds: Bool) throws {
+  func eachConditionalTypeComparesAsKotlinDoes(type: Int, left: Float, holds: Bool) throws {
     let document = Writer()
     document.header(width: 100, height: 100)
     document.u8(Op.layoutRoot).int(1)
-    document.u8(Op.conditionalOperations).u8(type).float(2).float(3)
+    document.u8(Op.conditionalOperations).u8(type).float(left).float(3)
     document.u8(Op.layoutBox).int(5).int(-1).int(1).int(1)
     document.u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd)
     let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
-    #expect((root.node(withComponentID: 5) != nil) == holds, "type \(type)")
+    #expect((root.node(withComponentID: 5) != nil) == holds, "type \(type), \(left) vs 3")
   }
 
-  /// The same comparison over a computed float: F50 = 1 + 1 (an expression, not a constant), so
-  /// `[50] == 2` holds once the expression has run. Kotlin resolves the operand from the state the
-  /// wire-order pass left (`RcPlayerState.evaluateConditional` reads `resolve`).
+  /// An extension of the test above (Kotlin's answer: `RcValueOrderReferenceTest`): over a computed
+  /// float, F50 = 1 + 1, `[50] == 2` holds once the expression has run.
   @Test func aConditionalReadsAComputedFloat() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -108,14 +150,17 @@ import Testing
   // MARK: - RcPlayerStateTest: text operations
 
   /// `RcPlayerStateTest.anActionSendsTheTextItsOpsComputeFromCurrentValues`: T4 formats F2, T5 =
-  /// "ticks=" + T4; the host moves F2 from 30 to 50, and a click sends T5: "ticks=50".
+  /// "ticks=" + T4; after a frame the host moves F2 from 30 to 50, and a click with no frame in
+  /// between computes T5 again: "ticks=50".
   @Test func anActionSendsTheTextComputedFromTheCurrentValues() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
     document.text(id: 1, "ha")
     document.u8(Op.dataFloat).int(2).float(30)
     document.text(id: 3, "ticks=")
-    document.u8(Op.textFromFloat).int(4).int(Writer.nanReference(2)).int(255 << 16).int(517)
+    // Kotlin's `RcTextFromFloat(4, [2], 255, 0, 517)`.
+    document.u8(Op.textFromFloat).int(4).int(Writer.nanReference(2))
+      .int(Self.digits(before: 255, after: 0)).int(517)
     document.u8(Op.textMerge).int(5).int(3).int(4)
     document.u8(Op.layoutRoot).int(1)
     document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
@@ -124,10 +169,12 @@ import Testing
       .u8(Op.containerEnd)
     document.u8(Op.containerEnd).u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
-    #expect(session.setFloat(50, forID: 2))
     _ = try session.snapshot(timeSeconds: 0)
+    #expect(session.setFloat(50, forID: 2))
     let events = try session.click(componentID: 3, timeSeconds: 0)
-    #expect(events == [.namedAction(name: "ha", value: .text("ticks=50"))], "\(events as Any)")
+    withKnownIssue("an action sends a derived text as the last frame left it") {
+      #expect(events == [.namedAction(name: "ha", value: .text("ticks=50"))], "\(events as Any)")
+    }
   }
 
   /// `RcPlayerStateTest.aTextNotYetProducedReadsAsEmptyAndAnEmptyPathExpressionDrawsNothing`, the
@@ -153,7 +200,7 @@ import Testing
 
   /// `RcPlayerStateTest.anActionLeavesATextAnOpAppendsToAsTheLastFrameLeftIt`: T5 = T5 + T3
   /// appends to its own output. Kotlin's `beginFrame` resets derived text, so each frame draws
-  /// "ab", however many frames and clicks there are.
+  /// "ab" and a click sends it (the second frame is pinned in `RcValueOrderReferenceTest`).
   @Test func aMergeOntoItsOwnOutputAppendsOncePerFrame() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -162,6 +209,7 @@ import Testing
     document.text(id: 5, "a")
     document.u8(Op.textMerge).int(5).int(5).int(3)
     document.u8(Op.layoutRoot).int(1)
+    Self.drawText(document, id: 5)
     document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
     document.u8(Op.modifierClick)
       .u8(Op.hostNamedAction).int(1).int(NativeSwiftHostActionValueType.string).int(5)
@@ -171,8 +219,7 @@ import Testing
     var drawn: [String?] = []
     var sent: [[NativeSwiftEvent]?] = []
     for time in [0.0, 1.0] {
-      _ = try session.snapshot(timeSeconds: time)
-      drawn.append(try session.probeValues(timeSeconds: time).texts[5])
+      drawn += Self.drawnTexts(try session.snapshot(timeSeconds: time))
       sent.append(try session.click(componentID: 3, timeSeconds: time))
     }
     withKnownIssue("a derived text is not reset before each resolution") {
@@ -210,17 +257,19 @@ import Testing
     document.header(width: 100, height: 100)
     document.text(id: 66, "Morning run (0)")
     document.text(id: 67, "Morning run")
-    document.u8(Op.idList).int(2_097_194).int(2).int(66).int(67)
+    let titles = 2_097_194  // the list id the WatchScreenRemote capture uses
+    document.u8(Op.idList).int(titles).int(2).int(66).int(67)
     document.u8(Op.layoutRoot).int(1)
     document.u8(Op.layoutContent).int(2)
     document.u8(Op.integerExpression).int(69).int(0).int(1).int(1)
-    document.u8(Op.textLookupInt).int(70).int(2_097_194).int(69)
-    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    document.u8(Op.textLookupInt).int(70).int(titles).int(69)
+    document.u8(Op.containerEnd)
+    Self.drawText(document, id: 70)
+    document.u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
     for time in [0.0, 1.0] {
-      _ = try session.snapshot(timeSeconds: time)
-      let text = try session.probeValues(timeSeconds: time).texts[70]
-      #expect(text == "Morning run", "t=\(time) \(text as Any)")
+      let drawn = Self.drawnTexts(try session.snapshot(timeSeconds: time))
+      #expect(drawn == ["Morning run"], "t=\(time) \(drawn)")
     }
   }
 
@@ -231,12 +280,13 @@ import Testing
       document.u8(Op.dataFloat).int(10).float(0)
       document.u8(Op.animatedFloat).int(11).int(3).int(Writer.nanReference(10))
         .int(Writer.literal(3)).int(Self.mul)
-      document.u8(Op.textFromFloat).int(12).int(Writer.nanReference(11)).int(1 << 16).int(0)
+      document.u8(Op.textFromFloat).int(12).int(Writer.nanReference(11))
+        .int(Self.digits(before: 1, after: 0)).int(0)
+      Self.drawText(document, id: 12)
     }
     #expect(session.setFloat(2, forID: 10))
-    _ = try session.snapshot(timeSeconds: 0)
-    let text = try session.probeValues(timeSeconds: 0).texts[12]
-    #expect(text == "6", "\(text as Any)")
+    let drawn = Self.drawnTexts(try session.snapshot(timeSeconds: 0))
+    #expect(drawn == ["6"], "\(drawn)")
   }
 
   /// `RcPlayerStateTest.evaluatesAndroidXCollectionLookupsIntoTypedStores`: TextLookup by a
@@ -289,16 +339,17 @@ import Testing
   /// `RcPlayerStateTest.colorAttributesMatchAndroidXNormalizedComponents`: every channel of
   /// 0x804080C0, normalised.
   @Test func colourAttributesReadEveryNormalisedChannel() throws {
-    let expected: [Float] = [
-      7 / 12, 2 / 3, 192 / 255, 64 / 255, 128 / 255, 192 / 255, 128 / 255,
+    typealias Channel = NativeSwiftColorAttributeType
+    let expected: [(type: Int, value: Float)] = [
+      (Channel.hue, 7 / 12), (Channel.saturation, 2 / 3), (Channel.brightness, 192 / 255),
+      (Channel.red, 64 / 255), (Channel.green, 128 / 255), (Channel.blue, 192 / 255),
+      (Channel.alpha, 128 / 255),
     ]
     let values = try Self.open { document in
       document.u8(Op.colorConstant).int(7).int(Self.argb(0x8040_80C0))
-      for type in expected.indices {
-        document.u8(Op.attributeColor).int(20 + type).int(7).u16(type)
-      }
+      for (type, _) in expected { document.u8(Op.attributeColor).int(20 + type).int(7).u16(type) }
     }.probeValues(timeSeconds: 0)
-    for (type, value) in expected.enumerated() {
+    for (type, value) in expected {
       let resolved = values.floats[20 + type] ?? .nan
       #expect(
         abs(resolved - value) <= 0.000_001, "type \(type): Kotlin \(value); Swift \(resolved)")
@@ -319,7 +370,8 @@ import Testing
   }
 
   /// `RcPlayerStateTest.replaysTheValuesACanvasOperationsBlockPublishesForItsLaterSiblings`: a
-  /// canvas-operations block decomposes C7's alpha into F30; F31 = [30] after the block.
+  /// canvas-operations block decomposes C7's alpha into F30; F31 = [30] after the block; a canvas
+  /// after both draws a rect F31 wide.
   @Test func aCanvasOperationsBlockPublishesValuesForLaterSiblings() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -330,12 +382,14 @@ import Testing
     document.u8(Op.attributeColor).int(30).int(7).u16(NativeSwiftColorAttributeType.alpha)
     document.u8(Op.containerEnd)
     document.u8(Op.animatedFloat).int(31).int(1).int(Writer.nanReference(30))
+    document.u8(Op.layoutCanvas).int(3).int(-1)
+    document.u8(Op.layoutContent).int(4)
+    Self.drawWidth(document, of: 31)
     document.u8(Op.containerEnd).u8(Op.containerEnd)
-    let session = try NativeSwiftDocumentSession.open(data: document.data)
-    _ = try session.snapshot(timeSeconds: 0)
-    let values = try session.probeValues(timeSeconds: 0)
-    #expect(values.floats[30] == 0.501_960_8, "\(values.floats[30] as Any)")
-    #expect(values.floats[31] == 0.501_960_8, "\(values.floats[31] as Any)")
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    let widths = Self.drawnWidths(
+      try NativeSwiftDocumentSession.open(data: document.data).snapshot(timeSeconds: 0))
+    #expect(widths == [0.501_960_8], "\(widths)")
   }
 
   /// `RcPlayerStateTest.evaluatesAndroidXMatrixVectorMath`: translate (2, 3) applied to (4, 5).
@@ -380,10 +434,11 @@ import Testing
     document.u8(Op.runAction)
     document.u8(Op.valueIntegerChangeAction).int(20).int(4)
     document.u8(Op.containerEnd)
+    Self.drawWidth(document, of: 20)
     document.u8(Op.containerEnd)
-    let session = try NativeSwiftDocumentSession.open(data: document.data)
-    _ = try session.snapshot(timeSeconds: 0)
-    #expect(try session.probeValues(timeSeconds: 0).integers[20] == 4)
+    let widths = Self.drawnWidths(
+      try NativeSwiftDocumentSession.open(data: document.data).snapshot(timeSeconds: 0))
+    #expect(widths == [4], "\(widths)")
   }
 
   // MARK: - AndroidX actions and derived values
@@ -403,7 +458,10 @@ import Testing
       .u8(Op.containerEnd)
     document.u8(Op.containerEnd).u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
-    for _ in 0..<2 { _ = try session.click(componentID: 3, timeSeconds: 0) }
+    for _ in 0..<2 {
+      _ = try session.snapshot(timeSeconds: 0)
+      _ = try session.click(componentID: 3, timeSeconds: 0)
+    }
     let value = try session.probeValues(timeSeconds: 0).floats[50]
     #expect(value == 9, "\(value as Any)")
   }
@@ -414,7 +472,7 @@ import Testing
     let document = Writer()
     document.header(width: 100, height: 100)
     document.u8(Op.dataInt).int(42).int(0)
-    document.u8(Op.integerExpression).int(60).int(0b101).int(3).int(42).int(1)
+    document.u8(Op.integerExpression).int(60).int(Self.variableThenOperator).int(3).int(42).int(1)
       .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
     document.u8(Op.layoutRoot).int(1)
     document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
@@ -424,6 +482,7 @@ import Testing
     let session = try NativeSwiftDocumentSession.open(data: document.data)
     var seen: [Int?] = []
     for _ in 0..<3 {
+      _ = try session.snapshot(timeSeconds: 0)
       _ = try session.click(componentID: 3, timeSeconds: 0)
       seen.append(try session.probeValues(timeSeconds: 0).integers[42])
     }
@@ -433,16 +492,15 @@ import Testing
   /// AndroidX `IntegerExpressionEvaluatorTest.divisionByZero_doesNotThrow`: 5 / 0 and 5 % 0 are 0.
   @Test func integerDivisionByZeroIsZero() throws {
     typealias Integer = NativeSwiftIntegerOperator
-    let result = Result {
-      try Self.open { document in
-        for (id, operation) in [(60, Integer.div), (61, Integer.mod)] {
-          document.u8(Op.integerExpression).int(id).int(0b100).int(3).int(5).int(0)
-            .int(Writer.integerOperator(operation))
-        }
-      }.probeValues(timeSeconds: 0)
-    }
-    let values = try result.get()
-    #expect(values.integers[60] == 0 && values.integers[61] == 0, "\(values.integers[60] as Any)")
+    let values = try Self.open { document in
+      for (id, operation) in [(60, Integer.div), (61, Integer.mod)] {
+        document.u8(Op.integerExpression).int(id).int(Self.operatorAtThirdToken).int(3).int(5)
+          .int(0).int(Writer.integerOperator(operation))
+      }
+    }.probeValues(timeSeconds: 0)
+    #expect(
+      values.integers[60] == 0 && values.integers[61] == 0,
+      "\(values.integers[60] as Any) \(values.integers[61] as Any)")
   }
 
   /// AndroidX `RcPlayerDerivedDataTest.textLookupFollowsItsIndex`: a list ["a", "bb", "ccc"], a
@@ -459,13 +517,12 @@ import Testing
       document.u8(Op.textLength).int(21).int(20)
       document.u8(Op.animatedFloat).int(22).int(3).int(Writer.nanReference(21)).float(10)
         .int(Self.mul)
+      Self.drawWidth(document, of: 22)
     }
-    _ = try session.snapshot(timeSeconds: 0)
-    #expect(try session.probeValues(timeSeconds: 0).floats[22] == 10)
+    #expect(Self.drawnWidths(try session.snapshot(timeSeconds: 0)) == [10])
     #expect(session.setInteger(2, for: "index"))
-    _ = try session.snapshot(timeSeconds: 0)
-    let value = try session.probeValues(timeSeconds: 0).floats[22]
-    #expect(value == 30, "\(value as Any)")
+    let widths = Self.drawnWidths(try session.snapshot(timeSeconds: 0))
+    #expect(widths == [30], "\(widths)")
   }
 
   /// AndroidX `RcPlayerImperativeExpressionTest.loopAccumulator_readsTheValueAfterTheLoop`:
@@ -480,9 +537,11 @@ import Testing
     document.u8(Op.containerEnd)
     document.u8(Op.drawRect).float(0).float(0).int(Writer.nanReference(70)).float(10)
     let result = Result { try NativeSwiftDocumentSession.open(data: document.data).snapshot() }
-    withKnownIssue("a float expression inside a loop body is refused at decode") {
-      let rects = try result.get().root.commands.filter { $0.kind == NativeSwiftDrawKind.rect }
-      #expect(rects.map { $0.values[2] } == [80], "\(rects.map(\.values))")
+    try withKnownIssue("a float expression inside a loop body is refused at decode") {
+      let widths = Self.drawnWidths(try result.get())
+      #expect(widths == [80], "\(widths)")
+    } matching: {
+      Self.isRefusal($0, "not yet structurally migrated")
     }
   }
 
@@ -501,7 +560,7 @@ import Testing
     document.u8(Op.containerEnd).u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
     _ = try session.snapshot(timeSeconds: 0)
-    _ = session.setFloat(999, for: "compWidth")
+    #expect(session.setFloat(999, for: "compWidth"))
     _ = try session.snapshot(timeSeconds: 0)
     let value = try session.probeValues(timeSeconds: 0).floats[90]
     withKnownIssue("a host write to a component value's id is kept over the measurement") {
@@ -514,7 +573,7 @@ import Testing
   /// The row the next two tests lay out: a 100x40 row holding canvas -6, which `content` fills,
   /// then canvas -8, `width` wide.
   private static func siblingGeometryDocument(
-    content: (Writer) -> Void, width: (Writer) -> Void, after: (Writer) -> Void = { _ in }
+    content: (Writer) -> Void, width: (Writer) -> Void
   ) -> Data {
     let document = Writer()
     document.header(width: 100, height: 40)
@@ -529,18 +588,13 @@ import Testing
     document.u8(Op.containerEnd)
     document.u8(Op.layoutCanvas).int(-8).int(0)
     width(document)
-    after(document)
     document.u8(Op.containerEnd)
     document.u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd)
     return document.data
   }
 
   private static func rectWidths(_ data: Data) throws -> [Float] {
-    func commands(_ node: NativeSwiftNodeSnapshot) -> [NativeSwiftDrawCommandSnapshot] {
-      node.commands + node.children.flatMap(commands)
-    }
-    return try commands(NativeSwiftDocumentSession.open(data: data).snapshot().root)
-      .filter { $0.kind == NativeSwiftDrawKind.rect }.map { $0.values[2] }
+    drawnWidths(try NativeSwiftDocumentSession.open(data: data).snapshot())
   }
 
   /// `RcNativeSnapshotTest.settlesLaterSiblingGeometryBeforeResolvingEarlierCommands`: canvas -6
@@ -594,20 +648,25 @@ import Testing
 
   /// `RcTimeSourceRenderTest.aHostClockDrivesANamedCalendarField` (with
   /// `RcSystemVariableTest.namingASystemVariableDoesNotClaimIt`): a `NamedVariable` on
-  /// DAY_OF_MONTH leaves it the clock's.
+  /// DAY_OF_MONTH or YEAR leaves it the clock's. (Kotlin's check that the name resolves to the
+  /// system id is `NativeSwiftCoreTests.namedVariableDeclarationsAnswerAsTheSessionDoes`' kind.)
   @Test func namingASystemVariableDoesNotClaimIt() throws {
     let session = try Self.openWithRoot { document in
-      document.namedVariable(id: System.dayOfMonth, type: Named.float, name: "day")
+      document.namedVariable(id: System.dayOfMonth, type: Named.float, name: "cal_day")
+      document.namedVariable(id: System.year, type: Named.float, name: "cal_year")
     }
     let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
-    let value = try session.probeValues(timeSeconds: 0, wallClock: clock).floats[System.dayOfMonth]
-    #expect(value == Float(clock.fields.dayOfMonth), "\(value as Any)")
+    let values = try session.probeValues(timeSeconds: 0, wallClock: clock)
+    #expect(
+      values.floats[System.dayOfMonth] == Float(clock.fields.dayOfMonth)
+        && values.floats[System.year] == Float(clock.fields.year),
+      "\(values.floats[System.dayOfMonth] as Any) \(values.floats[System.year] as Any)")
   }
 
   // MARK: - RcSystemVariableTest
 
   /// `RcSystemVariableTest.anExpressionOverTheContinuousClockEvaluatesToANumberAndMovesBetweenFrames`:
-  /// F100 = [CONTINUOUS_SEC] * 2 at 30:45.250 into the hour is 3690.5, and moves half a second on.
+  /// F100 = [CONTINUOUS_SEC] * 2 at 30:45.250 into the hour is 3690.5, and 3691.5 half a second on.
   @Test func anExpressionOverTheContinuousClockMovesBetweenFrames() throws {
     let session = try Self.openWithRoot { document in
       document.u8(Op.animatedFloat).int(100).int(3).int(
@@ -621,7 +680,7 @@ import Testing
       timeSeconds: 1,
       wallClock: NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis + 500))
     #expect(first.floats[100] == 3690.5, "\(first.floats[100] as Any)")
-    #expect(later.floats[100] != first.floats[100], "\(later.floats[100] as Any)")
+    #expect(later.floats[100] == 3691.5, "\(later.floats[100] as Any)")
   }
 
   /// `RcSystemVariableTest.aHostWriteToASystemIdClaimsItForGood`: a host write to OFFSET_TO_UTC
@@ -716,17 +775,35 @@ import Testing
   // MARK: - RcFloatExpressionEvaluatorRobustnessTest
 
   /// `RcFloatExpressionEvaluatorRobustnessTest.anOperatorWithTooFewOperandsReadsZero` and
-  /// `anEmptyExpressionReadsZero`: Kotlin reads both as 0.
-  @Test func anExpressionWithTooFewOperandsOrNoWordsReadsZero() throws {
+  /// `anEmptyExpressionReadsZero`: Kotlin reads both as 0. These and the stack limit below are the
+  /// evaluator's rules, not resolution order.
+  @Test func anOperatorWithTooFewOperandsReadsZero() throws {
     let result = Result {
       try Self.open { document in
         document.u8(Op.animatedFloat).int(50).int(1).int(Self.add)
+      }.probeValues(timeSeconds: 0)
+    }
+    try withKnownIssue(
+      "an expression with too few operands refuses the document (as AndroidX does)"
+    ) {
+      let value = try result.get().floats[50]
+      #expect(value == 0, "\(value as Any)")
+    } matching: {
+      Self.isRefusal($0, "stack underflow")
+    }
+  }
+
+  @Test func anEmptyExpressionReadsZero() throws {
+    let result = Result {
+      try Self.open { document in
         document.u8(Op.animatedFloat).int(51).int(0)
       }.probeValues(timeSeconds: 0)
     }
-    withKnownIssue("an expression with too few operands refuses the document (as AndroidX does)") {
-      let values = try result.get()
-      #expect(values.floats[50] == 0 && values.floats[51] == 0, "\(values.floats[50] as Any)")
+    try withKnownIssue("an expression with no words refuses the document") {
+      let value = try result.get().floats[51]
+      #expect(value == 0, "\(value as Any)")
+    } matching: {
+      Self.isRefusal($0, "Invalid float expression result")
     }
   }
 
@@ -740,9 +817,13 @@ import Testing
         for _ in 0..<199 { document.int(Self.add) }
       }.probeValues(timeSeconds: 0)
     }
-    withKnownIssue("the evaluator's stack stops at AndroidX's 128 entries; Kotlin's has no limit") {
+    try withKnownIssue(
+      "the evaluator's stack stops at AndroidX's 128 entries; Kotlin's has no limit"
+    ) {
       let values = try result.get()
       #expect(values.floats[52] == 200, "\(values.floats[52] as Any)")
+    } matching: {
+      Self.isRefusal($0, "stack overflow")
     }
   }
 
@@ -757,7 +838,9 @@ import Testing
     document.u8(Op.animatedFloat).int(59).int((animation.count << 16) | 1)
       .int(Writer.nanReference(58))
     for word in animation { document.int(word) }
-    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    document.u8(Op.layoutRoot).int(1)
+    drawWidth(document, of: 59)
+    document.u8(Op.containerEnd)
     return document.data
   }
 
@@ -765,15 +848,17 @@ import Testing
   private static func animated(_ session: NativeSwiftDocumentSession, at time: Double) throws
     -> Float?
   {
-    _ = try session.snapshot(timeSeconds: time)
-    return try session.probeValues(timeSeconds: time).floats[59]
+    drawnWidths(try session.snapshot(timeSeconds: time)).first
   }
 
-  /// `RcFloatExpressionRuntimeTest.aTweenRetargetsFromItsCurrentValue`: a 1 s tween (type 4) from
-  /// 0 toward 100 is halfway at 1.5 s; retargeted to 0 there, it heads down from 50.
+  /// `RcFloatExpressionRuntimeTest.aTweenRetargetsFromItsCurrentValue`: a 1 s linear tween from 0
+  /// toward 100 is halfway at 1.5 s; retargeted to 0 there, it heads down from 50. Animation
+  /// runtime behaviour, not resolution order, like the spring tests below.
   @Test func aTweenRetargetsFromItsCurrentValue() throws {
     let session = try NativeSwiftDocumentSession.open(
-      data: Self.animatedDocument(source: 0, animation: [Writer.literal(1), 4]))
+      data: Self.animatedDocument(
+        source: 0,
+        animation: [Writer.literal(1), Int(NativeSwiftFloatEasingType.cubicLinear.rawValue)]))
     #expect(try Self.animated(session, at: 0) == 0)
     #expect(session.setFloat(100, for: "source"))
     _ = try Self.animated(session, at: 1)
@@ -791,8 +876,11 @@ import Testing
 
   /// The spring `remote-m3`'s selection controls record: stiffness 1400, critically damped, 0.001
   /// stop threshold.
+  /// Kotlin `RcFloatExpressionRuntimeTest`'s words: the spring marker, stiffness, damping, stop
+  /// threshold, and a zero final word.
   private static let spring = [
-    Writer.literal(0), Writer.literal(1400), Writer.literal(74.833_15), Writer.literal(0.001), 0,
+    Writer.literal(NativeSwiftFloatAnimationMetadata.springMarker), Writer.literal(1400),
+    Writer.literal(74.833_15), Writer.literal(0.001), 0,
   ]
 
   /// `RcFloatExpressionRuntimeTest.aSpringStartsSettledAtItsFirstTarget`.
@@ -835,10 +923,12 @@ import Testing
       data: Self.animatedDocument(source: 1, animation: Self.spring))
     _ = try Self.animated(session, at: 0)
     #expect(session.setFloat(0, for: "source"))
-    let first = try #require(try Self.animated(session, at: 10))
+    let retargeted = try session.snapshot(timeSeconds: 10)
+    let first = try #require(Self.drawnWidths(retargeted).first)
     let next = try #require(try Self.animated(session, at: 10.016))
     withKnownIssue("a spring starts at 0 rather than at its first target") {
       #expect(abs(first - 1) < 0.01, "the idle gap was integrated as one step: \(first)")
+      #expect(retargeted.needsContinuousFrames, "a retargeted spring asks for frames")
       #expect(next < first && next > 0, "\(next)")
     }
   }

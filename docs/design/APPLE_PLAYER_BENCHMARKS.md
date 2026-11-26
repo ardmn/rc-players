@@ -7,8 +7,7 @@ Three benchmark lanes cover the native Swift player across core, mobile (iOS), a
    steady frame, replacement, and RSS growth across the 6 comparative fixtures plus a synthetic
    dense feed card (~65 nodes, 10 named variables, 5 expressions), along with 20-card feed arrival,
    single/burst host-value updates, static wall-clock reuse, and the per-frame cost of value
-   resolution over 100, 1000 and 5000 float expressions in four shapes
-   (`scenarios.resolutionCost`).
+   resolution in four document shapes at sizes 100, 1000 and 5000 (`scenarios.resolutionCost`).
 2. **Mobile / iOS simulator (`scripts/measure-apple-players-simulator.sh` → `build/apple-player-simulator-benchmark.json`)**:
    compares CMP and native UIKit in the same Release simulator app on startup, first presentation,
    120-frame animation cadence, `UIScrollView` scroll, 12-card feed arrival, and document
