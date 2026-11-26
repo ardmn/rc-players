@@ -37,9 +37,10 @@
     static var shownBox: Int { 10 }
     static var localBox: Int { 11 }
 
-    /// A document with two boxes, gone until the integers named "shown" and "local" say otherwise,
-    /// and a text reading the string named ``NativeTestDocuments/labelName``. `size` only changes
-    /// the bytes.
+    /// A document with two boxes, gone until the integers named
+    /// ``NativeTestDocuments/shownName`` and ``NativeTestDocuments/localName`` say otherwise, and a
+    /// text reading the string named ``NativeTestDocuments/labelName``. `size` only changes the
+    /// bytes.
     static func document(size: Int = 200) -> Data {
       typealias Op = NativeSwiftWireOpcode
       typealias Kind = NativeTestWire.NamedType
@@ -47,7 +48,8 @@
       let wire = NativeTestWire()
       wire.header(width: size, height: size)
       for (id, name) in [
-        (Documents.shownVariableID, Documents.shownName), (Documents.localVariableID, "local"),
+        (Documents.shownVariableID, Documents.shownName),
+        (Documents.localVariableID, Documents.localName),
       ] {
         wire.u8(Op.dataInt).int(id).int(NativeSwiftVisibility.gone).named(id, Kind.int, name)
       }

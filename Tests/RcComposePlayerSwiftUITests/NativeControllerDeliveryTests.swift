@@ -89,11 +89,13 @@
       let player = try await player()
       #expect(isBoxShown(in: player.view) == false)
       moveToBackground(player.view)
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await until("the write waits for the player's signal") {
         player.view.inputAvailability.waiterCount == 1
       }
-      #expect(player.host.nativeUpdateTasks["shown"] != nil, "the delivery is still pending")
+      #expect(
+        player.host.nativeUpdateTasks[NativeTestDocuments.shownName] != nil,
+        "the delivery is still pending")
       #expect(isBoxShown(in: player.view) == false)
 
       activate(player.view)
@@ -109,10 +111,11 @@
       let player = try await player()
       for _ in 0..<50 {
         Task { @MainActor in
-          _ = await player.view.submit(.integer(NativeSwiftVisibility.gone), for: "shown")
+          _ = await player.view.submit(
+            .integer(NativeSwiftVisibility.gone), for: NativeTestDocuments.shownName)
         }
       }
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await until("input is outstanding") { player.view.hasOutstandingInput }
       moveToBackground(player.view)
       #expect(player.view.isOpeningDocument, "the bytes are reopened on activation")
@@ -125,7 +128,7 @@
     /// session is busy with other input.
     @Test func aShownValueSurvivesTheReopenAfterTheBackground() async throws {
       let player = try await player()
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       #expect(isBoxShown(in: player.view) == true)
 
@@ -152,7 +155,7 @@
       native.playerView.configureExecutionLimits(invalid)
       #expect(!native.isOpeningDocument)
       try await until("the declarations are attached") { !controller.names.isEmpty }
-      #expect(controller.setInteger(Self.visible, for: "shown"))
+      #expect(controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       let player = Player(controller: controller, host: host, view: native.playerView)
       try await settle(player, "the failed player refuses the write")
       #expect(isBoxShown(in: native.playerView) == nil)
@@ -166,7 +169,7 @@
     /// player seeds a new state with them, rather than the document's own values first.
     @Test func theFirstFrameAfterAReopenAlreadyHasTheValues() async throws {
       let player = try await player()
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       #expect(isBoxShown(in: player.view) == true)
 
@@ -185,12 +188,12 @@
     @Test func aWriteQueuedAtAReopenIsAppliedOnceFromTheSeed() async throws {
       let player = try await player()
       queueOtherInput(player)
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await until("input is outstanding") { player.view.hasOutstandingInput }
       moveToBackground(player.view)
       var applied = 0
       player.view.onInputApplied = { input in
-        if case .setNamed("shown", .integer) = input { applied += 1 }
+        if case .setNamed(NativeTestDocuments.shownName, .integer) = input { applied += 1 }
       }
 
       activate(player.view)
@@ -215,7 +218,8 @@
         Task { @MainActor in
           let value = ControllerNamedValue.integer(
             Int32(index % 2 == 0 ? Self.visible : NativeSwiftVisibility.gone))
-          await value.deliver(for: "shown", to: { target }, isCurrent: { true })
+          await value.deliver(
+            for: NativeTestDocuments.shownName, to: { target }, isCurrent: { true })
           finished += 1
         }
       }
@@ -234,7 +238,7 @@
     /// A new density reopens the session from the bytes; the values written before survive it.
     @Test func aReopenForANewDensityKeepsTheValues() async throws {
       let player = try await player()
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       #expect(isBoxShown(in: player.view) == true)
 

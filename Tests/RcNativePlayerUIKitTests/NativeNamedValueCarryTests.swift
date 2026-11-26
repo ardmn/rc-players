@@ -210,7 +210,7 @@
       view.namedValueSeed = {
         [
           (name: NativeTestDocuments.labelName, value: .text("ok")),
-          (name: "title", value: .text(long)),
+          (name: NativeTestDocuments.titleName, value: .text(long)),
         ]
       }
       var limits = RemoteComposeNativeExecutionLimits.default

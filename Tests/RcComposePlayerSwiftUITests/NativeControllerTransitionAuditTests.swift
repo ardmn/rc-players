@@ -19,7 +19,7 @@
 
     @Test func theSameBytesReloadedKeepThePlayerAndItsState() async throws {
       let player = try await player()
-      try await setLocally(player, Self.visible, for: "local")
+      try await setLocally(player, Self.visible, for: NativeTestDocuments.localName)
       let native = player.native
       let copy = Data(Array(Self.document()))
       player.host.update(
@@ -33,7 +33,7 @@
     /// player or resetting document-local state.
     @Test func aBackgroundChangeKeepsThePlayerAndItsDocumentLocalState() async throws {
       let player = try await player()
-      try await setLocally(player, Self.visible, for: "local")
+      try await setLocally(player, Self.visible, for: NativeTestDocuments.localName)
       let native = player.native
       player.host.update(
         data: Self.document(), controller: player.controller,
@@ -48,7 +48,7 @@
     /// rebuilding it, preserving document-local state across the reopen.
     @Test func aResolverChangeKeepsThePlayerAndItsDocumentLocalState() async throws {
       let player = try await player()
-      try await setLocally(player, Self.visible, for: "local")
+      try await setLocally(player, Self.visible, for: NativeTestDocuments.localName)
       let native = player.native
       player.host.update(
         data: Self.document(), controller: player.controller, configuration: .init(),
@@ -63,7 +63,7 @@
     /// session starts from the carried and seeded values on its first frame.
     @Test func aCompatibilityChangeKeepsThePlayerAndSeedsItsFirstFrame() async throws {
       let player = try await player()
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       try #require(isShown(Self.shownBox, in: player.view) == true)
 
@@ -87,7 +87,7 @@
     /// first frame already shows the controller's value.
     @Test func theFirstFrameOfANewDocumentIsSeeded() async throws {
       let player = try await player()
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
 
       player.host.update(
@@ -108,7 +108,7 @@
     @Test func aControllerSwapShowsOnlyTheCurrentControllersValues() async throws {
       let first = RemoteComposePlayerController()
       let player = try await player(controller: first)
-      #expect(first.setInteger(Self.visible, for: "shown"))
+      #expect(first.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       try #require(isShown(Self.shownBox, in: player.view) == true)
 
@@ -119,11 +119,11 @@
       let swapped = Player(controller: second, host: player.host, errors: player.errors)
       try await settle(swapped)
       #expect(isShown(Self.shownBox, in: swapped.view) == false, "the old controller's value")
-      #expect(second.setInteger(Self.visible, for: "local"))
+      #expect(second.setInteger(Self.visible, for: NativeTestDocuments.localName))
       try await settle(swapped)
       #expect(isShown(Self.localBox, in: swapped.view) == true)
       // A write to the detached controller is not shown...
-      _ = first.setInteger(Self.gone, for: "shown")
+      _ = first.setInteger(Self.gone, for: NativeTestDocuments.shownName)
       try await settle(swapped)
       #expect(isShown(Self.shownBox, in: swapped.view) == false)
 
@@ -141,7 +141,7 @@
       let controller = RemoteComposePlayerController()
       let a = try await player(controller: controller)
       let b = try await player(controller: controller)
-      #expect(controller.setInteger(Self.visible, for: "shown"))
+      #expect(controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(a)
       try await settle(b)
       #expect(isShown(Self.shownBox, in: b.view) == true)
@@ -154,7 +154,7 @@
     /// through a reopen, as the Kotlin player — which keeps its state — shows it.
     @Test func aReopenAfterTheBackgroundKeepsDocumentLocalState() async throws {
       let player = try await player()
-      try await setLocally(player, Self.visible, for: "local")
+      try await setLocally(player, Self.visible, for: NativeTestDocuments.localName)
       try await backgroundWithInputQueued(player)
       activate(player)
       try await settle(player)
@@ -165,9 +165,9 @@
     /// newer value, as the Kotlin player does, rather than the host's older one.
     @Test func aReopenKeepsTheDocumentsNewerValueOverTheHostsOlderOne() async throws {
       let player = try await player()
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
-      try await setLocally(player, Self.gone, for: "shown")
+      try await setLocally(player, Self.gone, for: NativeTestDocuments.shownName)
       try #require(isShown(Self.shownBox, in: player.view) == false)
       try await backgroundWithInputQueued(player)
       activate(player)
@@ -199,7 +199,7 @@
     @Test func aSeededHostWriteDoesNotOverrideALaterDocumentChangeAtTheNextReopen() async throws {
       let player = try await player()
       player.view.perform(NSSelectorFromString("sceneDidEnterBackground"))
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       // Configured while in the background, the reopen waits for the foreground and seeds the
       // write that was deferred there.
       player.view.configureHostDensity(2)
@@ -207,7 +207,7 @@
       try await settle(player)
       try #require(isShown(Self.shownBox, in: player.view) == true)
 
-      try await setLocally(player, Self.gone, for: "shown")
+      try await setLocally(player, Self.gone, for: NativeTestDocuments.shownName)
       player.view.configureHostDensity(3)
       try await settle(player)
       #expect(isShown(Self.shownBox, in: player.view) == false, "the seeded host value came back")
@@ -217,14 +217,16 @@
     /// would have: the replaced session's values and the seed it took from the controller.
     @Test func aReopenDuringAReopenKeepsWhatTheFirstStartedFrom() async throws {
       let player = try await player()
-      try await setLocally(player, Self.visible, for: "local")
+      try await setLocally(player, Self.visible, for: NativeTestDocuments.localName)
       player.view.perform(NSSelectorFromString("sceneDidEnterBackground"))
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       player.view.configureHostDensity(2)
       activate(player)
       // The first reopen took the deferred write in its seed; the second supersedes it at once.
       try #require(player.view.isOpeningDocument)
-      try #require(player.host.nativeUpdateTasks["shown"] == nil, "the seed took the write")
+      try #require(
+        player.host.nativeUpdateTasks[NativeTestDocuments.shownName] == nil,
+        "the seed took the write")
       player.view.configureHostDensity(3)
       try await settle(player)
       #expect(isShown(Self.localBox, in: player.view) == true, "document-local state was reset")
@@ -238,7 +240,7 @@
       let player = try await player(onError: { errors.append($0) })
       try await setLocally(
         player, NativeTestDocuments.overLimitText(), for: NativeTestDocuments.labelName)
-      try await setLocally(player, Self.visible, for: "local")
+      try await setLocally(player, Self.visible, for: NativeTestDocuments.localName)
       try #require(errors.isEmpty, "\(errors)")
 
       var limits = RemoteComposeNativeExecutionLimits.default
@@ -249,7 +251,7 @@
       #expect(
         text(NativeTestDocuments.labelID, in: player.view) == NativeTestDocuments.labelInitial)
       #expect(isShown(Self.localBox, in: player.view) == true, "the rest is carried")
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       #expect(isShown(Self.shownBox, in: player.view) == true, "a later write is taken")
       #expect(errors.count == 1, "\(errors)")
@@ -258,10 +260,10 @@
     /// A write made while the reopen waits for the foreground is newer than the seed and wins.
     @Test func aWriteMadeDuringTheReopenWinsOverTheSeed() async throws {
       let player = try await player()
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       try await backgroundWithInputQueued(player)
-      #expect(player.controller.setInteger(Self.gone, for: "shown"))
+      #expect(player.controller.setInteger(Self.gone, for: NativeTestDocuments.shownName))
       activate(player)
       try await settle(player)
       #expect(isShown(Self.shownBox, in: player.view) == false)
@@ -285,7 +287,7 @@
       activate(player)
       try await settle(player)
       let reported = errors.count
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       #expect(
         isShown(Self.shownBox, in: player.view) == true,
@@ -319,8 +321,8 @@
     @Test func aDeliveryWaitingWhenThePlayerIsReleasedFinishes() async throws {
       var player: Player? = try await player()
       player!.view.perform(NSSelectorFromString("sceneDidEnterBackground"))
-      #expect(player!.controller.setInteger(Self.visible, for: "shown"))
-      let delivery = try #require(player!.host.nativeUpdateTasks["shown"])
+      #expect(player!.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
+      let delivery = try #require(player!.host.nativeUpdateTasks[NativeTestDocuments.shownName])
       try await until("the delivery waits") { player!.view.inputAvailability.waiterCount == 1 }
       var finished = false
       Task { @MainActor in
@@ -334,7 +336,7 @@
     @Test func aWriteDeferredInTheBackgroundSurvivesARebuild() async throws {
       let player = try await player()
       player.view.perform(NSSelectorFromString("sceneDidEnterBackground"))
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       player.host.update(
         data: Self.document(size: 300), controller: player.controller, configuration: .init(),
         resourceResolver: nil, onEvent: { _ in }, onError: { _ in })
@@ -346,7 +348,7 @@
       let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
       let player = try await player()
       window.addSubview(player.host.view)
-      try await setLocally(player, Self.visible, for: "local")
+      try await setLocally(player, Self.visible, for: NativeTestDocuments.localName)
       var opens = 0
       player.view.onSessionOpened = { opens += 1 }
       player.host.view.removeFromSuperview()

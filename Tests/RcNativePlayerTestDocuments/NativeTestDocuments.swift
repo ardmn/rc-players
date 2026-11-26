@@ -8,10 +8,12 @@ public enum NativeTestDocuments {
 
   /// The integer named ``shownName`` in ``shownBox()`` and the controller suites' document.
   public static let shownVariableID = 550
-  /// The integer named "local" in the controller suites' document.
+  /// The integer named ``localName`` in the controller suites' document.
   public static let localVariableID = 551
   /// The name of the integer ``shownVariableID``.
   public static let shownName = "shown"
+  /// The name of the integer ``localVariableID``.
+  public static let localName = "local"
 
   /// The string variable ``labelName`` in ``manyIntegers(count:withLabel:)`` and the controller
   /// suites' document.
@@ -20,16 +22,23 @@ public enum NativeTestDocuments {
   public static let labelName = "label"
   /// That string's value until a host sets it.
   public static let labelInitial = "Idle"
+  /// The name of the second string in ``label()``.
+  public static let titleName = "title"
+  /// That string's value until a host sets it.
+  public static let titleInitial = "Title"
+  /// The string variables ``label()`` declares as ``labelName`` and ``titleName``.
+  public static let labelStringID = 60
+  public static let titleStringID = 61
 
   /// The text colour of every test document: opaque black, as the signed integer the wire holds.
   public static let opaqueBlack = Int(Int32(bitPattern: 0xFF00_0000))
 
-  /// The text limit the suites set (`maximumTextBytes`), below the length of ``overLimitText(_:)``.
+  /// The text limit the suites set (`maximumTextBytes`).
   public static let textLimitBytes = 64
 
-  /// A string longer than ``textLimitBytes``, of `character` repeated.
+  /// A string twice ``textLimitBytes`` long, of the one-byte `character` repeated: over the limit.
   public static func overLimitText(_ character: Character = "x") -> String {
-    String(repeating: character, count: 100)
+    String(repeating: character, count: 2 * textLimitBytes)
   }
 
   /// A `size`×`size` document whose 50×50 box (``boxID``) is gone until the integer named
@@ -50,19 +59,20 @@ public enum NativeTestDocuments {
   public static let labelID = 20
 
   /// A 200×100 document showing two texts: ``labelID`` reads the string named ``labelName``,
-  /// ``labelInitial`` until it is set, and the other reads "title", "Title" until it is set.
+  /// ``labelInitial`` until it is set, and the other reads ``titleName``, ``titleInitial`` until it
+  /// is set.
   public static func label() -> Data {
     typealias Op = NativeSwiftWireOpcode
     typealias Kind = NativeTestWire.NamedType
-    let textID = 60
-    let titleID = 61
     let wire = NativeTestWire()
     wire.header(width: 200, height: 100)
-    wire.u8(Op.dataText).int(textID).utf8(labelInitial).named(textID, Kind.string, labelName)
-    wire.u8(Op.dataText).int(titleID).utf8("Title").named(titleID, Kind.string, "title")
+    wire.u8(Op.dataText).int(labelStringID).utf8(labelInitial)
+      .named(labelStringID, Kind.string, labelName)
+    wire.u8(Op.dataText).int(titleStringID).utf8(titleInitial)
+      .named(titleStringID, Kind.string, titleName)
     wire.u8(Op.layoutRoot).int(1)
-    wire.text(id: labelID, reading: textID)
-    wire.text(id: labelID + 1, reading: titleID)
+    wire.text(id: labelID, reading: labelStringID)
+    wire.text(id: labelID + 1, reading: titleStringID)
     wire.u8(Op.containerEnd)
     return wire.data
   }

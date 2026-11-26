@@ -171,9 +171,9 @@
       var limits = RemoteComposeNativeExecutionLimits.default
       limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       let player = try await player(limits: limits, onError: { errors.append($0) })
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
-      try await setLocally(player, Self.visible, for: "local")
+      try await setLocally(player, Self.visible, for: NativeTestDocuments.localName)
       #expect(
         player.controller.setString(
           NativeTestDocuments.overLimitText(), for: NativeTestDocuments.labelName))
@@ -205,7 +205,7 @@
       #expect(player.controller.setString("ok", for: NativeTestDocuments.labelName))
       try await settle(player)
       #expect(text(label, in: player.view) == "ok")
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       #expect(isShown(Self.shownBox, in: player.view) == true)
     }
@@ -219,7 +219,7 @@
       let player = try await player(onError: { errors.append($0) })
       try await setLocally(
         player, NativeTestDocuments.overLimitText(), for: NativeTestDocuments.labelName)
-      try await setLocally(player, Self.visible, for: "local")
+      try await setLocally(player, Self.visible, for: NativeTestDocuments.localName)
       var limits = RemoteComposeNativeExecutionLimits.default
       limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       player.view.configureExecutionLimits(limits)

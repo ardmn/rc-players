@@ -38,18 +38,14 @@
       typealias Op = NativeSwiftWireOpcode
       let wire = NativeTestWire()
       wire.header(width: 200, height: 100)
-      wire.u8(Op.dataText).int(60).utf8(NativeTestDocuments.labelInitial).named(
-        60, NativeTestWire.NamedType.string, "USER:label")
-      wire.u8(Op.dataText).int(61).utf8("Title").named(
-        61, NativeTestWire.NamedType.string, "USER:title")
+      typealias Documents = NativeTestDocuments
+      wire.u8(Op.dataText).int(Documents.labelStringID).utf8(Documents.labelInitial).named(
+        Documents.labelStringID, NativeTestWire.NamedType.string, "USER:\(Documents.labelName)")
+      wire.u8(Op.dataText).int(Documents.titleStringID).utf8(Documents.titleInitial).named(
+        Documents.titleStringID, NativeTestWire.NamedType.string, "USER:\(Documents.titleName)")
       wire.u8(Op.layoutRoot).int(1)
-      for (componentID, text) in [(labelID, 60), (titleID, 61)] {
-        wire.u8(Op.layoutText)
-        for value in [componentID, 0, text, Int(Int32(bitPattern: 0xFF00_0000))] { wire.int(value) }
-        wire.float(16).int(0).float(400)
-        for value in [-1, 1, 1, 1] { wire.int(value) }
-        wire.u8(Op.containerEnd)
-      }
+      wire.text(id: labelID, reading: Documents.labelStringID)
+      wire.text(id: titleID, reading: Documents.titleStringID)
       wire.u8(Op.containerEnd)
       return wire.data
     }
@@ -133,7 +129,9 @@
         onError: { errors.append($0) })
       try await settled(view, "opens")
       #expect(await view.setString(long, for: NativeTestDocuments.labelName) == false)
-      #expect(await view.setString("T2", for: "title") == false, "refused: the frame still fails")
+      #expect(
+        await view.setString("T2", for: NativeTestDocuments.titleName) == false,
+        "refused: the frame still fails")
       #expect(
         await view.setString("ok", for: NativeTestDocuments.labelName) == true,
         "repairs the session")
@@ -166,7 +164,8 @@
       var good: RemoteComposeNativeInputAdmission?
       Task { @MainActor in bad = await view.submit(.text(long), for: NativeTestDocuments.labelName)
       }
-      Task { @MainActor in good = await view.submit(.text("T2"), for: "title") }
+      Task { @MainActor in good = await view.submit(.text("T2"), for: NativeTestDocuments.titleName)
+      }
       try await until("both answered") { bad != nil && good != nil }
       try await settled(view)
       #expect(
@@ -177,7 +176,7 @@
       try await settled(view, "retry settles")
       #expect(
         text(NativeTestDocuments.labelID + 1, in: view) == "T2" || good == .refused,
-        "title")
+        NativeTestDocuments.titleName)
       #expect(
         text(NativeTestDocuments.labelID, in: view) != long || bad == .accepted,
         "label: the failing write was carried")
