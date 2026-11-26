@@ -220,31 +220,11 @@
     let value: NativeSwiftNamedValue
 
     /// `values`, then `later`, without an earlier entry for a name `later` sets again: only the
-    /// newest value of each name is applied, or judged against the limits.
-    ///
-    /// Except a plain integer equal to the integer an earlier entry carries: applying it would
-    /// change nothing (`RcPlayerState.setInteger` returns early), so the earlier entry, with the
-    /// float view a float write gave it, stands.
-    ///
-    /// Linear in both lists: the last earlier value of each name is looked up in a dictionary.
+    /// newest value of each name is applied, or judged against the limits. Linear: one set of the
+    /// later names, one pass over each list.
     static func merging(_ values: [Self], with later: [Self]) -> [Self] {
-      var lastEarlierValueByName: [String: NativeSwiftNamedValue] = [:]
-      lastEarlierValueByName.reserveCapacity(values.count)
-      for entry in values { lastEarlierValueByName[entry.name] = entry.value }
-      var replacedNames: Set<String> = []
-      var unchangedNames: Set<String> = []
-      for entry in later {
-        if case .integer(let value, nil) = entry.value,
-          case .integer(value, _)? = lastEarlierValueByName[entry.name]
-        {
-          unchangedNames.insert(entry.name)
-        } else {
-          replacedNames.insert(entry.name)
-        }
-      }
-      replacedNames.subtract(unchangedNames)
-      return values.filter { !replacedNames.contains($0.name) }
-        + later.filter { !unchangedNames.contains($0.name) }
+      let names = Set(later.map(\.name))
+      return values.filter { !names.contains($0.name) } + later
     }
   }
 

@@ -98,61 +98,31 @@
       #expect(await second.writtenNamedValues().map(\.value) == [.integer(2, float: 2.75)])
     }
 
-    /// A seed equal to the integer a reopen carries changes nothing, as Kotlin's `setInteger`
-    /// returns early for an unchanged integer: the carried value, with the float a float write
-    /// gave it, is what the new session starts from. Any other seed replaces the carried value.
-    @Test func aSeedEqualToTheCarriedIntegerKeepsTheCarriedFloat() {
+    /// A later value of a name replaces every earlier one, an equal integer included: a value
+    /// left out of the last session (it broke a limit) is replaced by the integer the host then
+    /// wrote, and of two later values the newest stands.
+    @Test func aLaterValueReplacesEveryEarlierOneOfItsName() {
       typealias Value = NativeStartingValue
-      let carried = [
-        Value(name: "i", value: .integer(2, float: 2.5)), Value(name: "s", value: .text("a")),
+      let leftOut = [
+        Value(name: "level", value: .integer(3, float: 3.5)), Value(name: "s", value: .text("a")),
       ]
-      #expect(Value.merging(carried, with: [Value(name: "i", value: .integer(2))]) == carried)
-      let other = Value(name: "i", value: .integer(3))
-      #expect(Value.merging(carried, with: [other]) == [carried[1], other])
-      let fromAFloat = Value(name: "i", value: .integer(2, float: 2.75))
-      #expect(Value.merging(carried, with: [fromAFloat]) == [carried[1], fromAFloat])
+      let written = Value(name: "level", value: .integer(3))
+      #expect(Value.merging(leftOut, with: [written]) == [leftOut[1], written])
+      let twice = [
+        Value(name: "level", value: .integer(3)), Value(name: "level", value: .integer(5)),
+      ]
+      #expect(Value.merging(leftOut, with: twice) == [leftOut[1]] + twice)
     }
 
-    /// `merging` keeps the result of the straightforward rule — drop an earlier entry of a name a
-    /// later one sets, unless that later one is a plain integer equal to the last earlier integer
-    /// of the name — on lists large enough that a scan per later entry would show (5000 each),
-    /// with repeated names, integers with and without a float view, and other types mixed in.
-    @Test func mergingMatchesTheRuleOnLargeLists() {
+    /// Kotlin's `setInteger` returns early for an unchanged integer, so a host seed equal to the
+    /// integer a reopen carries keeps the float a float write gave it. The native player applies
+    /// the seed in place of the carried value instead: a seed cannot tell a carried value the
+    /// session held from one a limit left out, which must be replaced.
+    @Test func aSeedEqualToTheCarriedIntegerKeepsTheCarriedFloat() {
       typealias Value = NativeStartingValue
-      func reference(_ values: [Value], with later: [Value]) -> [Value] {
-        let unchanged = Set(
-          later.compactMap { entry -> String? in
-            guard case .integer(let value, nil) = entry.value,
-              let earlier = values.last(where: { $0.name == entry.name }),
-              case .integer(value, _) = earlier.value
-            else { return nil }
-            return entry.name
-          })
-        let names = Set(later.map(\.name)).subtracting(unchanged)
-        return values.filter { !names.contains($0.name) }
-          + later.filter { !unchanged.contains($0.name) }
-      }
-      var generator = SystemRandomNumberGenerator()
-      func value(_ seed: Int) -> NativeSwiftNamedValue {
-        switch seed % 4 {
-        case 0: .integer(seed % 3)
-        case 1: .integer(seed % 3, float: Float(seed % 3) + 0.5)
-        case 2: .text("t\(seed % 2)")
-        default: .float(Float(seed % 2))
-        }
-      }
-      for _ in 0..<3 {
-        let values = (0..<5000).map { _ in
-          Value(
-            name: "n\(Int.random(in: 0..<3000, using: &generator))",
-            value: value(Int.random(in: 0..<12, using: &generator)))
-        }
-        let later = (0..<5000).map { _ in
-          Value(
-            name: "n\(Int.random(in: 0..<6000, using: &generator))",
-            value: value(Int.random(in: 0..<12, using: &generator)))
-        }
-        #expect(Value.merging(values, with: later) == reference(values, with: later))
+      let carried = [Value(name: "i", value: .integer(2, float: 2.5))]
+      withKnownIssue("the seed replaces the carried value, float view included") {
+        #expect(Value.merging(carried, with: [Value(name: "i", value: .integer(2))]) == carried)
       }
     }
 
