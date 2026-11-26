@@ -183,6 +183,25 @@
       await playerView.setInteger(value, for: name)
     }
 
+    /// Sets a long named variable — see ``RemoteComposeNativePlayerView/setFloat(_:for:)``.
+    @discardableResult
+    public func setLong(_ value: Int64, for name: String) async -> Bool {
+      await playerView.setLong(value, for: name)
+    }
+
+    /// Sets a float-array named variable — see ``RemoteComposeNativePlayerView/setFloat(_:for:)``.
+    @discardableResult
+    public func setFloatArray(_ values: [Float], for name: String) async -> Bool {
+      await playerView.setFloatArray(values, for: name)
+    }
+
+    /// Restores a named variable to the document's value — see
+    /// ``RemoteComposeNativePlayerView/clear(_:)``.
+    @discardableResult
+    public func clear(_ name: String) async -> Bool {
+      await playerView.clear(name)
+    }
+
     /// Whether the player is still opening its document — see
     /// ``RemoteComposeNativePlayerView/isOpeningDocument``.
     public var isOpeningDocument: Bool { playerView.isOpeningDocument }
@@ -227,9 +246,10 @@
     }
   }
 
-  /// A value the seeding host wrote to a name, and which of its writes to that name it was.
+  /// A value the seeding host wrote to a name, or its clear of the name (nil), and which of its
+  /// writes to that name it was.
   private struct NativeHostValue: Equatable {
-    let value: NativeSwiftNamedValue
+    let value: NativeSwiftNamedValue?
     /// The player's count of the host's writes to the name when this one reached it
     /// (`hostWriteCounts`).
     let write: UInt64
@@ -280,9 +300,9 @@
     /// The task draining this presentation's work, while there is any.
     var pump: Task<Void, Never>?
     /// The starting values it was opened without (each broke a limit). The variable still holds
-    /// the document's value, so the next session is offered them again until a write replaces
-    /// them.
-    let leftOut: [NativeStartingValue]
+    /// the document's value, so the next session is offered them again until a write or a clear
+    /// of the name replaces them.
+    var leftOut: [NativeStartingValue]
     /// The seeding host's write of each name this session holds or took: `startedFrom`'s, then
     /// each `submit` write it applied — also one it applied after a reopen superseded it, since
     /// its written values are carried.
@@ -440,10 +460,14 @@
     /// session until a write replaces it, and the session stays open and takes later writes.
     /// (Written into the session, a bad value would stay there and fail every later frame.) Nil,
     /// or empty, adds nothing; a value written while the session opens goes through `submit`.
+    ///
+    /// An entry with no value is the host's clear of the name (`submitClear`): unless the
+    /// sessions already took that very clear, the session starts from the document's own value for
+    /// that name rather than one the session it replaces carried.
     /// `load(_:)` with other bytes clears it and the carried values: the values belong to the
     /// document they were written for.
     @_spi(RemoteComposeController)
-    public var namedValueSeed: (() -> [(name: String, value: RemoteComposeNativeNamedValue)])?
+    public var namedValueSeed: (() -> [(name: String, value: RemoteComposeNativeNamedValue?)])?
     /// How many writes the seeding host has handed the player through `submit`, per name, since
     /// these bytes were loaded — taken or not, deferred or queued. A seed value is the host's
     /// newest write of its name; the session took that write only if it took the one with this
@@ -803,20 +827,26 @@
       let hostWriteCounts = hostWriteCounts
       let seed = (namedValueSeed?() ?? []).map { entry in
         let write = NativeHostValue(
-          value: entry.value.coreValue, write: hostWriteCounts[entry.name] ?? 0)
+          value: entry.value?.coreValue, write: hostWriteCounts[entry.name] ?? 0)
         return (name: entry.name, write: write)
       }
       // A reopen that supersedes this open before it presents starts from the same values.
       let startingValues = Task {
         let carried = await carried?.value ?? .none
         var seeded: [NativeStartingValue] = []
+        var cleared: Set<String> = []
         var hostValues = carried.hostValues
         for (name, write) in seed where carried.hostValues[name] != write {
-          seeded.append(NativeStartingValue(name: name, value: write.value))
+          if let value = write.value {
+            seeded.append(NativeStartingValue(name: name, value: value))
+          } else {
+            cleared.insert(name)
+          }
           hostValues[name] = write
         }
         return NativeCarriedValues(
-          values: NativeStartingValue.merging(carried.values, with: seeded),
+          values: NativeStartingValue.merging(
+            carried.values.filter { !cleared.contains($0.name) }, with: seeded),
           hostValues: hostValues)
       }
       carriedNamedValues = startingValues
@@ -1148,6 +1178,30 @@
       await submit(.setNamed(name, value: .integer(value)))
     }
 
+    /// Sets a long named variable — an instant in epoch milliseconds — and answers as
+    /// ``setFloat(_:for:)`` does.
+    @discardableResult
+    public func setLong(_ value: Int64, for name: String) async -> Bool {
+      await submit(.setNamed(name, value: .long(value)))
+    }
+
+    /// Replaces the list a float-array named variable holds, and answers as ``setFloat(_:for:)``
+    /// does. Every value must be finite, and there may be no more than a document's float list
+    /// holds (2000).
+    @discardableResult
+    public func setFloatArray(_ values: [Float], for name: String) async -> Bool {
+      await submit(.setNamed(name, value: .floatArray(values)))
+    }
+
+    /// Restores a named variable to the value the document recorded, discarding the value a host
+    /// set — as the Kotlin player's `clearNamedValue` does — and answers as ``setFloat(_:for:)``
+    /// does: `false` for a name the document does not declare as a value a host can write.
+    /// Clearing a variable nobody set changes nothing.
+    @discardableResult
+    public func clear(_ name: String) async -> Bool {
+      await submit(.clearNamed(name))
+    }
+
     /// Writes a named variable and answers how the document took it. Unlike the `set*` methods,
     /// it tells a write the player cannot take yet (`.deferred`) from one the document refuses;
     /// offer a deferred write again once ``inputAvailability`` signals.
@@ -1158,6 +1212,15 @@
       let write = (hostWriteCounts[name] ?? 0) &+ 1
       hostWriteCounts[name] = write
       return await admit(.setNamed(name, value: value), hostWrite: write)
+    }
+
+    /// Clears a named variable and answers how the document took it, as ``submit(_:for:)`` does
+    /// for a write: the clear counts as that host's newest write of the name.
+    @_spi(RemoteComposeController)
+    public func submitClear(for name: String) async -> RemoteComposeNativeInputAdmission {
+      let write = (hostWriteCounts[name] ?? 0) &+ 1
+      hostWriteCounts[name] = write
+      return await admit(.clearNamed(name), hostWrite: write)
     }
 
     private func submit(_ input: NativePlayerEngine.Input) async -> Bool {
@@ -1334,7 +1397,18 @@
       _ outcome: NativeInputOutcome, of pending: NativePendingInput,
       on presentation: NativePlayerPresentation
     ) {
-      guard case .setNamed(let name, let value) = pending.input else { return }
+      let name: String
+      let value: NativeSwiftNamedValue?
+      switch pending.input {
+      case .setNamed(let written, let writtenValue):
+        name = written
+        value = writtenValue.coreValue
+      case .clearNamed(let cleared):
+        name = cleared
+        value = nil
+      default:
+        return
+      }
       // `failedWrites` is matched against `writtenNamedValues()`, which names each variable as
       // the document declares it, so it is keyed the same way: "label" and "USER:label" are one
       // variable.
@@ -1342,11 +1416,15 @@
       switch outcome {
       case .accepted:
         presentation.failedWrites[declared] = nil
+        // A cleared variable holds the document's value: a value left out for it is replaced.
+        if value == nil { presentation.leftOut.removeAll { $0.name == declared } }
         if let write = pending.hostWrite {
-          presentation.hostValues[name] = NativeHostValue(value: value.coreValue, write: write)
+          presentation.hostValues[name] = NativeHostValue(value: value, write: write)
         }
       case .failed:
-        presentation.failedWrites[declared] = value.coreValue
+        // A clear that fails the session leaves the document's own value, which the next
+        // session starts from anyway.
+        if let value { presentation.failedWrites[declared] = value }
       case .declined:
         break
       }
@@ -1390,8 +1468,10 @@
     }
 
     private static func isNamedWrite(_ input: NativePlayerEngine.Input) -> Bool {
-      if case .setNamed = input { return true }
-      return false
+      switch input {
+      case .setNamed, .clearNamed: true
+      default: false
+      }
     }
 
     private func dispatch(_ events: [RemoteComposeNativePlayerEvent], generation: UInt64) {

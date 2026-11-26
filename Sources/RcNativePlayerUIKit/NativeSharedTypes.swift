@@ -7,14 +7,18 @@ public enum RemoteComposeNativePlayerBackground: Equatable, Sendable {
   case transparent
 }
 
-/// A value a host sets on a document's named variable before it renders: the four kinds a `.rc`
-/// document declares a `USER:` name with. A boolean travels as `.integer` 0 or 1, as on the wire.
+/// A value a host sets on a document's named variable: the kinds a `.rc` document declares a
+/// `USER:` name with that a host can write. A boolean travels as `.integer` 0 or 1, as on the wire.
 public enum RemoteComposeNativeNamedValue: Equatable, Sendable {
   case text(String)
   case float(Float)
   case integer(Int)
   /// ARGB, as the document stores a color.
   case color(UInt32)
+  /// An instant in epoch milliseconds, as a document's `LongConstant` holds one.
+  case long(Int64)
+  /// A float array, which replaces the list the document keeps at that name.
+  case floatArray([Float])
 }
 
 /// How a native player answered a named-variable write.

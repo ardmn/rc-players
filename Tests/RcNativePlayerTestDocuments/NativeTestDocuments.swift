@@ -125,6 +125,23 @@ public enum NativeTestDocuments {
     return wire.data
   }
 
+  /// long "when" (id 710, 2023-11-14T22:13:20Z in epoch milliseconds), float array "series" (id
+  /// 711, a static list of 1 and 2) and float "scalar" (id 712, 1), and one 10×10 box.
+  public static func longAndFloatArray() -> Data {
+    typealias Op = NativeSwiftWireOpcode
+    typealias Kind = NativeTestWire.NamedType
+    let wire = NativeTestWire()
+    wire.header(width: 100, height: 100)
+    wire.u8(Op.dataLong).int(710).int(0x18B).int(Int(Int32(bitPattern: 0xCFE5_6800)))
+      .named(710, Kind.long, "when")
+    wire.u8(Op.floatList).int(711).int(2).float(1).float(2).named(711, Kind.floatArray, "series")
+    wire.u8(Op.dataFloat).int(712).float(1).named(712, Kind.float, "scalar")
+    wire.u8(Op.layoutRoot).int(1)
+    wire.box(id: 10, size: 10)
+    wire.u8(Op.containerEnd)
+    return wire.data
+  }
+
   /// float "foo" (id 600) and float "USER:foo" (id 601), both 1, and one 10×10 box: a host's
   /// "foo" addresses "USER:foo", the bare variable only the document writes.
   public static func bareAndUserFoo() -> Data {

@@ -131,6 +131,29 @@ public final class RemoteComposePlayerController {
   public func setBoolean(_ value: Bool, for name: String) -> Bool {
     backend.set(.boolean(value), for: name)
   }
+
+  /// Sets a long variable: an instant in epoch milliseconds, as a document's time attributes read
+  /// one.
+  @discardableResult
+  public func setLong(_ value: Int64, for name: String) -> Bool {
+    backend.set(.long(value), for: name)
+  }
+
+  /// Replaces the list a float-array variable holds. On the native Swift player every value must
+  /// be finite and there may be no more than a document's float list holds (2000).
+  @discardableResult
+  public func setFloatArray(_ values: [Float], for name: String) -> Bool {
+    backend.set(.floatArray(values), for: name)
+  }
+
+  /// Stops overriding `name`: the value set for it is removed and the variable shows the value
+  /// the document recorded again (a named system variable, the player's clock). Returns `false`
+  /// before a document is attached or when it does not declare `name`; clearing a name with no
+  /// value set changes nothing. A later write of the same value as before the clear is applied.
+  @discardableResult
+  public func clear(_ name: String) -> Bool {
+    backend.clear(name)
+  }
 }
 
 public enum RemoteComposePlayerError: Error, Equatable, Sendable {

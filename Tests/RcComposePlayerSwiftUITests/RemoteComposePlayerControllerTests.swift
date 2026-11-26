@@ -302,4 +302,7 @@ private final class RecordingTarget: NativeNamedValueTarget {
     onCall()
     return answers.isEmpty ? .accepted : answers.removeFirst()
   }
+
+  /// Clears are covered by `RemoteComposePlayerControllerClearTests`.
+  func submitClear(for name: String) async -> RemoteComposeNativeInputAdmission { .accepted }
 }

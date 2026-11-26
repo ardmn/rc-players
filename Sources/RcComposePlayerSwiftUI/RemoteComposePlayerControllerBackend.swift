@@ -39,6 +39,10 @@ enum ControllerNamedValue: Equatable {
   case integer(Int32)
   /// An integer variable holding 1 or 0, as AndroidX stores a boolean.
   case boolean(Bool)
+  /// An instant in epoch milliseconds, as a document's `LongConstant` holds one.
+  case long(Int64)
+  /// A float array, which replaces the list the document keeps at that name.
+  case floatArray([Float])
 }
 
 /// What every backend provides. A backend answers each write finally: `true` for a value the
@@ -46,12 +50,17 @@ enum ControllerNamedValue: Equatable {
 /// written to that name, which is no change and is not handed over again (the variable keeps
 /// whatever the document has made of it since) — and `false` before a document is attached, for
 /// a name it does not declare, or for a value its variable cannot hold.
+///
+/// A clear answers the same way: `true` for a name the attached document declares, its stored
+/// value (if any) removed and the variable handed back to the document's own value, `false`
+/// before a document is attached or for a name it does not declare.
 @MainActor
 protocol ControllerBackendProtocol: AnyObject {
   init()
   /// The names the attached document declares; empty before one is attached.
   var names: [String] { get }
   func set(_ value: ControllerNamedValue, for name: String) -> Bool
+  func clear(_ name: String) -> Bool
 }
 
 #if canImport(UIKit) && canImport(RcComposePlayer)
@@ -71,7 +80,18 @@ protocol ControllerBackendProtocol: AnyObject {
       case .color(let argb): kotlinController.setColor(name: name, argb: Int32(bitPattern: argb))
       case .integer(let value): kotlinController.setInteger(name: name, value: value)
       case .boolean(let value): kotlinController.setBoolean(name: name, value: value)
+      case .long(let value): kotlinController.setLong(name: name, value: value)
+      case .floatArray(let values):
+        kotlinController.setFloatArray(name: name, values: kotlinFloats(values))
       }
+    }
+
+    func clear(_ name: String) -> Bool { kotlinController.clear(name: name) }
+
+    private func kotlinFloats(_ values: [Float]) -> KotlinFloatArray {
+      let array = KotlinFloatArray(size: Int32(values.count))
+      for (index, value) in values.enumerated() { array.set(index: Int32(index), value: value) }
+      return array
     }
   }
 #elseif canImport(RcNativePlayerUIKit)
@@ -86,9 +106,14 @@ protocol ControllerBackendProtocol: AnyObject {
     private var declarations = NativeSwiftNamedVariableDeclarations.none
     /// The values written so far, by the name the attached document declares them under.
     private var values: [String: ControllerNamedValue] = [:]
+    /// The names cleared and not written since, so a reopen a player starts while a clear is still
+    /// on its way starts that name from the document's value (`seedValues(for:)`). A player's host
+    /// leaves out the names it never held a value of (a new document, or a new player).
+    private var cleared: Set<String> = []
     /// One handler per attached player view controller, so a controller shared by multiple views
-    /// reaches every one of them rather than only the last attached.
-    private var updateHandlers: [ObjectIdentifier: (String, ControllerNamedValue) -> Void] = [:]
+    /// reaches every one of them rather than only the last attached. Each receives every accepted
+    /// write, or nil for a clear.
+    private var updateHandlers: [ObjectIdentifier: (String, ControllerNamedValue?) -> Void] = [:]
     /// Default key used by single-handler callers (unit tests).
     private static let defaultHandlerKey = ObjectIdentifier(NativeControllerBackend.self)
 
@@ -105,7 +130,19 @@ protocol ControllerBackendProtocol: AnyObject {
       // variable since keeps its value.
       guard values[declared] != value else { return true }
       values[declared] = value
+      cleared.remove(declared)
       for handler in updateHandlers.values { handler(declared, value) }
+      return true
+    }
+
+    /// Removes the stored value and hands the player the clear, as removing a key from the Kotlin
+    /// player's named values clears it (`clearNamedValue`). A name with no stored value has
+    /// nothing of the host's to clear, as on the Kotlin player, and nothing is handed over.
+    func clear(_ name: String) -> Bool {
+      guard let declared = declarations.declaredName(for: name) else { return false }
+      guard values.removeValue(forKey: declared) != nil else { return true }
+      cleared.insert(declared)
+      for handler in updateHandlers.values { handler(declared, nil) }
       return true
     }
 
@@ -124,6 +161,7 @@ protocol ControllerBackendProtocol: AnyObject {
         kept[declared] = value
       }
       values = kept
+      cleared = []
     }
 
     /// Forgets the attached declarations without a new document to judge the stored values by —
@@ -141,8 +179,9 @@ protocol ControllerBackendProtocol: AnyObject {
     }
 
     /// Installs a single update handler (used by tests), replaying every value written so far, or
-    /// removes it with `nil`.
-    func installUpdateHandler(_ handler: ((String, ControllerNamedValue) -> Void)?) {
+    /// removes it with `nil`. A clear is not replayed: a player the handler is installed for
+    /// opened from the document's own values and the controller's.
+    func installUpdateHandler(_ handler: ((String, ControllerNamedValue?) -> Void)?) {
       installUpdateHandler(handler, for: Self.defaultHandlerKey)
     }
 
@@ -150,7 +189,7 @@ protocol ControllerBackendProtocol: AnyObject {
     /// `skippingInitial` that resolved to the same declared name and value (already applied on the
     /// player's first open), or removes it with `nil`.
     func installUpdateHandler(
-      _ handler: ((String, ControllerNamedValue) -> Void)?,
+      _ handler: ((String, ControllerNamedValue?) -> Void)?,
       for owner: ObjectIdentifier,
       skippingInitial initial: [String: ControllerNamedValue] = [:]
     ) {
@@ -185,24 +224,31 @@ protocol ControllerBackendProtocol: AnyObject {
     /// The values written so far, by the name the player's document declares them under, which
     /// seed a session the native player reopens. The player applies each one unless the replaced
     /// session took that very write: not yet delivered, refused (judged afresh), or written again
-    /// since — even back to the value the session took — is applied. Empty
-    /// while no update handler is installed: the values are not yet re-keyed for the player's
-    /// document.
+    /// since — even back to the value the session took — is applied. A name cleared since is
+    /// seeded with no value, so the reopened session starts it from the document's value unless
+    /// the replaced session took that clear. Empty while no update handler is installed: the
+    /// values are not yet re-keyed for the player's document.
     ///
     /// The Kotlin player builds its state once per document, seeded with the host's values, and
     /// keeps it through the background. The native player reopens its bytes for that, carries the
     /// named values the old session held, and adds these.
-    var seedValues: [(name: String, value: RemoteComposeNativeNamedValue)] {
+    var seedValues: [(name: String, value: RemoteComposeNativeNamedValue?)] {
       guard !updateHandlers.isEmpty else { return [] }
-      return initialSeedValues
+      return reopenSeed
     }
 
     /// `seedValues` scoped to `owner`, empty while `owner` has no installed update handler.
     func seedValues(for owner: ObjectIdentifier) -> [(
-      name: String, value: RemoteComposeNativeNamedValue
+      name: String, value: RemoteComposeNativeNamedValue?
     )] {
       guard updateHandlers[owner] != nil else { return [] }
-      return initialSeedValues
+      return reopenSeed
+    }
+
+    /// Every stored value, then every cleared name with no value.
+    private var reopenSeed: [(name: String, value: RemoteComposeNativeNamedValue?)] {
+      initialSeedValues.map { (name: $0.name, value: $0.value) }
+        + cleared.sorted().map { (name: $0, value: nil) }
     }
   }
 
@@ -212,6 +258,7 @@ protocol ControllerBackendProtocol: AnyObject {
   protocol NativeNamedValueTarget: AnyObject {
     func submit(_ value: RemoteComposeNativeNamedValue, for name: String) async
       -> RemoteComposeNativeInputAdmission
+    func submitClear(for name: String) async -> RemoteComposeNativeInputAdmission
     /// Signals when a deferred write may be offered again.
     var inputAvailability: RemoteComposeNativeInputAvailability { get }
   }
@@ -226,6 +273,8 @@ protocol ControllerBackendProtocol: AnyObject {
       case .color(let argb): .color(argb)
       case .integer(let value): .integer(Int(value))
       case .boolean(let value): .integer(value ? 1 : 0)
+      case .long(let value): .long(value)
+      case .floatArray(let values): .floatArray(values)
       }
     }
 
@@ -247,21 +296,38 @@ protocol ControllerBackendProtocol: AnyObject {
     func deliver<Target: NativeNamedValueTarget>(
       for name: String, to target: () -> Target?, isCurrent: () -> Bool
     ) async {
-      while true {
-        let availability: RemoteComposeNativeInputAvailability
-        let mark: UInt64
-        // The strong reference lives only for the offer, not across the wait below.
-        do {
-          guard !Task.isCancelled, let target = target(), isCurrent() else { return }
-          availability = target.inputAvailability
-          mark = availability.mark
-          switch await target.submit(nativeValue, for: name) {
-          case .accepted, .refused: return
-          case .deferred: break
+      await deliverNamedUpdate(self, for: name, to: target, isCurrent: isCurrent)
+    }
+  }
+
+  /// Delivers a write — or, for nil, a clear — to the native player, as
+  /// ``ControllerNamedValue/deliver(for:to:isCurrent:)`` describes: offered again each time the
+  /// player signals until the session it reaches answers finally.
+  @MainActor
+  func deliverNamedUpdate<Target: NativeNamedValueTarget>(
+    _ value: ControllerNamedValue?, for name: String, to target: () -> Target?,
+    isCurrent: () -> Bool
+  ) async {
+    while true {
+      let availability: RemoteComposeNativeInputAvailability
+      let mark: UInt64
+      // The strong reference lives only for the offer, not across the wait below.
+      do {
+        guard !Task.isCancelled, let target = target(), isCurrent() else { return }
+        availability = target.inputAvailability
+        mark = availability.mark
+        let admission =
+          if let value {
+            await target.submit(value.nativeValue, for: name)
+          } else {
+            await target.submitClear(for: name)
           }
+        switch admission {
+        case .accepted, .refused: return
+        case .deferred: break
         }
-        await availability.wait(after: mark)
       }
+      await availability.wait(after: mark)
     }
   }
 
@@ -272,6 +338,8 @@ protocol ControllerBackendProtocol: AnyObject {
       case .text(let value): acceptsString(value, for: name)
       case .color: acceptsColor(for: name)
       case .integer, .boolean: acceptsInteger(for: name)
+      case .long: acceptsLong(for: name)
+      case .floatArray(let values): acceptsFloatArray(values, for: name)
       }
     }
   }
@@ -284,5 +352,7 @@ protocol ControllerBackendProtocol: AnyObject {
     var names: [String] { [] }
 
     func set(_ value: ControllerNamedValue, for name: String) -> Bool { false }
+
+    func clear(_ name: String) -> Bool { false }
   }
 #endif

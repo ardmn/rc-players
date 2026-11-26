@@ -503,7 +503,7 @@
             let token = self.beginNativeUpdate(for: name)
             // The task takes its own weak references rather than sharing the handler's captures.
             self.nativeUpdateTasks[name] = Task { @MainActor [weak self, weak native] in
-              await value.deliver(for: name, to: { native }) {
+              await deliverNamedUpdate(value, for: name, to: { native }) {
                 self?.latestNativeUpdates[name] == token
               }
               if self?.latestNativeUpdates[name] == token { self?.nativeUpdateTasks[name] = nil }
@@ -604,6 +604,10 @@
       -> RemoteComposeNativeInputAdmission
     {
       await playerView.submit(value, for: name)
+    }
+
+    func submitClear(for name: String) async -> RemoteComposeNativeInputAdmission {
+      await playerView.submitClear(for: name)
     }
 
     var inputAvailability: RemoteComposeNativeInputAvailability { playerView.inputAvailability }

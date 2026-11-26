@@ -6,6 +6,8 @@ enum NativeSwiftDocumentDecoder {
   static let maximumStringBytes = nativeSwiftMaximumStringBytes
   private static let maximumOperations = 100_000
   private static let maximumProperties = 2_000
+  /// The most values a document's float list may hold, and so a host's float array.
+  static let maximumFloatListValues = maximumProperties
   private static let maximumNodes = 20_000
   private static let maximumNestingDepth = 256
   /// AndroidX's own bound on one loop's passes.

@@ -16,6 +16,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private var texts: [Int: String]
   private var floats: [Int: Float]
   private var floatOverrides: [Int: Float] = [:]
+  /// The longs a host has set by name, over the document's `LongConstant`s.
+  private var longOverrides: [Int: Int64] = [:]
+  /// The float arrays a host has set by name, over the lists the document keeps at those ids.
+  private var floatArrayOverrides: [Int: [Float]] = [:]
   private var hostDensity: Float = 1
   private var hostFontScale: Float = 1
   private var requestedTheme = NativeSwiftTheme.unspecified
@@ -119,6 +123,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     texts = other.texts
     floats = other.floats
     floatOverrides = other.floatOverrides
+    longOverrides = other.longOverrides
+    floatArrayOverrides = other.floatArrayOverrides
     colors = other.colors
     integers = other.integers
     documentClaimsEpochSecond = other.documentClaimsEpochSecond
@@ -669,6 +675,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// A float list as `values` resolves it: a static `DataListFloat` (when `staticFirst`) with its
   /// updates applied, or else a `DynamicFloatList`, zero-filled to its length.
   private func floatList(id: Int, staticFirst: Bool, values: [Int: Float]) -> [Float]? {
+    // A host's float array replaces whatever list the document keeps at the id, static or dynamic,
+    // as the Kotlin player's `floatValues` reads its override first.
+    if let override = floatArrayOverrides[id] { return override }
     if staticFirst {
       if var result = document.floatLists[id]?.map({
         NativeSwiftFloatExpression.resolve($0, values: values)
@@ -749,6 +758,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         if hostSetColors.contains(id), let value = colors[id] {
           written.append((name, .color(value)))
         }
+      case NativeSwiftNamedVariableType.long:
+        if let value = longOverrides[id] { written.append((name, .long(value))) }
+      case NativeSwiftNamedVariableType.floatArray:
+        if let value = floatArrayOverrides[id] { written.append((name, .floatArray(value))) }
       default:
         break
       }
@@ -792,6 +805,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       } else {
         floatOverrides.removeValue(forKey: id)
       }
+    case .long(let value):
+      longOverrides[id] = value
+    case .floatArray(let values):
+      floatArrayOverrides[id] = values
     }
     staticSnapshotCache = nil
     return true
@@ -831,6 +848,57 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// for false and true respectively.
   public func setInteger(_ value: Int, for name: String) -> Bool {
     set(.integer(value), for: name)
+  }
+
+  /// Updates a named long — an instant in epoch milliseconds, which a time attribute reads.
+  public func setLong(_ value: Int64, for name: String) -> Bool {
+    set(.long(value), for: name)
+  }
+
+  /// Replaces the list a named float array holds. The values must be finite, and no more than a
+  /// document's float list may hold.
+  public func setFloatArray(_ values: [Float], for name: String) -> Bool {
+    set(.floatArray(values), for: name)
+  }
+
+  /// Restores the named variable `name` to the value the document recorded, discarding the
+  /// host's override — the inverse of the `set*` methods, as the Kotlin player's
+  /// `clearNamedValue` is. The recorded value is the document's own, never one a host seeded when
+  /// the session opened. A named system variable goes back to the player's clock. A document
+  /// action's earlier write to the variable is discarded with the override.
+  ///
+  /// Returns whether `name` is a variable a host can write; a name the document does not declare
+  /// (or declares as an image) is ignored, and clearing twice changes nothing.
+  @discardableResult
+  public func clearNamedValue(_ name: String) -> Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    guard let variable = namedVariable(for: name) else { return false }
+    let id = variable.id
+    switch variable.type {
+    case NativeSwiftNamedVariableType.float:
+      floatOverrides[id] = nil
+    case NativeSwiftNamedVariableType.int:
+      // Both views: a float write to the same id is the integer's override too.
+      integers[id] = document.integers[id]
+      floatOverrides[id] = nil
+      writtenIDs.remove(id)
+    case NativeSwiftNamedVariableType.string:
+      texts[id] = document.texts[id]
+      writtenIDs.remove(id)
+    case NativeSwiftNamedVariableType.color:
+      // No longer the host's, so the document's dark palette applies to it again.
+      colors[id] = document.colors[id]
+      hostSetColors.remove(id)
+    case NativeSwiftNamedVariableType.long:
+      longOverrides[id] = nil
+    case NativeSwiftNamedVariableType.floatArray:
+      floatArrayOverrides[id] = nil
+    default:
+      return false
+    }
+    staticSnapshotCache = nil
+    return true
   }
 
   /// A host write by the name a host addresses it with; see `namedVariable(for:)`.
@@ -1150,8 +1218,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // A list is dynamic when it is a DynamicFloatList and no static list of the same id shadows
     // it, as `floatList(staticFirst:)` reads it: the reference seeds the component's box into, and
     // applies `UpdateDynamicFloatList` to, only those.
+    // A list a host overrides is not dynamic: the body reads the host's values, and an update to
+    // the document's list underneath stays invisible while the override stands, as on the Kotlin
+    // player.
     let dynamicListIDs = listIDs.filter {
       document.dynamicFloatLists[$0] != nil && document.floatLists[$0] == nil
+        && floatArrayOverrides[$0] == nil
     }
     return NativeSwiftLayoutComputeSnapshot(
       type: compute.type, boundsID: compute.boundsID, animateChanges: compute.animateChanges,
@@ -1298,6 +1370,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
   }
 
+  /// The long at `id`: a host's, over the document's `LongConstant`.
+  private func long(_ id: Int) -> Int64? {
+    longOverrides[id] ?? document.longConstants[id]
+  }
+
   /// AndroidX `TimeAttribute.paint`: one calendar field or interval, read from an instant.
   ///
   /// The instant is the `LongConstant` the operation names, or the host's wall clock when the
@@ -1309,7 +1386,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     _ attribute: ParsedTimeAttribute, timeSeconds: TimeInterval,
     wallClock: NativeSwiftWallClock?
   ) -> Float? {
-    guard let selectedMillis = document.longConstants[attribute.timeID] ?? wallClock?.epochMillis
+    guard let selectedMillis = long(attribute.timeID) ?? wallClock?.epochMillis
     else { return nil }
     let selected = NativeSwiftWallClock(
       epochMillis: selectedMillis,
@@ -1331,7 +1408,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       return interval(since: Double(now), unit: unit)
     case TimeType.fromArgumentSeconds, TimeType.fromArgumentMinutes, TimeType.fromArgumentHours:
       guard let argumentID = attribute.argumentIDs.first,
-        let argument = document.longConstants[argumentID]
+        let argument = long(argumentID)
       else { return nil }
       let unit: Double = attribute.type == TimeType.fromArgumentSeconds
         ? 1 : attribute.type == TimeType.fromArgumentMinutes ? 60 : 3600

@@ -265,5 +265,12 @@
       if admission == .accepted { accepted += 1 }
       return admission
     }
+
+    func submitClear(for name: String) async -> RemoteComposeNativeInputAdmission {
+      offers += 1
+      let admission = await player.submitClear(for: name)
+      if admission == .accepted { accepted += 1 }
+      return admission
+    }
   }
 #endif

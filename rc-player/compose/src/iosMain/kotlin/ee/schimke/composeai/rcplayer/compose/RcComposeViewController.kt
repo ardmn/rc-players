@@ -63,6 +63,30 @@ public class RcComposePlayerController {
     set(name, RcNamedValue.BooleanValue(value))
 
   /**
+   * Sets a long variable — an instant in epoch milliseconds, as a document's time attributes read
+   * one — returning false when [name] is absent or has a different type.
+   */
+  public fun setLong(name: String, value: Long): Boolean = set(name, RcNamedValue.LongValue(value))
+
+  /**
+   * Replaces the list a float-array variable holds, returning false when [name] is absent or has a
+   * different type.
+   */
+  public fun setFloatArray(name: String, values: FloatArray): Boolean =
+    set(name, RcNamedValue.FloatArrayValue(values.toList()))
+
+  /**
+   * Stops overriding [name]: the value set for it is removed, and the player restores the value the
+   * document recorded (`RcPlayerState.clearNamedValue`). Returns false when the attached document
+   * does not declare [name]; clearing a name with no value set changes nothing.
+   */
+  public fun clear(name: String): Boolean {
+    val declaredName = declaredName(name) ?: return false
+    values.remove(declaredName)
+    return true
+  }
+
+  /**
    * Attaches a new document's declarations. Each stored value is re-keyed under the name the new
    * document resolves its key to — the resolution `RcPlayerState` will apply — and dropped when
    * that variable is undeclared or of another type. Checking the key as written instead let a bare
