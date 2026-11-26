@@ -72,6 +72,17 @@ const COMMON_QUERY = 'handoffDelayMs=0';
  */
 const EXPECTED_CONTRACT_VERSION = 2;
 
+/**
+ * The document, colour variable and override the `namedColour` and `namedExpectations` cases share:
+ * the Swift core's circular progress document, whose `WearM3.primary` the override turns orange.
+ */
+const NAMED_COLOUR_FIXTURE = Object.freeze({
+  src: 'CircularProgressRemote-384x384.rc',
+  name: 'WearM3.primary',
+  colour: '#FFFF8800',
+  expectRgb: 0xff8800,
+});
+
 const CASES = [
   {
     name: 'androidx-baseline',
@@ -155,10 +166,10 @@ const CASES = [
     name: 'named-colour-spellings',
     description: '`?namedValues=` colour as #AARRGGBB, #RRGGBB and an ARGB number draws alike',
     namedColour: {
-      src: 'CircularProgressRemote-384x384.rc',
-      name: 'WearM3.primary',
-      reference: '#FFFF8800',
-      expectRgb: 0xff8800,
+      src: NAMED_COLOUR_FIXTURE.src,
+      name: NAMED_COLOUR_FIXTURE.name,
+      reference: NAMED_COLOUR_FIXTURE.colour,
+      expectRgb: NAMED_COLOUR_FIXTURE.expectRgb,
       // The last three only agree with `parseColor` in the shipped bundle if the Kotlin/Wasm number
       // and trim paths match JavaScript: numbers that wrap past 32 bits, and JS-only whitespace.
       sameAs: ['#FF8800', 'FFFF8800', 0xffff8800, -30720, 8589903872, 4294936576.5, '\uFEFF#FF8800\u3000'],
@@ -173,10 +184,10 @@ const CASES = [
     name: 'named-values-elements',
     description: 'a bad `?namedValues=` element is dropped alone: every shape, unicode, %, long values',
     namedExpectations: {
-      src: 'CircularProgressRemote-384x384.rc',
-      good: { kind: 'color', name: 'WearM3.primary', value: '#FFFF8800' },
-      blue: { kind: 'color', name: 'WearM3.primary', value: '#FF0000FF' },
-      expectRgb: 0xff8800,
+      src: NAMED_COLOUR_FIXTURE.src,
+      good: { kind: 'color', name: NAMED_COLOUR_FIXTURE.name, value: NAMED_COLOUR_FIXTURE.colour },
+      blue: { kind: 'color', name: NAMED_COLOUR_FIXTURE.name, value: '#FF0000FF' },
+      expectRgb: NAMED_COLOUR_FIXTURE.expectRgb,
       cases: (good, blue) => ({
         // Each bad element before and after the good one. The bundle's earlier one-`try`
         // flattening threw on `null.kind` and on `encodeURIComponent` of a lone surrogate, losing
