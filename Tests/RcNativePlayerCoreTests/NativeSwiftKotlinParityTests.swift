@@ -104,10 +104,10 @@ import Testing
     // `TIME_IN_SEC % 60`: the seconds digit of a digital clock.
     document.u8(Op.integerExpression).int(150).int(0b101).int(3)
       .int(NativeSwiftSystemVariables.timeInSeconds).int(60)
-      .int(NativeSwiftIntegerOperator.offset + NativeSwiftIntegerOperator.mod)
+      .int(Writer.integerOperator(NativeSwiftIntegerOperator.mod))
     let session = try NativeSwiftDocumentSession.open(
       data: document.data, toleratingRootlessData: true)
-    let clock = NativeSwiftWallClock(epochMillis: 1_787_243_445_250)
+    let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
     let value = try session.probeValues(timeSeconds: 0, wallClock: clock).integers[150]
     withKnownIssue("integer expressions do not read the clock") {
       #expect(value == 45, "\(String(describing: value))")
@@ -140,7 +140,7 @@ import Testing
     document.header(width: 100, height: 100)
     document.u8(Op.animatedFloat).int(50).int(1).int(Writer.literal(0.5))
     document.u8(Op.integerExpression).int(51).int(1 << 2).int(3).int(2).int(3)
-      .int(NativeSwiftIntegerOperator.offset + NativeSwiftIntegerOperator.add)
+      .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
     document.u8(Op.animatedFloat).int(52).int(3)
       .int(Writer.nanReference(50)).int(Writer.literal(0.25))
       .int(Writer.floatOperator(NativeSwiftFloatOperator.add))
@@ -216,8 +216,8 @@ import Testing
   /// (the override half): a named colour whose default is a colour expression's output keeps the
   /// host's value — AndroidX's `RemoteComposeState.updateColor` returns early for an overridden id.
   @Test func aColourOverrideSurvivesTheExpressionThatDefaultsIt() throws {
-    let red: UInt32 = 0xFFFF_0000
-    let blue: UInt32 = 0xFF00_00FF
+    let red = KotlinReference.red
+    let blue = KotlinReference.blue
     let document = Writer()
     document.header(width: 100, height: 100)
     document.u8(Op.colorConstant).int(60).int(Int(Int32(bitPattern: red)))

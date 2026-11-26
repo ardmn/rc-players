@@ -17,11 +17,11 @@ import Testing
     (0.9999999, 0), (-0.9999999, 0),
     (Float(Int32.max), Int(Int32.max)),  // 2^31 exactly (Int32.max rounds up)
     (Float(Int32.max) + 1, Int(Int32.max)),
-    (2_147_483_520, 2_147_483_520),  // largest float below 2^31
-    (-2_147_483_520, -2_147_483_520),
-    (-2_147_483_648, Int(Int32.min)),  // -2^31 exactly
-    (Float(-2_147_483_649.0), Int(Int32.min)),  // -2^31 - 1 rounds to -2^31
-    (-2_147_483_904, Int(Int32.min)),  // next float below -2^31
+    (Float(Int32.max).nextDown, Int(Float(Int32.max).nextDown)),  // largest float below 2^31
+    (-Float(Int32.max).nextDown, -Int(Float(Int32.max).nextDown)),
+    (Float(Int32.min), Int(Int32.min)),  // -2^31 exactly
+    (Float(Double(Int32.min) - 1), Int(Int32.min)),  // -2^31 - 1 rounds to -2^31
+    (Float(Int32.min).nextDown, Int(Int32.min)),  // next float below -2^31
     (3e9, Int(Int32.max)), (-3e9, Int(Int32.min)),
     (1e20, Int(Int32.max)), (-1e20, Int(Int32.min)),
     (.greatestFiniteMagnitude, Int(Int32.max)), (-.greatestFiniteMagnitude, Int(Int32.min)),
@@ -256,10 +256,7 @@ import Testing
     session.setRequestedTheme(NativeSwiftTheme.light)
     values = try session.detachedCopy().probeValues(timeSeconds: 0)
     #expect(values.integers[53] == Int(Int32.max) && values.integers[52] == -6)
-    let reopened = try NativeSwiftDocumentSession.open(data: data)
-    for (name, value) in session.writtenNamedValues() {
-      #expect(reopened.restoreNamedValue(value, forDeclaredName: name), "\(name)")
-    }
+    let reopened = try session.reopened(over: data)
     values = try reopened.probeValues(timeSeconds: 0)
     #expect(values.integers[53] == Int(Int32.max), "\(String(describing: values.integers[53]))")
     #expect(
@@ -345,11 +342,7 @@ import Testing
     let session = try NativeSwiftDocumentSession.open(data: writer.data)
     session.setVisibilityAnimationsEnabled(false)
     func box() throws -> NativeSwiftNodeSnapshot {
-      func find(_ node: NativeSwiftNodeSnapshot) -> NativeSwiftNodeSnapshot? {
-        if node.componentID == 5 { return node }
-        return node.children.lazy.compactMap(find).first
-      }
-      return try #require(find(try session.snapshot().root))
+      try #require(try session.snapshot().root.node(withComponentID: 5))
     }
     #expect(try box().visibility == NativeSwiftVisibility.gone)
     #expect(session.setFloat(1.9, for: "shown"))
@@ -358,8 +351,8 @@ import Testing
 
   // MARK: - Colours
 
-  static let red: UInt32 = 0xFFFF_0000
-  static let blue: UInt32 = 0xFF00_00FF
+  static let red = KotlinReference.red
+  static let blue = KotlinReference.blue
   static let green: UInt32 = 0xFF00_FF00
   static let white: UInt32 = 0xFFFF_FFFF
   static let black: UInt32 = 0xFF00_0000
@@ -421,11 +414,8 @@ import Testing
     session.setRequestedTheme(NativeSwiftTheme.dark)
     var colors = try session.detachedCopy().probeValues(timeSeconds: 0).colors
     #expect(colors[61] == Self.blue && colors[62] == Self.green && colors[63] == Self.blue)
-    let reopened = try NativeSwiftDocumentSession.open(data: data, toleratingRootlessData: true)
+    let reopened = try session.reopened(over: data)
     reopened.setRequestedTheme(NativeSwiftTheme.dark)
-    for (name, value) in session.writtenNamedValues() {
-      #expect(reopened.restoreNamedValue(value, forDeclaredName: name), "\(name)")
-    }
     colors = try reopened.probeValues(timeSeconds: 0).colors
     #expect(
       colors[61] == Self.blue && colors[62] == Self.green && colors[63] == Self.blue,
@@ -480,7 +470,7 @@ import Testing
     document.u8(Op.integerExpression).int(95).int(1).int(1).int(epoch)
     let session = try NativeSwiftDocumentSession.open(
       data: document.data, toleratingRootlessData: true)
-    let clock = NativeSwiftWallClock(epochMillis: 1_787_243_445_250)
+    let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
     for _ in 0..<2 {
       let values = try session.probeValues(timeSeconds: 0, wallClock: clock)
       #expect(values.floats[epoch] == 1000.5)

@@ -12,14 +12,8 @@ import Testing
   private typealias Op = NativeSwiftWireOpcode
   private typealias Named = NativeSwiftNamedVariableType
 
-  static func intOp(_ operation: Int) -> Int { NativeSwiftIntegerOperator.offset + operation }
   static let floatAdd = Writer.floatOperator(NativeSwiftFloatOperator.add)
   static let floatDiv = Writer.floatOperator(NativeSwiftFloatOperator.div)
-
-  static func findBox(_ node: NativeSwiftNodeSnapshot, _ id: Int) -> NativeSwiftNodeSnapshot? {
-    if node.componentID == id { return node }
-    return node.children.lazy.compactMap { findBox($0, id) }.first
-  }
 
   // MARK: - (a) resolution order: cycle and deep chain
 
@@ -29,7 +23,7 @@ import Testing
     let document = Writer()
     document.header(width: 100, height: 100)
     document.u8(Op.integerExpression).int(60).int(0b101).int(3).int(70).int(1).int(
-      Self.intOp(NativeSwiftIntegerOperator.add))
+      Writer.integerOperator(NativeSwiftIntegerOperator.add))
     document.u8(Op.animatedFloat).int(70).int(3).int(Writer.nanReference(60)).int(Writer.literal(1))
       .int(floatAdd)
     return document.data
@@ -56,7 +50,7 @@ import Testing
       let intOut = floatIn + 1
       let floatOut = floatIn + 2
       document.u8(Op.integerExpression).int(intOut).int(0b101).int(3).int(floatIn).int(1)
-        .int(Self.intOp(NativeSwiftIntegerOperator.add))
+        .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
       document.u8(Op.animatedFloat).int(floatOut).int(3).int(Writer.nanReference(intOut))
         .int(Writer.literal(0.5)).int(floatAdd)
     }
@@ -88,8 +82,8 @@ import Testing
   @Test func fiveDeepChainDrawsTheSettledWidthOnTheFirstFrame() throws {
     withKnownIssue("the session resolves integer expressions before the floats they read") {
       let session = try NativeSwiftDocumentSession.open(data: Self.chainDocument(withBox: true))
-      let first = try #require(Self.findBox(try session.snapshot(timeSeconds: 0).root, 5))
-      let later = try #require(Self.findBox(try session.snapshot(timeSeconds: 1).root, 5))
+      let first = try #require(try session.snapshot(timeSeconds: 0).root.node(withComponentID: 5))
+      let later = try #require(try session.snapshot(timeSeconds: 1).root.node(withComponentID: 5))
       #expect(first.widthValue == 6.5, "Kotlin 6.5; Swift first frame \(first.widthValue)")
       #expect(later.widthValue == 6.5, "Kotlin 6.5; Swift later frame \(later.widthValue)")
     }
@@ -107,8 +101,8 @@ import Testing
         .float(1).int(4)
       document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
       let session = try NativeSwiftDocumentSession.open(data: document.data)
-      // 1_787_243_445_250 ms UTC = 30:45 into the hour -> 1845 s.
-      let clock = NativeSwiftWallClock(epochMillis: 1_787_243_445_250)
+      // 30:45 into the hour -> 1845 s.
+      let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
       for time in [0.0, 0.5, 2.0] {
         let snapshot = try session.snapshot(timeSeconds: time, wallClock: clock)
         let values = try session.probeValues(timeSeconds: time, wallClock: clock)
@@ -153,7 +147,7 @@ import Testing
       document.header(width: 100, height: 100)
       document.u8(Op.dataInt).int(52).int(4)
       document.u8(Op.integerExpression).int(60).int(0b101).int(3).int(52).int(0).int(
-        Self.intOp(NativeSwiftIntegerOperator.add))
+        Writer.integerOperator(NativeSwiftIntegerOperator.add))
       document.u8(Op.layoutRoot).int(1)
       document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
       document.u8(Op.modifierClick).u8(Op.valueIntegerChangeAction).int(60).int(9)
