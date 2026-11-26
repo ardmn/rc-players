@@ -200,8 +200,8 @@ import Testing
       id: NativeSwiftSystemVariables.year, type: Named.float, name: "cal_year")
     let session = try NativeSwiftDocumentSession.open(
       data: document.data, toleratingRootlessData: true)
-    // 2026-01-19T12:00:00Z.
-    let clock = NativeSwiftWallClock(epochMillis: 1_768_824_000_000)
+    // The Kotlin test's clock: 2026-08-19.
+    let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
     #expect(
       try session.probeValues(timeSeconds: 0, wallClock: clock)
         .floats[NativeSwiftSystemVariables.year] == 2026)

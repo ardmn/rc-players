@@ -129,6 +129,10 @@ enum NativeSwiftDocumentDecoder {
     var colors: [Int: UInt32] = [:]
     var integers: [Int: Int] = [:]
     var numericConstants: [ParsedNumericConstant] = []
+    /// The integer view of each literal constant's id as the constants so far leave it, so an
+    /// integer constant moves a float constant's value as the reference's load does, and the
+    /// decode-time conditions and loop bounds read what the session will hold.
+    var constantIntegerViewByID: [Int: Int] = [:]
     var integerExpressions: [Int: ParsedIntegerExpression] = [:]
     var integerExpressionOrder: [Int] = []
     var namedVariables: [String: ParsedNamedVariable] = [:]
@@ -563,7 +567,7 @@ enum NativeSwiftDocumentDecoder {
           throw input.malformed("Operation count exceeds \(maximumOperations)")
         }
         let opcodeOffset = input.offset
-        let opcode = try input.u8("layout compute operation")
+        let opcode = try input.u8(NativeSwiftWireField.layoutComputeOperation)
         census(opcode)
         switch opcode {
         case NativeSwiftWireOpcode.containerEnd:
@@ -573,14 +577,15 @@ enum NativeSwiftDocumentDecoder {
           let word = try input.word(NativeSwiftWireField.layoutComputeFloatValue)
           if NativeSwiftFloatExpression.referenceID(word) == nil {
             let value = Float(bitPattern: word)
-            guard value.isFinite else { throw input.malformed("float value must be finite") }
+            guard value.isFinite else { throw input.malformed(NativeSwiftDecodeReason.floatValueMustBeFinite) }
             floats[id] = value
+            constantIntegerViewByID[id] = nativeSwiftIntegerView(value)
             numericConstants.append(.float(id: id, value: value))
           }
           steps.append(.float(id: id, words: [word], offset: opcodeOffset))
         case NativeSwiftWireOpcode.animatedFloat:
-          let id = try input.int("layout compute expression id")
-          let lengths = try input.int("layout compute expression lengths")
+          let id = try input.int(NativeSwiftWireField.layoutComputeExpressionID)
+          let lengths = try input.int(NativeSwiftWireField.layoutComputeExpressionLengths)
           let valueCount = lengths & 0xffff
           let animationCount = (lengths >> 16) & 0xffff
           guard animationCount == 0 else {
@@ -590,11 +595,11 @@ enum NativeSwiftDocumentDecoder {
           }
           expressionWordCount += valueCount
           guard expressionWordCount <= 200_000 else {
-            throw input.malformed("Float expression work exceeds 200000 words")
+            throw input.malformed(NativeSwiftDecodeReason.floatExpressionWorkExceeded)
           }
           var words: [UInt32] = []
           words.reserveCapacity(valueCount)
-          for _ in 0..<valueCount { words.append(try input.word("layout compute expression word")) }
+          for _ in 0..<valueCount { words.append(try input.word(NativeSwiftWireField.layoutComputeExpressionWord)) }
           steps.append(.float(id: id, words: words, offset: opcodeOffset))
         case NativeSwiftWireOpcode.dynamicFloatList:
           let id = try input.int(NativeSwiftWireField.dynamicFloatListID)
@@ -1563,8 +1568,9 @@ enum NativeSwiftDocumentDecoder {
           }
         } else {
           let value = Float(bitPattern: constantWord)
-          guard value.isFinite else { throw input.malformed("float value must be finite") }
+          guard value.isFinite else { throw input.malformed(NativeSwiftDecodeReason.floatValueMustBeFinite) }
           floats[floatID] = value
+          constantIntegerViewByID[floatID] = nativeSwiftIntegerView(value)
           numericConstants.append(.float(id: floatID, value: value))
         }
       case NativeSwiftWireOpcode.dataBitmap:  // Bitmap data
@@ -1605,7 +1611,7 @@ enum NativeSwiftDocumentDecoder {
         guard count <= 65_567 else { throw input.malformed("Float expression is too long") }
         expressionWordCount += count
         guard expressionWordCount <= 200_000 else {
-          throw input.malformed("Float expression work exceeds 200000 words")
+          throw input.malformed(NativeSwiftDecodeReason.floatExpressionWorkExceeded)
         }
         var words: [UInt32] = []
         words.reserveCapacity(count)
@@ -1707,6 +1713,12 @@ enum NativeSwiftDocumentDecoder {
         let value = try input.int(NativeSwiftWireField.integerValue)
         integers[id] = value
         numericConstants.append(.integer(id: id, value: value))
+        // `RcSeedValues.load`: an unchanged integer leaves a float constant's value; another one
+        // replaces it.
+        if constantIntegerViewByID[id] != value {
+          constantIntegerViewByID[id] = value
+          if floats[id] != nil { floats[id] = Float(value) }
+        }
       case NativeSwiftWireOpcode.integerExpression:  // Integer expression
         let outputID = try input.int("integer expression output id")
         let mask = try input.int("integer expression mask")
@@ -2060,7 +2072,7 @@ enum NativeSwiftDocumentDecoder {
         let size = Float(
           type == NativeSwiftImageAttributeType.width ? image.width : image.height)
         floats[outputID] = size
-        numericConstants.append(.float(id: outputID, value: size))
+        numericConstants.append(.imageSize(id: outputID, value: size))
       case NativeSwiftWireOpcode.layoutRoot:  // Root
         let root = ParsedNode(kind: .root, componentID: try input.int("root component id"))
         root.componentKind = "RootLayoutComponent"

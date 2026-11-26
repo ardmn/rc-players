@@ -1162,9 +1162,11 @@ enum NativeSwiftImageAttributeType {
   static let height = 1
 }
 
-/// The field labels the document decoder names in a malformed-document error: one owner for each
-/// label read at more than one site, so the sites cannot drift apart and an error names the field
-/// the same way wherever it is read. The values are part of the decoder's error text, which hosts
+/// The field labels the document decoder (and the session's resolution) names in an error: one
+/// owner for each label read at more than one site, and for every label of the reads this type was
+/// introduced with (numeric constants, image attributes, LayoutCompute bodies), so the sites
+/// cannot drift apart and an error names the field the same way wherever it is read. Labels read
+/// at one site elsewhere are still literals, to move here as their code is touched. The values are part of the decoder's error text, which hosts
 /// and logs see, so they keep their exact wording.
 enum NativeSwiftWireField {
   static let conditionalLeft = "conditional left"
@@ -1186,6 +1188,10 @@ enum NativeSwiftWireField {
   static let integerValue = "integer value"
   static let layoutComputeFloatID = "layout compute float id"
   static let layoutComputeFloatValue = "layout compute float value"
+  static let layoutComputeOperation = "layout compute operation"
+  static let layoutComputeExpressionID = "layout compute expression id"
+  static let layoutComputeExpressionLengths = "layout compute expression lengths"
+  static let layoutComputeExpressionWord = "layout compute expression word"
   static let macroArgumentIndex = "macro argument index"
   static let macroBitmapDescriptionID = "macro bitmap description id"
   static let macroBitmapID = "macro bitmap id"
@@ -1214,4 +1220,10 @@ enum NativeSwiftWireField {
 
   /// A text property read as a boolean, named after the operation that carries it (`label`).
   static func boolean(of label: String) -> String { "\(label) boolean" }
+}
+
+/// The reasons the document decoder gives for a malformed document at more than one site.
+enum NativeSwiftDecodeReason {
+  static let floatValueMustBeFinite = "float value must be finite"
+  static let floatExpressionWorkExceeded = "Float expression work exceeds 200000 words"
 }

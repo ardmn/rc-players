@@ -174,7 +174,7 @@ import Testing
     #expect(session.setInteger(9, for: "count"))
     #expect(session.setInteger(9, for: "computed"))
     #expect(session.setInteger(9, for: "mixed"))
-    #expect(session.setInteger(0, for: "flag"))  // equal to the document'session 0
+    #expect(session.setInteger(0, for: "flag"))  // equal to the document's 0
     let values = try session.probeValues(timeSeconds: 0)
     #expect(values.floats[52] == 9 && values.floats[60] == 13.5)
     #expect(values.integers[71] == 4 && values.floats[71] == 4 && values.floats[72] == 6)
@@ -237,5 +237,108 @@ import Testing
     #expect(session.restoreNamedValue(.integer(9), forDeclaredName: "both"))
     let (integer, float) = try views(session, 70)
     #expect(integer == 4 && float == 4, "Kotlin 4/4.0, Swift \(integer as Any)/\(float as Any)")
+  }
+
+  // MARK: - The document's own integer writes
+
+  /// Only a host or an action writes a value: an integer expression filling a variable whose id
+  /// also has a document float is not reported as written, so a reopen does not carry it.
+  @Test func anIntegerExpressionIsNotReportedAsWritten() throws {
+    let session = try open()
+    _ = try session.probeValues(timeSeconds: 0)
+    #expect(session.writtenNamedValues().isEmpty, "\(session.writtenNamedValues())")
+  }
+
+  /// A later action reads an id's float view after an integer write that changed nothing.
+  @Test func aLaterActionReadsTheFloatViewAfterAnUnchangedIntegerWrite() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataInt).int(52).int(4)
+    document.u8(Op.integerExpression).int(60).int(0b101).int(3).int(52).int(0)
+      .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
+    document.u8(Op.animatedFloat).int(61).int(3).int(Writer.nanReference(60))
+      .int(Writer.literal(1)).int(Self.mul)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
+    document.u8(Op.modifierClick)
+      .u8(Op.valueIntegerChangeAction).int(52).int(9)
+      .u8(Op.valueIntegerChangeAction).int(60).int(9)
+      .u8(Op.valueFloatExpressionChangeAction).int(80).int(61)
+      .u8(Op.containerEnd)
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    let values = try session.probeValues(timeSeconds: 0)
+    #expect(values.floats[80] == 9, "\(values.floats[80] as Any)")
+  }
+
+  /// An integer expression over an id lookup moves the document float at its id within the same
+  /// resolution, so a float expression and a static document's first frame read the new value.
+  @Test func anIdLookupMovesADocumentFloatThroughAnIntegerExpression() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.idList).int(40).int(3).int(11).int(12).int(13)
+    document.u8(Op.idLookup).int(41).int(40).float(1)
+    document.u8(Op.dataFloat).int(60).float(7.5)
+    document.u8(Op.integerExpression).int(60).int(1).int(1).int(41)
+    document.u8(Op.animatedFloat).int(90).int(1).int(Writer.nanReference(60))
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    for time in [0.0, 1.0] {
+      let values = try session.probeValues(timeSeconds: time)
+      #expect(values.floats[60] == 12 && values.floats[90] == 12, "\(values.floats[90] as Any)")
+    }
+  }
+
+  /// An image size is written again on every pass in the reference, so it holds over a later
+  /// integer constant at its id.
+  @Test func anImageSizeHoldsOverALaterConstant() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataBitmap).int(90).int(NativeSwiftBitmapType.raw8888 << 16 | 8).int(4)
+      .int(128).raw(Data(repeating: 0, count: 128))
+    document.u8(Op.attributeImage).int(80).int(90).u16(NativeSwiftImageAttributeType.width).u16(0)
+    document.u8(Op.dataInt).int(80).int(3)
+    document.u8(Op.integerExpression).int(81).int(1).int(1).int(80)
+    let values = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true
+    ).probeValues(timeSeconds: 0)
+    #expect(values.floats[80] == 8 && values.integers[81] == 8, "\(values.floats[80] as Any)")
+  }
+
+  /// A decode-time condition reads what the session holds: an integer constant after a float
+  /// constant at one id moves the float, so `[51] == 3` keeps its branch.
+  @Test func aConditionReadsAnIntegerConstantAfterAFloatOne() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(51).float(2.5)
+    document.u8(Op.dataInt).int(51).int(3)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.conditionalOperations).u8(NativeSwiftConditionalType.equal)
+      .int(Writer.nanReference(51)).float(3)
+    document.u8(Op.layoutBox).int(5).int(-1).int(1).int(1)
+    document.u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    #expect(try session.probeValues(timeSeconds: 0).floats[51] == 3)
+    #expect(try session.snapshot(timeSeconds: 0).root.node(withComponentID: 5) != nil)
+  }
+
+  /// `ValueIntegerExpressionChange` naming a float constant is refused, as Kotlin's
+  /// "Missing integer action expression": the integer view of a float is not an integer the action
+  /// may copy.
+  @Test func anIntegerActionDoesNotCopyAFloatConstantsIntegerView() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(51).float(7.9)
+    document.u8(Op.dataInt).int(70).int(1)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
+    document.u8(Op.modifierClick)
+      .u8(Op.valueIntegerExpressionChangeAction).long(70).long(51)
+      .u8(Op.containerEnd)
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    #expect(throws: NativeSwiftCoreError.self) {
+      try NativeSwiftDocumentSession.open(data: document.data)
+    }
   }
 }

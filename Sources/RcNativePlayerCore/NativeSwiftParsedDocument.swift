@@ -1,9 +1,11 @@
 import Foundation
 
-/// A literal numeric constant, as the document declared it.
+/// A numeric value the document settles at decode time, as it declared it.
 enum ParsedNumericConstant {
   case float(id: Int, value: Float)
   case integer(id: Int, value: Int)
+  /// An `ImageAttribute` size: a float the reference writes again on every pass.
+  case imageSize(id: Int, value: Float)
 }
 
 struct ParsedDocument {

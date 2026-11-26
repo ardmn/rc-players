@@ -79,31 +79,36 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 
   /// The document's own floats and integers, each float also its integer view.
   ///
-  /// Literal constants and image sizes are applied in wire order, as `RcSeedValues.load` and
-  /// `applyImageAttribute` apply them: a float publishes both views, and a later integer at the
-  /// same id replaces both unless the id already holds that integer. Any other float the decoder
-  /// settled publishes its integer view as `setFloat` would.
+  /// Literal constants are applied in wire order, as `RcSeedValues.load` applies them: a float
+  /// publishes both views, and a later integer at the same id replaces both unless the id already
+  /// holds that integer. Image sizes are applied after them, as the reference's
+  /// `applyImageAttribute` runs again on every pass after the constants were loaded once. Every
+  /// float the decoder settles is one of these.
   private static func seededNumericViews(of document: ParsedDocument) -> ([Int: Float], [Int: Int])
   {
     var floats = document.floats
     var integers = document.integers
     var constantFloatByID: [Int: Float] = [:]
     var constantIntegerByID: [Int: Int] = [:]
+    var imageSizes: [(id: Int, value: Float)] = []
     for constant in document.numericConstants {
       switch constant {
       case .float(let id, let value):
         constantFloatByID[id] = value
-        constantIntegerByID[id] = integerView(of: value)
+        constantIntegerByID[id] = nativeSwiftIntegerView(value)
       case .integer(let id, let value):
         guard constantIntegerByID[id] != value else { continue }
         constantIntegerByID[id] = value
         // An id only ever declared an integer keeps no float of its own: its float view is the
         // projection of the integer, which follows later integer writes.
         if constantFloatByID[id] != nil { constantFloatByID[id] = Float(value) }
+      case .imageSize(let id, let value):
+        imageSizes.append((id, value))
       }
     }
-    for (id, value) in document.floats where constantFloatByID[id] == nil {
-      integers[id] = integerView(of: value)
+    for (id, value) in imageSizes {
+      constantFloatByID[id] = value
+      constantIntegerByID[id] = nativeSwiftIntegerView(value)
     }
     for (id, value) in constantFloatByID {
       floats[id] = value
@@ -320,7 +325,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       case NativeSwiftDataMapType.string:
         if let value = texts[entry.valueID] { texts[lookup.outputID] = value }
       case NativeSwiftDataMapType.int, NativeSwiftDataMapType.long, NativeSwiftDataMapType.boolean:
-        integers[lookup.outputID] = integers[entry.valueID] ?? 0
+        storeInteger(lookup.outputID, integers[entry.valueID] ?? 0)
       case NativeSwiftDataMapType.float:
         values[lookup.outputID] = values[entry.valueID] ?? floats[entry.valueID] ?? 0
       default:
@@ -577,7 +582,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   {
     func storeActionInteger(_ id: Int, _ value: Int) {
       writtenIDs.insert(id)
-      if storeInteger(id, value) { values[id] = Float(value) }
+      storeInteger(id, value)
+      // The id's float view after the write, changed or not: a later action reads it.
+      values[id] = floatOverrides[id] ?? floats[id] ?? Float(value)
     }
     func storeActionFloat(_ id: Int, _ value: Float) {
       storeFloat(id, value)
@@ -678,7 +685,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       case NativeSwiftDataMapType.string:
         if let value = texts[entry.valueID] { texts[lookup.outputID] = value }
       case NativeSwiftDataMapType.int, NativeSwiftDataMapType.long, NativeSwiftDataMapType.boolean:
-        integers[lookup.outputID] = integers[entry.valueID] ?? 0
+        storeInteger(lookup.outputID, integers[entry.valueID] ?? 0)
       case NativeSwiftDataMapType.float:
         values[lookup.outputID] = values[entry.valueID] ?? floats[entry.valueID] ?? 0
       default:
@@ -1042,9 +1049,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     let cornerRadius = cornerRadii.max() ?? 0
 
     let resolvedWidth = try resolvedDimension(
-      node.widthWord, type: stateLayoutDimension(node, isWidth: true), "width", values: values)
+      node.widthWord, type: stateLayoutDimension(node, isWidth: true), NativeSwiftWireField.width,
+      values: values)
     let resolvedHeight = try resolvedDimension(
-      node.heightWord, type: stateLayoutDimension(node, isWidth: false), "height", values: values)
+      node.heightWord, type: stateLayoutDimension(node, isWidth: false), NativeSwiftWireField.height,
+      values: values)
 
     return NativeSwiftNodeSnapshot(
       kind: node.kind,
@@ -1335,28 +1344,21 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// layout's index and visibility read the integer view.
   private func storeFloat(_ id: Int, _ value: Float) {
     floatOverrides[id] = value
-    integers[id] = Self.integerView(of: value)
+    integers[id] = nativeSwiftIntegerView(value)
   }
 
   /// An integer write — `RcPlayerState.setInteger`, as AndroidX `RemoteComposeState.updateInteger`:
   /// nothing for the integer the id already holds, else both views, the float being the integer.
-  /// Where the document has a float of its own at the id, an override carries the new float;
-  /// otherwise the float view is the integer's projection, which follows the id's later integer
-  /// writes (an integer expression's). Returns whether the id changed.
+  /// A float override is dropped and a document float at the id takes the integer, so the float
+  /// view is the integer without marking the id written (`writtenNamedValues` reads overrides);
+  /// with no document float the view is the integer's projection. Returns whether the id changed.
   @discardableResult
   private func storeInteger(_ id: Int, _ value: Int) -> Bool {
     guard integers[id] != value else { return false }
     integers[id] = value
-    if floats[id] != nil {
-      floatOverrides[id] = Float(value)
-    } else {
-      floatOverrides.removeValue(forKey: id)
-    }
+    floatOverrides.removeValue(forKey: id)
+    if floats[id] != nil { floats[id] = Float(value) }
     return true
-  }
-
-  private static func integerView(of value: Float) -> Int {
-    Int(Int32(clamping: nativeSwiftClampedInt(value)))
   }
 
   /// Integer expressions are retained document state. Re-evaluate them in wire declaration order
@@ -1365,7 +1367,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private func resolveIntegerExpressions() throws {
     for id in document.integerExpressionOrder {
       guard let expression = document.integerExpressions[id] else { continue }
-      // As the reference's `applyIntegerExpression`: a `setInteger`, both views.
+      // As the reference's `applyIntegerExpression`: a `setInteger`, both views. Unlike it, an id a
+      // document action wrote is not skipped (a known gap: the session keeps no action override).
       storeInteger(
         id,
         try NativeSwiftIntegerExpression.evaluate(
@@ -1665,17 +1668,21 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
           guard let ids = document.idLists[lookup.listID] else { continue }
           let index = nativeSwiftClampedInt(
             NativeSwiftFloatExpression.resolve(lookup.index, values: result))
-          guard ids.indices.contains(index), integers[lookup.outputID] != ids[index] else {
+          // The reference's `setInteger`, as every integer write.
+          guard ids.indices.contains(index), storeInteger(lookup.outputID, ids[index]) else {
             continue
           }
-          integers[lookup.outputID] = ids[index]
-          if floatOverrides[lookup.outputID] == nil { result[lookup.outputID] = Float(ids[index]) }
+          result[lookup.outputID] = Float(ids[index])
           changed = true
         }
         guard changed else { break }
         try resolveIntegerExpressions()
         for id in projectedIntegers {
           if let value = integers[id] { result[id] = Float(value) }
+        }
+        // An integer expression whose id also has a document float moved that float with it.
+        for id in document.integerExpressionOrder where floatOverrides[id] == nil {
+          if let value = floats[id] { result[id] = value }
         }
         try evaluateExpressions()
       }
@@ -1771,7 +1778,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private func publishParticleFloat(_ id: Int, _ value: Float) {
     floats[id] = value
     floatOverrides.removeValue(forKey: id)
-    integers[id] = Self.integerView(of: value)
+    integers[id] = nativeSwiftIntegerView(value)
   }
 
   /// Resolves text producers in wire order. The output of an operation is immediately visible to

@@ -25,9 +25,9 @@ import Testing
     (3e9, Int(Int32.max)), (-3e9, Int(Int32.min)),
     (1e20, Int(Int32.max)), (-1e20, Int(Int32.min)),
     (.greatestFiniteMagnitude, Int(Int32.max)), (-.greatestFiniteMagnitude, Int(Int32.min)),
-    (1e-40, 0), (-1e-40, 0),  // subnormals
+    (Float.leastNormalMagnitude / 2, 0), (-Float.leastNormalMagnitude / 2, 0),  // subnormals
     (.leastNonzeroMagnitude, 0), (-.leastNonzeroMagnitude, 0),
-    (16_777_217, 16_777_216),  // not representable: rounds to 2^24
+    (Float(Double(1 << 24) + 1), 1 << 24),  // 2^24 + 1 is not representable: it rounds to 2^24
     (-7.5, -7), (7.5, 7),
   ]
 
@@ -426,37 +426,37 @@ import Testing
 
   /// Kotlin `RcTextLength` -> `setFloat(outId, length)`: an integer expression reads the length.
   @Test func textLengthIsAlsoItsIntegerView() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.text(id: 20, "hello")
+    document.u8(Op.textLength).int(80).int(20)
+    document.u8(Op.integerExpression).int(81).int(1).int(1).int(80)
+    let values = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true
+    ).probeValues(timeSeconds: 0)
+    #expect(values.floats[80] == 5)
     withKnownIssue("the session resolves integer expressions before the floats they read") {
-      let document = Writer()
-      document.header(width: 100, height: 100)
-      document.text(id: 20, "hello")
-      document.u8(Op.textLength).int(80).int(20)
-      document.u8(Op.integerExpression).int(81).int(1).int(1).int(80)
-      let values = try NativeSwiftDocumentSession.open(
-        data: document.data, toleratingRootlessData: true
-      ).probeValues(timeSeconds: 0)
-      #expect(values.floats[80] == 5)
       #expect(values.integers[81] == 5, "\(String(describing: values.integers[81]))")
     }
   }
 
   /// Kotlin `ComponentValue` -> `storeFloat(valueId, width)`: an integer expression reads it.
   @Test func componentWidthIsAlsoItsIntegerView() throws {
+    let writer = Writer()
+    writer.header(width: 400, height: 400)
+    writer.u8(Op.componentValue).int(NativeSwiftComponentValueType.width).int(5).int(90)
+    writer.u8(Op.integerExpression).int(91).int(1).int(1).int(90)
+    writer.u8(Op.layoutRoot).int(1)
+    writer.u8(Op.layoutBox).int(5).int(-1).int(1).int(1)
+    writer.u8(Op.modifierWidth).int(NativeSwiftDimensionType.exact).float(100)
+    writer.u8(Op.modifierHeight).int(NativeSwiftDimensionType.exact).float(100)
+    writer.u8(Op.layoutContent).int(-1).u8(Op.containerEnd)
+    writer.u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: writer.data)
+    _ = try session.snapshot()
+    let values = try session.probeValues(timeSeconds: 0)
+    #expect(values.floats[90] == 100, "\(String(describing: values.floats[90]))")
     withKnownIssue("the session resolves integer expressions before the floats they read") {
-      let writer = Writer()
-      writer.header(width: 400, height: 400)
-      writer.u8(Op.componentValue).int(NativeSwiftComponentValueType.width).int(5).int(90)
-      writer.u8(Op.integerExpression).int(91).int(1).int(1).int(90)
-      writer.u8(Op.layoutRoot).int(1)
-      writer.u8(Op.layoutBox).int(5).int(-1).int(1).int(1)
-      writer.u8(Op.modifierWidth).int(NativeSwiftDimensionType.exact).float(100)
-      writer.u8(Op.modifierHeight).int(NativeSwiftDimensionType.exact).float(100)
-      writer.u8(Op.layoutContent).int(-1).u8(Op.containerEnd)
-      writer.u8(Op.containerEnd).u8(Op.containerEnd)
-      let session = try NativeSwiftDocumentSession.open(data: writer.data)
-      _ = try session.snapshot()
-      let values = try session.probeValues(timeSeconds: 0)
-      #expect(values.floats[90] == 100, "\(String(describing: values.floats[90]))")
       #expect(values.integers[91] == 100, "\(String(describing: values.integers[91]))")
     }
   }
@@ -482,21 +482,21 @@ import Testing
   /// Kotlin `RcDataMapLookup` of a float entry -> `storeFloat(outId, ...)`: the output's integer
   /// view is the float truncated.
   @Test func aDataMapFloatLookupIsAlsoItsIntegerView() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(71).float(2.75)
+    document.text(id: 72, "k")
+    let key = Array("k".utf8)
+    document.u8(Op.idMap).int(70).int(1).int(key.count).raw(Data(key))
+      .u8(NativeSwiftDataMapType.float).int(71)
+    document.u8(Op.dataMapLookup).int(73).int(70).int(72)
+    document.u8(Op.integerExpression).int(74).int(1).int(1).int(73)
+    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.snapshot(timeSeconds: 0)
+    let values = try session.probeValues(timeSeconds: 0)
+    #expect(values.floats[73] == 2.75, "\(String(describing: values.floats[73]))")
     withKnownIssue("a data-map float lookup publishes no integer view") {
-      let document = Writer()
-      document.header(width: 100, height: 100)
-      document.u8(Op.dataFloat).int(71).float(2.75)
-      document.text(id: 72, "k")
-      let key = Array("k".utf8)
-      document.u8(Op.idMap).int(70).int(1).int(key.count).raw(Data(key))
-        .u8(NativeSwiftDataMapType.float).int(71)
-      document.u8(Op.dataMapLookup).int(73).int(70).int(72)
-      document.u8(Op.integerExpression).int(74).int(1).int(1).int(73)
-      document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
-      let session = try NativeSwiftDocumentSession.open(data: document.data)
-      _ = try session.snapshot(timeSeconds: 0)
-      let values = try session.probeValues(timeSeconds: 0)
-      #expect(values.floats[73] == 2.75, "\(String(describing: values.floats[73]))")
       #expect(values.integers[73] == 2, "\(String(describing: values.integers[73]))")
       #expect(values.integers[74] == 2, "\(String(describing: values.integers[74]))")
     }
@@ -566,22 +566,22 @@ import Testing
   /// A computed float keeps its float view across resolutions: its integer view is never
   /// projected back over it, even by a producer the settle pass does not run again.
   @Test func aComputedFloatKeepsItsFloatViewAcrossResolutions() throws {
-    withKnownIssue("the session resolves integer expressions before the floats they read") {
-      let document = Writer()
-      document.header(width: 100, height: 100)
-      document.u8(Op.colorConstant).int(60).int(Int(Int32(bitPattern: 0xFF80_8080)))
-      // 80 = the red channel of 60, 128 / 255.
-      document.u8(Op.attributeColor).int(80).int(60).u16(NativeSwiftColorAttributeType.red)
-      document.u8(Op.integerExpression).int(81).int(1).int(1).int(80)
-      // 82 reads 81, so the integer expressions run again once the floats are known.
-      document.u8(Op.animatedFloat).int(82).int(1).int(Writer.nanReference(81))
-      let session = try NativeSwiftDocumentSession.open(
-        data: document.data, toleratingRootlessData: true)
-      for time in [0.0, 0.5, 1.0] {
-        let values = try session.probeValues(timeSeconds: time)
-        #expect(
-          values.floats[80] == Float(128) / 255,
-          "t=\(time): \(String(describing: values.floats[80]))")
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.colorConstant).int(60).int(Int(Int32(bitPattern: 0xFF80_8080)))
+    // 80 = the red channel of 60, 128 / 255.
+    document.u8(Op.attributeColor).int(80).int(60).u16(NativeSwiftColorAttributeType.red)
+    document.u8(Op.integerExpression).int(81).int(1).int(1).int(80)
+    // 82 reads 81, so the integer expressions run again once the floats are known.
+    document.u8(Op.animatedFloat).int(82).int(1).int(Writer.nanReference(81))
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    for time in [0.0, 0.5, 1.0] {
+      let values = try session.probeValues(timeSeconds: time)
+      #expect(
+        values.floats[80] == Float(128) / 255,
+        "t=\(time): \(String(describing: values.floats[80]))")
+      withKnownIssue("the session resolves integer expressions before the floats they read") {
         #expect(values.integers[80] == 0 && values.integers[81] == 0 && values.floats[82] == 0)
       }
     }

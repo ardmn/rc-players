@@ -29,7 +29,9 @@ extension NativeSwiftNodeSnapshot {
 }
 
 extension NativeSwiftDocumentSession {
-  /// A new session over `data` that starts from every value this one wrote, as a reopen does.
+  /// A new session over `data` that starts from every value this one wrote, as a reopen hands
+  /// `writtenNamedValues()` to the next session. Session level only: the player's merge with
+  /// left-out values and host seeds is covered by `NativeNamedValueCarryTests`.
   func reopened(over data: Data) throws -> NativeSwiftDocumentSession {
     let next = try NativeSwiftDocumentSession.open(data: data, toleratingRootlessData: true)
     for (name, value) in writtenNamedValues() {
