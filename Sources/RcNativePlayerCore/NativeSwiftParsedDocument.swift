@@ -1,5 +1,13 @@
 import Foundation
 
+/// A numeric value the document settles at decode time, as it declared it.
+enum ParsedNumericConstant {
+  case float(id: Int, value: Float)
+  case integer(id: Int, value: Int)
+  /// An `ImageAttribute` size: a float the reference writes again on every pass.
+  case imageSize(id: Int, value: Float)
+}
+
 struct ParsedDocument {
   let width: Int
   let height: Int
@@ -11,6 +19,10 @@ struct ParsedDocument {
   let floats: [Int: Float]
   let colors: [Int: UInt32]
   let integers: [Int: Int]
+  /// Every literal `FloatConstant`, `IntegerConstant` and image size (`ImageAttribute`), in wire
+  /// order. A float and an integer written at one id share it: the reference applies them in order,
+  /// each publishing both numeric views, which the two maps above cannot say.
+  let numericConstants: [ParsedNumericConstant]
   let integerExpressions: [Int: ParsedIntegerExpression]
   /// The same expressions in the order the document declared them: one may read another's result,
   /// so evaluation follows the wire rather than a dictionary's iteration order.

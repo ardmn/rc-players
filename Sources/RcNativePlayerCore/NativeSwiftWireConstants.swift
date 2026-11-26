@@ -1161,3 +1161,87 @@ enum NativeSwiftImageAttributeType {
   static let width = 0
   static let height = 1
 }
+
+/// The field labels the document decoder and the session's resolution name in an error: one owner
+/// for every label read at more than one site, in the decoder or across the decoder and the
+/// session, and for every label of the reads this type was introduced with (numeric constants,
+/// image attributes, LayoutCompute bodies). A label read at a single site elsewhere is still a
+/// literal there, to move here when that code is touched. The values are part of the error text
+/// hosts and logs see, so they keep their exact wording.
+enum NativeSwiftWireField {
+  static let textSize = "text size"
+  static let maximumWidth = "maximum width"
+  static let maximumHeight = "maximum height"
+  static let cornerRadius = "corner radius"
+  static let paddingLeft = "padding left"
+  static let paddingTop = "padding top"
+  static let paddingRight = "padding right"
+  static let paddingBottom = "padding bottom"
+  static let minimumWidth = "minimum width"
+  static let minimumHeight = "minimum height"
+  static let borderWidth = "border width"
+  static let collapsiblePriority = "collapsible priority"
+  static let marqueeRepeatDelay = "marquee repeat delay"
+  static let marqueeInitialDelay = "marquee initial delay"
+  static let marqueeSpacing = "marquee spacing"
+  static let marqueeVelocity = "marquee velocity"
+  static let conditionalLeft = "conditional left"
+  static let conditionalRight = "conditional right"
+  static let conditionalType = "conditional type"
+  static let dynamicFloatListID = "dynamic float list id"
+  static let dynamicFloatListIndex = "dynamic float list index"
+  static let dynamicFloatListLength = "dynamic float list length"
+  static let dynamicFloatListValue = "dynamic float list value"
+  static let floatID = "float id"
+  static let floatValue = "float value"
+  static let height = "height"
+  static let imageAttributeArgument = "image attribute argument"
+  static let imageAttributeArgumentCount = "image attribute argument count"
+  static let imageAttributeImageID = "image attribute image id"
+  static let imageAttributeOutputID = "image attribute output id"
+  static let imageAttributeType = "image attribute type"
+  static let integerID = "integer id"
+  static let integerValue = "integer value"
+  static let layoutComputeFloatID = "layout compute float id"
+  static let layoutComputeFloatValue = "layout compute float value"
+  static let layoutComputeOperation = "layout compute operation"
+  static let layoutComputeExpressionID = "layout compute expression id"
+  static let layoutComputeExpressionLengths = "layout compute expression lengths"
+  static let layoutComputeExpressionWord = "layout compute expression word"
+  static let macroArgumentIndex = "macro argument index"
+  static let macroBitmapDescriptionID = "macro bitmap description id"
+  static let macroBitmapID = "macro bitmap id"
+  static let macroBlockIndex = "macro block index"
+  static let macroBodyOpcode = "macro body opcode"
+  static let macroDrawToBitmapColor = "macro draw to bitmap color"
+  static let macroDrawToBitmapID = "macro draw to bitmap id"
+  static let macroDrawToBitmapMode = "macro draw to bitmap mode"
+  static let macroDrawingValue = "macro drawing value"
+  static let macroID = "macro id"
+  static let macroPaintWord = "macro paint word"
+  static let macroPaintWordCount = "macro paint word count"
+  static let nestedMacroArgument = "nested macro argument"
+  static let nestedMacroArgumentCount = "nested macro argument count"
+  static let nestedMacroBlockIndex = "nested macro block index"
+  static let nestedMacroCallOperation = "nested macro call operation"
+  static let nestedMacroID = "nested macro id"
+  static let referencedOperationsID = "referenced operations id"
+  static let textID = "text id"
+  static let textLookupListID = "text lookup list id"
+  static let textLookupOutputID = "text lookup output id"
+  static let width = "width"
+
+  /// The `index`th property of a header.
+  static func headerProperty(_ index: Int) -> String { "header property \(index)" }
+
+  /// A text property read as a boolean, named after the operation that carries it (`label`).
+  static func boolean(of label: String) -> String { "\(label) boolean" }
+}
+
+/// The reasons the document decoder gives for a malformed document at more than one site.
+enum NativeSwiftDecodeReason {
+  static let floatValueMustBeFinite = "float value must be finite"
+  static let floatExpressionWorkExceeded =
+    "Float expression work exceeds \(maximumWords) words"
+  private static let maximumWords = NativeSwiftDocumentDecoder.maximumDecodedExpressionWords
+}
