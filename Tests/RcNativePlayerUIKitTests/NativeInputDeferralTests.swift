@@ -377,10 +377,12 @@
       var view: RemoteComposeNativePlayerView? = try await openedView()
       let availability = try #require(view?.inputAvailability)
       let mark = availability.mark
+      #expect(!availability.isClosed)
       moveToBackground(try #require(view))
       view = nil
       // UIKit may hold the view in the current autorelease pool until the main queue turns over.
       try await until("the player is released and signals") { availability.mark != mark }
+      #expect(availability.isClosed, "the player's deinit closes its availability")
       await availability.wait(after: mark)
     }
   }
