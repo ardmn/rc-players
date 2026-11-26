@@ -63,12 +63,15 @@ at half alpha) where AndroidX fades them once. The offset child is faded once, a
 
 All of these come from Compose Multiplatform's Skiko `GraphicsLayer`, not from this player.
 
-An embedded document inherits the host's `ModulateAlpha` layer (`RcEmbeddedDocuments.kt` provides
-no new one around `RcComposePlayerResolved`), although its player is wrapped in `clipToBounds()`
-and so drawn into a child layer that misses that alpha. An offset in the embedded document is then
-placed without a layer for an alpha that never reaches it. It is drawn opaque either way, so the
-pixels match the list above; only the offset's own layer is lost. This one is the player's, it
-predates the second review round, and it is left as it is.
+An embedded document starts with no `ModulateAlpha` layer of the host's: `RcEmbeddedDocuments.kt`
+provides `null` for `LocalRcModulateAlphaLayer` around `RcComposePlayerResolved`. Its player is
+wrapped in `clipToBounds()`, a child layer of the host's. Without a blur on the host layer that
+child layer misses the host's alpha, as the list above says, and nothing in the embedded document
+is faded by it. With a blur, Skiko composites the host layer through a paint that carries the alpha, and
+the embedded document is faded once. Either way an offset in it keeps its own layer. Before this
+change the embedded document inherited the host's layer, and without a blur such an offset was
+placed without a layer for an alpha that never reached it. `RcEmbeddedModulateAlphaLayerTest` pins
+the layer each offset is drawn into and the pixels.
 
 ## Reproducing
 
