@@ -146,7 +146,7 @@
     private func settled(
       _ view: RemoteComposeNativePlayerView, _ what: String = "the player settles"
     ) async throws {
-      try await until(what) { !view.isOpeningDocument && !view.isBusy }
+      try await waitUntil(what, within: 120) { !view.isOpeningDocument && !view.isBusy }
     }
 
     private func labelText(in view: UIView) -> String? {
@@ -175,20 +175,22 @@
     @Test func aRetryOutOfAFailedSessionDoesNotReplayTheValueThatFailedIt() async throws {
       var errors: [RemoteComposeNativePlayerError] = []
       var limits = RemoteComposeNativeExecutionLimits.default
-      limits.maximumTextBytes = 64
+      limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.label(), executionLimits: limits, resourceResolver: nil,
         onError: { errors.append($0) })
       try await settled(view, "the document opens")
       #expect(
-        await view.submit(.text(String(repeating: "x", count: 100)), for: "label") == .refused)
+        await view.submit(
+          .text(NativeTestDocuments.overLimitText()), for: NativeTestDocuments.labelName)
+          == .refused)
       try #require(errors.count == 1, "\(errors)")
 
       view.load(NativeTestDocuments.label())
       try await settled(view, "the retry settles")
       #expect(errors.count == 1, "the failed write was replayed: \(errors)")
-      #expect(labelText(in: view) == "Idle")
-      #expect(await view.submit(.text("Ready"), for: "label") == .accepted)
+      #expect(labelText(in: view) == NativeTestDocuments.labelInitial)
+      #expect(await view.submit(.text("Ready"), for: NativeTestDocuments.labelName) == .accepted)
     }
 
     /// A starting value is checked against the first frame's whole budget, events included: one
@@ -196,10 +198,10 @@
     /// the session opens and takes writes, rather than failing while holding the value.
     @Test func aStartingValueThatBreaksTheBudgetWithTheFirstFramesEventsIsLeftOut() async throws {
       let data = NativeTestDocuments.labelWithAFrameHaptic()
-      let long = String(repeating: "x", count: 100)
+      let long = NativeTestDocuments.overLimitText()
       let (probe, frame) = try await NativePlayerEngine.open(
         data: data, maximumDocumentBytes: 1 << 20,
-        namedValues: [(name: "label", value: .text(long))])
+        namedValues: [(name: NativeTestDocuments.labelName, value: .text(long))])
       _ = probe
       try #require(frame.effects.count == 1, "\(frame.effects)")
       let model = try NativeDocument(frame: frame, timeSeconds: 0, limits: .default)
@@ -212,16 +214,16 @@
         onError: { errors.append($0) })
       try await settled(view, "the document opens")
       try #require(errors.isEmpty, "\(errors)")
-      view.namedValueSeed = { [(name: "label", value: .text(long))] }
+      view.namedValueSeed = { [(name: NativeTestDocuments.labelName, value: .text(long))] }
 
       view.configureHostDensity(2)
-      try await until("the reopen settles") {
+      try await waitUntil("the reopen settles", within: 120) {
         !view.isOpeningDocument && !view.isBusy && !errors.isEmpty
       }
       #expect(errors.count == 1, "\(errors)")
       #expect(!isShowingTheErrorLabel(view), "the reopened session failed")
-      #expect(labelText(in: view) == "Idle")
-      #expect(await view.submit(.text("Ready"), for: "label") == .accepted)
+      #expect(labelText(in: view) == NativeTestDocuments.labelInitial)
+      #expect(await view.submit(.text("Ready"), for: NativeTestDocuments.labelName) == .accepted)
     }
 
     /// A seeded value replaces the carried value of the same name outright: the replaced one is
@@ -231,15 +233,18 @@
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.label(), resourceResolver: nil, onError: { errors.append($0) })
       try await settled(view, "the document opens")
-      let long = String(repeating: "x", count: 100)
-      #expect(await view.submit(.text(long), for: "label") == .accepted)
+      let long = NativeTestDocuments.overLimitText()
+      #expect(await view.submit(.text(long), for: NativeTestDocuments.labelName) == .accepted)
       view.namedValueSeed = {
-        [(name: "label", value: .text("ok")), (name: "title", value: .text(long))]
+        [
+          (name: NativeTestDocuments.labelName, value: .text("ok")),
+          (name: NativeTestDocuments.titleName, value: .text(long)),
+        ]
       }
       var limits = RemoteComposeNativeExecutionLimits.default
-      limits.maximumTextBytes = 64
+      limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       view.configureExecutionLimits(limits)
-      try await until("the reopen settles") {
+      try await waitUntil("the reopen settles", within: 120) {
         !view.isOpeningDocument && !view.isBusy && !errors.isEmpty
       }
       #expect(errors.count == 1, "only the long title is left out: \(errors)")
@@ -253,34 +258,27 @@
 
     // MARK: - Cost of the fallback open (R5)
 
-    private func until(
-      _ what: @autoclosure () -> String, within seconds: TimeInterval = 120, _ condition: () -> Bool
-    ) async throws {
-      let deadline = Date().addingTimeInterval(seconds)
-      while !condition() {
-        try #require(Date() < deadline, "timed out waiting until \(what())")
-        await Task.yield()
-      }
-    }
-
     /// The first-frame models a reopen with `count` seeded values starts building, and how many
     /// of them on the main thread.
     private func reopenBuilds(count: Int, withBadValue: Bool) async throws -> (
       builds: Int, onMain: Int
     ) {
       var limits = RemoteComposeNativeExecutionLimits.default
-      limits.maximumTextBytes = 64
+      limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.manyIntegers(count: count, withLabel: true),
         executionLimits: limits,
         resourceResolver: nil, onError: { _ in })
-      try await until("the document opens") { !view.isOpeningDocument && !view.isBusy }
+      try await waitUntil("the document opens", within: 120) {
+        !view.isOpeningDocument && !view.isBusy
+      }
       var seed: [(name: String, value: RemoteComposeNativeNamedValue)] = (0..<count).map {
         (name: "n\($0)", value: .integer(NativeSwiftVisibility.visible))
       }
       if withBadValue {
         // Last, so a search that peels values off one at a time would reach it last.
-        seed.append((name: "label", value: .text(String(repeating: "x", count: 100))))
+        seed.append(
+          (name: NativeTestDocuments.labelName, value: .text(NativeTestDocuments.overLimitText())))
       }
       view.namedValueSeed = { seed }
       let builds = NativeModelBuildCount()
@@ -288,7 +286,7 @@
       var opened = false
       view.onSessionOpened = { opened = true }
       view.configureHostDensity(2)
-      try await until("the reopen opens") { opened }
+      try await waitUntil("the reopen opens", within: 120) { opened }
       return builds.counts
     }
 

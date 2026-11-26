@@ -26,7 +26,7 @@
         data: NativeTestDocuments.shownBox(), controller: controller, resourceResolver: nil)
       host.loadViewIfNeeded()
       let native = try #require(host.children.first as? RemoteComposeNativePlayerViewController)
-      try await until("the document opens and is attached") {
+      try await waitUntil("the document opens and is attached") {
         !controller.names.isEmpty && !native.isOpeningDocument
       }
       return Player(controller: controller, host: host, view: native.playerView)
@@ -49,8 +49,11 @@
 
     /// Returns once the player has opened, has nothing left to apply, and the controller has no
     /// write left to deliver; fails the test rather than hanging.
-    private func settle(_ player: Player, _ what: String = "the player settles") async throws {
-      try await until(what) {
+    private func settle(
+      _ player: Player, _ what: String = "the player settles",
+      sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+      try await waitUntil(what, sourceLocation: sourceLocation) {
         !player.view.isOpeningDocument && !player.view.isBusy
           && player.host.nativeUpdateTasks.isEmpty
       }
@@ -60,18 +63,6 @@
     private func queueOtherInput(_ player: Player, count: Int = 50) {
       for _ in 0..<count {
         Task { @MainActor in _ = await player.view.submit(.integer(1), for: "missing") }
-      }
-    }
-
-    /// Returns once `condition` holds, yielding to the tasks it waits on; fails the test after
-    /// `seconds` rather than hanging.
-    private func until(
-      _ what: String, within seconds: TimeInterval = 30, _ condition: () -> Bool
-    ) async throws {
-      let deadline = Date().addingTimeInterval(seconds)
-      while !condition() {
-        try #require(Date() < deadline, "timed out waiting until \(what)")
-        await Task.yield()
       }
     }
 
@@ -89,11 +80,13 @@
       let player = try await player()
       #expect(isBoxShown(in: player.view) == false)
       moveToBackground(player.view)
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
-      try await until("the write waits for the player's signal") {
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
+      try await waitUntil("the write waits for the player's signal") {
         player.view.inputAvailability.waiterCount == 1
       }
-      #expect(player.host.nativeUpdateTasks["shown"] != nil, "the delivery is still pending")
+      #expect(
+        player.host.nativeUpdateTasks[NativeTestDocuments.shownName] != nil,
+        "the delivery is still pending")
       #expect(isBoxShown(in: player.view) == false)
 
       activate(player.view)
@@ -109,11 +102,12 @@
       let player = try await player()
       for _ in 0..<50 {
         Task { @MainActor in
-          _ = await player.view.submit(.integer(NativeSwiftVisibility.gone), for: "shown")
+          _ = await player.view.submit(
+            .integer(NativeSwiftVisibility.gone), for: NativeTestDocuments.shownName)
         }
       }
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
-      try await until("input is outstanding") { player.view.hasOutstandingInput }
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
+      try await waitUntil("input is outstanding") { player.view.hasOutstandingInput }
       moveToBackground(player.view)
       #expect(player.view.isOpeningDocument, "the bytes are reopened on activation")
       activate(player.view)
@@ -125,12 +119,12 @@
     /// session is busy with other input.
     @Test func aShownValueSurvivesTheReopenAfterTheBackground() async throws {
       let player = try await player()
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       #expect(isBoxShown(in: player.view) == true)
 
       queueOtherInput(player)
-      try await until("input is outstanding") { player.view.hasOutstandingInput }
+      try await waitUntil("input is outstanding") { player.view.hasOutstandingInput }
       moveToBackground(player.view)
       #expect(player.view.isOpeningDocument, "the bytes are reopened on activation")
       activate(player.view)
@@ -151,8 +145,8 @@
       invalid.maximumFrameWork = 0
       native.playerView.configureExecutionLimits(invalid)
       #expect(!native.isOpeningDocument)
-      try await until("the declarations are attached") { !controller.names.isEmpty }
-      #expect(controller.setInteger(Self.visible, for: "shown"))
+      try await waitUntil("the declarations are attached") { !controller.names.isEmpty }
+      #expect(controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       let player = Player(controller: controller, host: host, view: native.playerView)
       try await settle(player, "the failed player refuses the write")
       #expect(isBoxShown(in: native.playerView) == nil)
@@ -166,7 +160,7 @@
     /// player seeds a new state with them, rather than the document's own values first.
     @Test func theFirstFrameAfterAReopenAlreadyHasTheValues() async throws {
       let player = try await player()
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       #expect(isBoxShown(in: player.view) == true)
 
@@ -185,12 +179,12 @@
     @Test func aWriteQueuedAtAReopenIsAppliedOnceFromTheSeed() async throws {
       let player = try await player()
       queueOtherInput(player)
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
-      try await until("input is outstanding") { player.view.hasOutstandingInput }
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
+      try await waitUntil("input is outstanding") { player.view.hasOutstandingInput }
       moveToBackground(player.view)
       var applied = 0
       player.view.onInputApplied = { input in
-        if case .setNamed("shown", .integer) = input { applied += 1 }
+        if case .setNamed(NativeTestDocuments.shownName, .integer) = input { applied += 1 }
       }
 
       activate(player.view)
@@ -207,7 +201,7 @@
       let native = RemoteComposeNativePlayerViewController(
         data: NativeTestDocuments.shownBox(), resourceResolver: nil)
       native.loadViewIfNeeded()
-      try await until("the document opens") { !native.isOpeningDocument }
+      try await waitUntil("the document opens") { !native.isOpeningDocument }
       let target = CountingTarget(native)
       let writes = 600
       var finished = 0
@@ -215,13 +209,13 @@
         Task { @MainActor in
           let value = ControllerNamedValue.integer(
             Int32(index % 2 == 0 ? Self.visible : NativeSwiftVisibility.gone))
-          await value.deliver(for: "shown", to: { target }, isCurrent: { true })
+          await value.deliver(for: NativeTestDocuments.shownName, to: { target })
           finished += 1
         }
       }
       // A write stranded without a wake-up fails the test instead of hanging it.
       defer { for delivery in deliveries { delivery.cancel() } }
-      try await until("every write is delivered", within: 60) { finished == writes }
+      try await waitUntil("every write is delivered", within: 60) { finished == writes }
       #expect(target.accepted == writes)
       // Each write is offered once, plus once each time it is woken after a deferral: at least
       // `writes - capacity` (256) more, 944 here. A write whose mark goes stale between its offer
@@ -234,7 +228,7 @@
     /// A new density reopens the session from the bytes; the values written before survive it.
     @Test func aReopenForANewDensityKeepsTheValues() async throws {
       let player = try await player()
-      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      #expect(player.controller.setInteger(Self.visible, for: NativeTestDocuments.shownName))
       try await settle(player)
       #expect(isBoxShown(in: player.view) == true)
 
@@ -262,6 +256,13 @@
     {
       offers += 1
       let admission = await player.submit(value, for: name)
+      if admission == .accepted { accepted += 1 }
+      return admission
+    }
+
+    func submitClear(for name: String) async -> RemoteComposeNativeInputAdmission {
+      offers += 1
+      let admission = await player.submitClear(for: name)
       if admission == .accepted { accepted += 1 }
       return admission
     }

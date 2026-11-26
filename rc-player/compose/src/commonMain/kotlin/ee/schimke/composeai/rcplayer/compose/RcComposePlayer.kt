@@ -2733,7 +2733,8 @@ private val LocalRcLayoutVersion = compositionLocalOf { 0 }
  * is written after `beginFrame`, so the block runs once the state holds the frame's values rather
  * than the previous frame's. A document that never reads the clock never moves it.
  */
-private val LocalRcFrameTime = staticCompositionLocalOf<FloatState?> { null }
+// Internal, not private, only so `RcLayerFloatTest` can provide a frame clock.
+internal val LocalRcFrameTime = staticCompositionLocalOf<FloatState?> { null }
 
 /**
  * Whether draws below may stop following [LocalRcFrameTime] while they read no clock (see
@@ -5175,6 +5176,19 @@ internal fun androidXSemanticsRole(role: Int): Role? =
     else -> null
   }
 
+/**
+ * Indices into a layout compute's bounds list, as the native Swift player's
+ * `NativeSwiftLayoutComputeBound` names them; the player reads the first four of the result.
+ */
+private object LayoutComputeBound {
+  const val X = 0
+  const val Y = 1
+  const val WIDTH = 2
+  const val HEIGHT = 3
+  /** How many leading values of the result the player reads: x, y, width and height. */
+  const val READ_COUNT = HEIGHT + 1
+}
+
 private fun Modifier.applyLayoutComputes(
   modifiers: RcLayoutModifiers,
   state: RcPlayerState,
@@ -5199,14 +5213,27 @@ private fun Modifier.applyLayoutComputes(
           parentHeight.toFloat(),
         ),
       )
+    // A host's float array over the bounds list is what comes back, whatever its length. One that
+    // cannot say where or how big the component is leaves it as measured, as the native Swift
+    // player does (`NativeSwiftLayoutComputeSnapshot.evaluate` answers nil for it).
+    if (
+      values.size < LayoutComputeBound.READ_COUNT ||
+        (0 until LayoutComputeBound.READ_COUNT).any { !values[it].isFinite() }
+    ) {
+      return@forEach
+    }
     when (block.operation.type) {
       RcLayoutCompute.MEASURE -> {
-        width = constraints.constrainWidth(values[2].roundToInt().coerceAtLeast(0))
-        height = constraints.constrainHeight(values[3].roundToInt().coerceAtLeast(0))
+        width =
+          constraints.constrainWidth(values[LayoutComputeBound.WIDTH].roundToInt().coerceAtLeast(0))
+        height =
+          constraints.constrainHeight(
+            values[LayoutComputeBound.HEIGHT].roundToInt().coerceAtLeast(0),
+          )
       }
       RcLayoutCompute.POSITION -> {
-        x = values[0].roundToInt()
-        y = values[1].roundToInt()
+        x = values[LayoutComputeBound.X].roundToInt()
+        y = values[LayoutComputeBound.Y].roundToInt()
       }
     }
   }
@@ -5260,8 +5287,10 @@ private fun Modifier.applyGraphicsLayer(
   // RenderNode layer composites like `Auto`).
   val compositingStrategy = remember(operation) { operation.compositingStrategy() }
   // The offsets drawn into a `ModulateAlpha` layer decide from these same eased values whether
-  // they can keep a layer of their own (see [RcModulateAlphaLayer]).
-  modulateAlphaLayer?.bind(alpha, blurX, blurY)
+  // they can keep a layer of their own (see [RcModulateAlphaLayer]). Bound once the composition
+  // applies, not during it: the readers are snapshot state, and a recomposition that changed none
+  // of them hands over the same readers, which writes nothing.
+  if (modulateAlphaLayer != null) SideEffect { modulateAlphaLayer.bind(alpha, blurX, blurY) }
   val shapeType = int(RcGraphicsLayerModifier.SHAPE)
   val blurTileMode =
     when (int(RcGraphicsLayerModifier.BLUR_TILE_MODE)) {
@@ -5319,22 +5348,35 @@ private fun Modifier.applyGraphicsLayer(
  *   are read straight through.
  */
 @Composable
-private fun rcLayerFloat(
+// Internal, not private, only so `RcLayerFloatTest` can check the readers stay the same object.
+internal fun rcLayerFloat(
   attribute: RcGraphicsLayerAttribute?,
   default: Float,
   state: RcPlayerState,
 ): () -> Float {
-  val word = (attribute as? RcGraphicsLayerAttribute.FloatValue)?.value ?: return { default }
+  // Each reader is remembered for what it captures, so a recomposition that changed none of them
+  // returns the same reader, and `RcModulateAlphaLayer.bind` sees no change (`RcLayerFloatTest`).
+  // A float is keyed by its bits: compared as a number, `-0f` would keep the `0f` reader, and a
+  // NaN target (the frame-less clock branch below can resolve one) would never match itself.
+  val word =
+    (attribute as? RcGraphicsLayerAttribute.FloatValue)?.value
+      ?: return remember(default.toRawBits()) { { default } }
   val target = state.resolve(word)
-  val referencedId = word.referencedId ?: return { target }
+  val referencedId = word.referencedId ?: return remember(target.toRawBits()) { { target } }
   if (state.isContinuouslyDriven(referencedId)) {
     // Resolved in the layer block, not captured here: a component whose parameters did not change
     // is skipped on recomposition, so a captured value left a clock-bound layer on its first frame
     // for good. Reading the frame time in the same block is what re-runs it each frame.
-    val frame = LocalRcFrameTime.current ?: return { target }
-    return {
-      frame.floatValue
-      state.resolve(word)
+    val frame = LocalRcFrameTime.current
+    return if (frame != null) {
+      remember(frame, state, word) {
+        {
+          frame.floatValue
+          state.resolve(word)
+        }
+      }
+    } else {
+      remember(target.toRawBits()) { { target } }
     }
   }
   val animatable = remember(state) { Animatable(target) }

@@ -13,24 +13,26 @@ import Testing
     let (label, _) = try await NativePlayerEngine.open(
       data: NativeTestDocuments.label(), maximumDocumentBytes: 1 << 20)
     #expect(await label.writtenNamedValues().isEmpty)
-    _ = try await label.apply(.setNamed("label", value: .text("Ready")))
-    _ = try await label.apply(.setNamed("title", value: .text("Title")))
+    _ = try await label.apply(.setNamed(NativeTestDocuments.labelName, value: .text("Ready")))
+    _ = try await label.apply(.setNamed(NativeTestDocuments.titleName, value: .text("Title")))
     let written = await label.writtenNamedValues()
-    #expect(written.map(\.name) == ["label", "title"])
+    #expect(written.map(\.name) == [NativeTestDocuments.labelName, NativeTestDocuments.titleName])
     #expect(written.map(\.value) == [.text("Ready"), .text("Title")])
 
     let (shown, _) = try await NativePlayerEngine.open(
       data: NativeTestDocuments.shownBox(), maximumDocumentBytes: 1 << 20)
     #expect(await shown.writtenNamedValues().isEmpty)
-    _ = try await shown.apply(.setNamed("shown", value: .integer(NativeSwiftVisibility.visible)))
-    _ = try await shown.apply(.setNamed("shown", value: .integer(NativeSwiftVisibility.gone)))
+    _ = try await shown.apply(
+      .setNamed(NativeTestDocuments.shownName, value: .integer(NativeSwiftVisibility.visible)))
+    _ = try await shown.apply(
+      .setNamed(NativeTestDocuments.shownName, value: .integer(NativeSwiftVisibility.gone)))
     #expect(
       await shown.writtenNamedValues().map(\.value) == [.integer(NativeSwiftVisibility.gone)])
   }
 
   /// `signalOne` releases the longest waiter only, skipping one that was cancelled; a later
   /// `signal` releases the rest.
-  @Test func inputAvailabilityWakesOneWaiterInArrivalOrder() async throws {
+  @MainActor @Test func inputAvailabilityWakesOneWaiterInArrivalOrder() async throws {
     let availability = RemoteComposeNativeInputAvailability()
     let released = NativeTestLog()
     func waiter(_ name: String) -> Task<Void, Never> {
@@ -41,13 +43,9 @@ import Testing
       }
     }
     /// Returns once `count` callers are waiting, so each waiter starts after the one before; fails
-    /// the test after 30 s rather than hanging.
+    /// the test rather than hanging (`waitUntil`).
     func waitUntilWaiting(_ count: Int) async throws {
-      let deadline = Date().addingTimeInterval(30)
-      while availability.waiterCount < count {
-        try #require(Date() < deadline, "timed out waiting for \(count) waiters")
-        await Task.yield()
-      }
+      try await waitUntil("\(count) waiters") { availability.waiterCount >= count }
       #expect(availability.waiterCount == count)
     }
     let first = waiter("first")

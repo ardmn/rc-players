@@ -37,68 +37,33 @@
     static var shownBox: Int { 10 }
     static var localBox: Int { 11 }
 
-    /// A document with two boxes, gone until the integers named "shown" and "local" say otherwise,
-    /// and a text reading the string named "label". `size` only changes the bytes.
+    /// A document with two boxes, gone until the integers named
+    /// ``NativeTestDocuments/shownName`` and ``NativeTestDocuments/localName`` say otherwise, and a
+    /// text reading the string named ``NativeTestDocuments/labelName``. `size` only changes the
+    /// bytes.
     static func document(size: Int = 200) -> Data {
       typealias Op = NativeSwiftWireOpcode
-      var data = Data()
-      func u8(_ value: Int) { data.append(UInt8(truncatingIfNeeded: value)) }
-      func int(_ value: Int) {
-        let raw = UInt32(bitPattern: Int32(truncatingIfNeeded: value))
-        for shift in [24, 16, 8, 0] { data.append(UInt8(truncatingIfNeeded: raw >> shift)) }
+      typealias Kind = NativeTestWire.NamedType
+      typealias Documents = NativeTestDocuments
+      let wire = NativeTestWire()
+      wire.header(width: size, height: size)
+      for (id, name) in [
+        (Documents.shownVariableID, Documents.shownName),
+        (Documents.localVariableID, Documents.localName),
+      ] {
+        wire.u8(Op.dataInt).int(id).int(NativeSwiftVisibility.gone).named(id, Kind.int, name)
       }
-      func float(_ value: Float) { int(Int(Int32(bitPattern: value.bitPattern))) }
-      func utf8(_ value: String) {
-        let bytes = Array(value.utf8)
-        int(bytes.count)
-        data.append(contentsOf: bytes)
+      wire.u8(Op.dataText).int(Documents.labelVariableID).utf8(Documents.labelInitial)
+        .named(Documents.labelVariableID, Kind.string, Documents.labelName)
+      wire.u8(Op.layoutRoot).int(1)
+      for (boxID, variable) in [
+        (shownBox, Documents.shownVariableID), (localBox, Documents.localVariableID),
+      ] {
+        wire.box(id: boxID, size: 20, visibility: variable)
       }
-      u8(Op.header)
-      for value in [1, 0, 0, size, size, 0, 0] { int(value) }
-      for (id, name) in [(550, "shown"), (551, "local")] {
-        u8(Op.dataInt)
-        int(id)
-        int(NativeSwiftVisibility.gone)
-        u8(Op.namedVariable)
-        int(id)
-        int(4)  // integer
-        utf8(name)
-      }
-      u8(Op.dataText)
-      int(560)
-      utf8("Idle")
-      u8(Op.namedVariable)
-      int(560)
-      int(0)  // string
-      utf8("label")
-      u8(Op.layoutRoot)
-      int(1)
-      for (boxID, variable) in [(shownBox, 550), (localBox, 551)] {
-        u8(Op.layoutBox)
-        for value in [boxID, -1, 1, 1] { int(value) }
-        for opcode in [Op.modifierWidth, Op.modifierHeight] {
-          u8(opcode)
-          int(NativeSwiftDimensionType.exact)
-          float(20)
-        }
-        u8(Op.modifierVisibility)
-        int(variable)
-        u8(Op.layoutContent)
-        int(boxID + 100)
-        u8(Op.containerEnd)
-        u8(Op.containerEnd)
-      }
-      u8(Op.layoutText)
-      for value in [NativeTestDocuments.labelID, 0, 560, Int(Int32(bitPattern: 0xFF00_0000))] {
-        int(value)
-      }
-      float(16)
-      int(0)
-      float(400)
-      for value in [-1, 1, 1, 1] { int(value) }
-      u8(Op.containerEnd)  // text
-      u8(Op.containerEnd)  // root
-      return data
+      wire.text(id: Documents.labelID, reading: Documents.labelVariableID)
+      wire.u8(Op.containerEnd)  // root
+      return wire.data
     }
 
     /// A player of `data` with `controller`, settled.
@@ -123,24 +88,18 @@
     }
 
     /// The player has opened, attached the controller, and has nothing left to apply or deliver.
-    func settle(_ player: Player, _ what: String = "the player settles") async throws {
-      try await until(
+    func settle(
+      _ player: Player, _ what: String = "the player settles",
+      sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+      try await waitUntil(
         "\(what): names \(player.controller.names), opening \(player.view.isOpeningDocument), "
           + "busy \(player.view.isBusy), deliveries \(player.host.nativeUpdateTasks.keys.sorted()), "
-          + "errors \(player.errors.all)"
+          + "errors \(player.errors.all)",
+        sourceLocation: sourceLocation
       ) {
         !player.controller.names.isEmpty && !player.view.isOpeningDocument
           && !player.view.isBusy && player.host.nativeUpdateTasks.isEmpty
-      }
-    }
-
-    func until(
-      _ what: @autoclosure () -> String, within seconds: TimeInterval = 30, _ condition: () -> Bool
-    ) async throws {
-      let deadline = Date().addingTimeInterval(seconds)
-      while !condition() {
-        try #require(Date() < deadline, "timed out waiting until \(what())")
-        await Task.yield()
       }
     }
 
@@ -202,7 +161,7 @@
       for _ in 0..<50 {
         Task { @MainActor in _ = await player.view.submit(.integer(1), for: "missing") }
       }
-      try await until("input is outstanding") { player.view.hasOutstandingInput }
+      try await waitUntil("input is outstanding") { player.view.hasOutstandingInput }
       background(player)
       try #require(player.view.isOpeningDocument, "the bytes are reopened on activation")
     }
