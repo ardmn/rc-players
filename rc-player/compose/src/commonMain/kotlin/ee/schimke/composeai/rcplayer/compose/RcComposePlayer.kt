@@ -5341,12 +5341,16 @@ internal fun rcLayerFloat(
     // Resolved in the layer block, not captured here: a component whose parameters did not change
     // is skipped on recomposition, so a captured value left a clock-bound layer on its first frame
     // for good. Reading the frame time in the same block is what re-runs it each frame.
-    val frame = LocalRcFrameTime.current ?: return remember(target.toRawBits()) { { target } }
-    return remember(frame, state, word) {
-      {
-        frame.floatValue
-        state.resolve(word)
+    val frame = LocalRcFrameTime.current
+    return if (frame != null) {
+      remember(frame, state, word) {
+        {
+          frame.floatValue
+          state.resolve(word)
+        }
       }
+    } else {
+      remember(target.toRawBits()) { { target } }
     }
   }
   val animatable = remember(state) { Animatable(target) }
