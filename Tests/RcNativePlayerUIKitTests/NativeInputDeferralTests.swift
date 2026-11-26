@@ -95,7 +95,9 @@
       for attempt in 0..<50 {
         var answer: RemoteComposeNativeInputAdmission?
         let value = "Value \(attempt)"
-        Task { @MainActor in answer = await view.submit(.text(value), for: "label") }
+        Task { @MainActor in
+          answer = await view.submit(.text(value), for: NativeTestDocuments.labelName)
+        }
         try await until("the write is in flight or answered") {
           answer != nil || view.isApplyingInput
         }
@@ -119,10 +121,13 @@
       try await until("the document opens") { !view.isOpeningDocument }
       for attempt in 0..<50 {
         // What the session took from the host last, before the write that is caught in flight.
-        try #require(await view.submit(.text("Host"), for: "label") == .accepted)
+        try #require(
+          await view.submit(.text("Host"), for: NativeTestDocuments.labelName) == .accepted)
         var answer: RemoteComposeNativeInputAdmission?
         let value = "In flight \(attempt)"
-        Task { @MainActor in answer = await view.submit(.text(value), for: "label") }
+        Task { @MainActor in
+          answer = await view.submit(.text(value), for: NativeTestDocuments.labelName)
+        }
         try await until("the write is in flight or answered") {
           answer != nil || view.isApplyingInput
         }
@@ -130,7 +135,7 @@
         moveToBackground(view)
         try await until("the write is answered") { answer != nil }
         // The host's latest value is its first one again.
-        view.namedValueSeed = { [(name: "label", value: .text("Host"))] }
+        view.namedValueSeed = { [(name: NativeTestDocuments.labelName, value: .text("Host"))] }
         activate(view)
         try await until("the reopen settles") { !view.isOpeningDocument && !view.isBusy }
         #expect(text(NativeTestDocuments.labelID, in: view) == "Host")
@@ -272,13 +277,15 @@
     ) async throws {
       var errors: [RemoteComposeNativePlayerError] = []
       var limits = RemoteComposeNativeExecutionLimits.default
-      limits.maximumTextBytes = 64
+      limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.label(), compatibilityPolicy: policy, executionLimits: limits,
         resourceResolver: nil, onError: { errors.append($0) })
       try await until("the document opens") { !view.isOpeningDocument }
       try #require(errors.isEmpty, "\(errors)")
-      view.namedValueSeed = { [(name: "label", value: .text(String(repeating: "x", count: 100)))] }
+      view.namedValueSeed = {
+        [(name: NativeTestDocuments.labelName, value: .text(NativeTestDocuments.overLimitText()))]
+      }
 
       view.configureHostDensity(2)
       // Settled: the reopen finished and has nothing left to apply or report.
@@ -291,7 +298,7 @@
         "the text limit, reported for the seeded value: \(errors)")
       #expect(hasComponent(NativeTestDocuments.labelID, in: view))
       // The session is open, not failed: it still takes a write.
-      #expect(await view.submit(.text("Ready"), for: "label") == .accepted)
+      #expect(await view.submit(.text("Ready"), for: NativeTestDocuments.labelName) == .accepted)
       #expect(errors.count == 1, "\(errors)")
     }
 
@@ -301,14 +308,17 @@
     @Test func aSeedValueThatBreaksALimitIsLeftOutAndLaterWritesAreTaken() async throws {
       var errors: [RemoteComposeNativePlayerError] = []
       var limits = RemoteComposeNativeExecutionLimits.default
-      limits.maximumTextBytes = 64
+      limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.label(), executionLimits: limits, resourceResolver: nil,
         onError: { errors.append($0) })
       try await until("the document opens") { !view.isOpeningDocument }
-      let tooLong = String(repeating: "x", count: 100)
+      let tooLong = NativeTestDocuments.overLimitText()
       view.namedValueSeed = {
-        [(name: "label", value: .text(tooLong)), (name: "title", value: .text("Seeded"))]
+        [
+          (name: NativeTestDocuments.labelName, value: .text(tooLong)),
+          (name: "title", value: .text("Seeded")),
+        ]
       }
       var applied: [String] = []
       view.onInputApplied = { input in

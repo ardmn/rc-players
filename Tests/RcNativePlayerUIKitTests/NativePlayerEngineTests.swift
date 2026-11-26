@@ -13,10 +13,10 @@ import Testing
     let (label, _) = try await NativePlayerEngine.open(
       data: NativeTestDocuments.label(), maximumDocumentBytes: 1 << 20)
     #expect(await label.writtenNamedValues().isEmpty)
-    _ = try await label.apply(.setNamed("label", value: .text("Ready")))
+    _ = try await label.apply(.setNamed(NativeTestDocuments.labelName, value: .text("Ready")))
     _ = try await label.apply(.setNamed("title", value: .text("Title")))
     let written = await label.writtenNamedValues()
-    #expect(written.map(\.name) == ["label", "title"])
+    #expect(written.map(\.name) == [NativeTestDocuments.labelName, "title"])
     #expect(written.map(\.value) == [.text("Ready"), .text("Title")])
 
     let (shown, _) = try await NativePlayerEngine.open(

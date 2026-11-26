@@ -180,10 +180,10 @@
     /// as on the Kotlin player; see `anEqualHostWriteAfterADocumentChangeMatchesKotlin`.)
     @Test func aReopenKeepsTheHostsNewerWriteOverTheDocumentsOlderChange() async throws {
       let player = try await player()
-      #expect(player.controller.setString("Host", for: "label"))
+      #expect(player.controller.setString("Host", for: NativeTestDocuments.labelName))
       try await settle(player)
-      try await setLocally(player, "Document", for: "label")
-      #expect(player.controller.setString("Newer", for: "label"))
+      try await setLocally(player, "Document", for: NativeTestDocuments.labelName)
+      #expect(player.controller.setString("Newer", for: NativeTestDocuments.labelName))
       try await settle(player)
       try #require(text(NativeTestDocuments.labelID, in: player.view) == "Newer")
       try await backgroundWithInputQueued(player)
@@ -236,16 +236,18 @@
     @Test func aCarriedValueThatBreaksANewLimitIsLeftOutAndReported() async throws {
       var errors: [RemoteComposePlayerError] = []
       let player = try await player(onError: { errors.append($0) })
-      try await setLocally(player, String(repeating: "x", count: 100), for: "label")
+      try await setLocally(
+        player, NativeTestDocuments.overLimitText(), for: NativeTestDocuments.labelName)
       try await setLocally(player, Self.visible, for: "local")
       try #require(errors.isEmpty, "\(errors)")
 
       var limits = RemoteComposeNativeExecutionLimits.default
-      limits.maximumTextBytes = 64
+      limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       player.view.configureExecutionLimits(limits)
       try await settle(player)
       #expect(errors.count == 1, "the over-long label is reported once: \(errors)")
-      #expect(text(NativeTestDocuments.labelID, in: player.view) == "Idle")
+      #expect(
+        text(NativeTestDocuments.labelID, in: player.view) == NativeTestDocuments.labelInitial)
       #expect(isShown(Self.localBox, in: player.view) == true, "the rest is carried")
       #expect(player.controller.setInteger(Self.visible, for: "shown"))
       try await settle(player)
@@ -271,9 +273,11 @@
     @Test func aRefusedValueDoesNotBlockOtherWritesAfterAReopen() async throws {
       var errors: [RemoteComposePlayerError] = []
       var limits = RemoteComposeNativeExecutionLimits.default
-      limits.maximumTextBytes = 64
+      limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       let player = try await player(limits: limits, onError: { errors.append($0) })
-      #expect(player.controller.setString(String(repeating: "x", count: 100), for: "label"))
+      #expect(
+        player.controller.setString(
+          NativeTestDocuments.overLimitText(), for: NativeTestDocuments.labelName))
       try await settle(player)
       try #require(!errors.isEmpty, "the over-long label is refused and reported")
 
@@ -293,16 +297,18 @@
     @Test func aHostValueLeftOutOfAReopenIsOfferedToTheNextOne() async throws {
       var errors: [RemoteComposePlayerError] = []
       var limits = RemoteComposeNativeExecutionLimits.default
-      limits.maximumTextBytes = 64
+      limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       let player = try await player(limits: limits, onError: { errors.append($0) })
-      let long = String(repeating: "x", count: 100)
-      #expect(player.controller.setString(long, for: "label"))
+      let long = NativeTestDocuments.overLimitText()
+      #expect(player.controller.setString(long, for: NativeTestDocuments.labelName))
       try await settle(player)
       try #require(!errors.isEmpty, "the over-long label is refused and reported")
 
       player.view.configureHostDensity(2)
       try await settle(player)
-      #expect(text(NativeTestDocuments.labelID, in: player.view) == "Idle", "left out")
+      #expect(
+        text(NativeTestDocuments.labelID, in: player.view) == NativeTestDocuments.labelInitial,
+        "left out")
       player.view.configureExecutionLimits(.default)
       try await settle(player)
       #expect(text(NativeTestDocuments.labelID, in: player.view) == long)
