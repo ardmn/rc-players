@@ -62,6 +62,40 @@ kotlin {
   }
 }
 
+// RcValueResolutionDifferentialTest compares the Kotlin player against this fixture, which the
+// native Swift core's NativeSwiftValueResolutionDifferentialTests replays. The path reaches the
+// test
+// as a tracked input file, not a string, so the task's cache key stays relocatable. Both system
+// properties are set on every run, so the test fails when it reads a name this file no longer sets.
+// `-Prc.valueResolutionDifferential.update=true` rewrites the fixture in the same run that checks
+// it, so that run is never up to date or taken from the cache.
+abstract class ValueResolutionDifferentialFixture : CommandLineArgumentProvider {
+  @get:InputFile @get:PathSensitive(PathSensitivity.NONE) abstract val fixture: RegularFileProperty
+
+  @get:Input abstract val update: Property<Boolean>
+
+  override fun asArguments(): List<String> =
+    listOf(
+      "-Drc.valueResolutionDifferential.fixture=${fixture.get().asFile.absolutePath}",
+      "-Drc.valueResolutionDifferential.update=${update.get()}",
+    )
+}
+
+tasks.named<Test>("jvmTest") {
+  val update = providers.gradleProperty("rc.valueResolutionDifferential.update").orNull == "true"
+  jvmArgumentProviders.add(
+    objects.newInstance<ValueResolutionDifferentialFixture>().apply {
+      fixture.set(
+        rootProject.layout.projectDirectory.file(
+          "Tests/RcNativePlayerCoreTests/Fixtures/value-resolution-differential.json",
+        ),
+      )
+      this.update.set(update)
+    },
+  )
+  if (update) doNotTrackState("rewrites the value-resolution differential fixture")
+}
+
 // `checkKotlinAbi` is not wired into `check` by the Kotlin Gradle plugin, so an unrecorded surface
 // change would pass CI silently. Wire it explicitly — the gate is only worth having if it runs.
 tasks.named("check") { dependsOn("checkKotlinAbi") }

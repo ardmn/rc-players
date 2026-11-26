@@ -692,6 +692,14 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     return NativeSwiftProbeValues(floats: floats, integers: integers, texts: texts, colors: colors)
   }
 
+  /// Every value the session holds now, without resolving: what the last resolution, and any host
+  /// write or input since, left in the live store.
+  @_spi(Conformance) public func currentValues() -> NativeSwiftProbeValues {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return NativeSwiftProbeValues(floats: floats, integers: integers, texts: texts, colors: colors)
+  }
+
   /// Resolves a static or dynamic float list for conformance state probes.
   @_spi(Conformance) public func probeFloatList(
     id: Int, dynamic: Bool, timeSeconds: TimeInterval
