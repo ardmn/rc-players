@@ -146,7 +146,7 @@
     private func settled(
       _ view: RemoteComposeNativePlayerView, _ what: String = "the player settles"
     ) async throws {
-      try await until(what) { !view.isOpeningDocument && !view.isBusy }
+      try await waitUntil(what, within: 120) { !view.isOpeningDocument && !view.isBusy }
     }
 
     private func labelText(in view: UIView) -> String? {
@@ -217,7 +217,7 @@
       view.namedValueSeed = { [(name: NativeTestDocuments.labelName, value: .text(long))] }
 
       view.configureHostDensity(2)
-      try await until("the reopen settles") {
+      try await waitUntil("the reopen settles", within: 120) {
         !view.isOpeningDocument && !view.isBusy && !errors.isEmpty
       }
       #expect(errors.count == 1, "\(errors)")
@@ -244,7 +244,7 @@
       var limits = RemoteComposeNativeExecutionLimits.default
       limits.maximumTextBytes = NativeTestDocuments.textLimitBytes
       view.configureExecutionLimits(limits)
-      try await until("the reopen settles") {
+      try await waitUntil("the reopen settles", within: 120) {
         !view.isOpeningDocument && !view.isBusy && !errors.isEmpty
       }
       #expect(errors.count == 1, "only the long title is left out: \(errors)")
@@ -258,16 +258,6 @@
 
     // MARK: - Cost of the fallback open (R5)
 
-    private func until(
-      _ what: @autoclosure () -> String, within seconds: TimeInterval = 120, _ condition: () -> Bool
-    ) async throws {
-      let deadline = Date().addingTimeInterval(seconds)
-      while !condition() {
-        try #require(Date() < deadline, "timed out waiting until \(what())")
-        await Task.yield()
-      }
-    }
-
     /// The first-frame models a reopen with `count` seeded values starts building, and how many
     /// of them on the main thread.
     private func reopenBuilds(count: Int, withBadValue: Bool) async throws -> (
@@ -279,7 +269,9 @@
         data: NativeTestDocuments.manyIntegers(count: count, withLabel: true),
         executionLimits: limits,
         resourceResolver: nil, onError: { _ in })
-      try await until("the document opens") { !view.isOpeningDocument && !view.isBusy }
+      try await waitUntil("the document opens", within: 120) {
+        !view.isOpeningDocument && !view.isBusy
+      }
       var seed: [(name: String, value: RemoteComposeNativeNamedValue)] = (0..<count).map {
         (name: "n\($0)", value: .integer(NativeSwiftVisibility.visible))
       }
@@ -294,7 +286,7 @@
       var opened = false
       view.onSessionOpened = { opened = true }
       view.configureHostDensity(2)
-      try await until("the reopen opens") { opened }
+      try await waitUntil("the reopen opens", within: 120) { opened }
       return builds.counts
     }
 

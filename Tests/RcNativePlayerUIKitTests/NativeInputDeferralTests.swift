@@ -18,7 +18,7 @@
       var errors: [RemoteComposeNativePlayerError] = []
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.shownBox(), resourceResolver: nil, onError: { errors.append($0) })
-      try await until("the document opens") { !view.isOpeningDocument }
+      try await waitUntil("the document opens") { !view.isOpeningDocument }
       try #require(errors.isEmpty, "\(errors)")
       return view
     }
@@ -78,12 +78,12 @@
         Task { @MainActor in
           answer = await view.submit(.integer(Self.visible), for: NativeTestDocuments.shownName)
         }
-        try await until("the write is in flight or answered") {
+        try await waitUntil("the write is in flight or answered") {
           answer != nil || view.isApplyingInput
         }
         guard view.isApplyingInput else { continue }
         moveToBackground(view)
-        try await until("the write is answered") { answer != nil }
+        try await waitUntil("the write is answered") { answer != nil }
         #expect(answer == .deferred)
         #expect(view.isOpeningDocument, "the bytes are reopened on activation")
         return
@@ -96,21 +96,21 @@
     @Test func aValueInFlightWhenTheSceneGoesToTheBackgroundIsCarried() async throws {
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.label(), resourceResolver: nil)
-      try await until("the document opens") { !view.isOpeningDocument }
+      try await waitUntil("the document opens") { !view.isOpeningDocument }
       for attempt in 0..<50 {
         var answer: RemoteComposeNativeInputAdmission?
         let value = "Value \(attempt)"
         Task { @MainActor in
           answer = await view.submit(.text(value), for: NativeTestDocuments.labelName)
         }
-        try await until("the write is in flight or answered") {
+        try await waitUntil("the write is in flight or answered") {
           answer != nil || view.isApplyingInput
         }
         guard view.isApplyingInput else { continue }
         moveToBackground(view)
-        try await until("the write is answered") { answer != nil }
+        try await waitUntil("the write is answered") { answer != nil }
         activate(view)
-        try await until("the reopen settles") { !view.isOpeningDocument && !view.isBusy }
+        try await waitUntil("the reopen settles") { !view.isOpeningDocument && !view.isBusy }
         #expect(text(NativeTestDocuments.labelID, in: view) == value)
         return
       }
@@ -123,7 +123,7 @@
     @Test func aSeedIsAppliedOverAWriteASupersededSessionApplied() async throws {
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.label(), resourceResolver: nil)
-      try await until("the document opens") { !view.isOpeningDocument }
+      try await waitUntil("the document opens") { !view.isOpeningDocument }
       for attempt in 0..<50 {
         // What the session took from the host last, before the write that is caught in flight.
         try #require(
@@ -133,16 +133,16 @@
         Task { @MainActor in
           answer = await view.submit(.text(value), for: NativeTestDocuments.labelName)
         }
-        try await until("the write is in flight or answered") {
+        try await waitUntil("the write is in flight or answered") {
           answer != nil || view.isApplyingInput
         }
         guard view.isApplyingInput else { continue }
         moveToBackground(view)
-        try await until("the write is answered") { answer != nil }
+        try await waitUntil("the write is answered") { answer != nil }
         // The host's latest value is its first one again.
         view.namedValueSeed = { [(name: NativeTestDocuments.labelName, value: .text("Host"))] }
         activate(view)
-        try await until("the reopen settles") { !view.isOpeningDocument && !view.isBusy }
+        try await waitUntil("the reopen settles") { !view.isOpeningDocument && !view.isBusy }
         #expect(text(NativeTestDocuments.labelID, in: view) == "Host")
         return
       }
@@ -186,15 +186,6 @@
 
     /// Returns once `condition` holds, yielding to the tasks it waits on; fails the test after
     /// `seconds` rather than hanging.
-    private func until(
-      _ what: String, within seconds: TimeInterval = 30, _ condition: () -> Bool
-    ) async throws {
-      let deadline = Date().addingTimeInterval(seconds)
-      while !condition() {
-        try #require(Date() < deadline, "timed out waiting until \(what)")
-        await Task.yield()
-      }
-    }
 
     /// Whether a component with `id` is in the document view on screen.
     private func hasComponent(_ id: Int, in view: UIView) -> Bool {
@@ -242,7 +233,7 @@
       let mark = view.inputAvailability.mark
       view.configureHostDensity(2)
       #expect(view.isOpeningDocument)
-      try await until("the reopen finishes") { !view.isOpeningDocument }
+      try await waitUntil("the reopen finishes") { !view.isOpeningDocument }
       #expect(seedReads == 1)
       // The undeclared "missing" is skipped, as a declined write is, and does not fail the open.
       #expect(firstFrames == [true])
@@ -270,7 +261,7 @@
       var firstFrames: [Bool?] = []
       view.onSessionOpened = { [unowned view] in firstFrames.append(isBoxShown(in: view)) }
       view.configureExecutionLimits(.default)
-      try await until("the reopen finishes") { !view.isOpeningDocument }
+      try await waitUntil("the reopen finishes") { !view.isOpeningDocument }
       #expect(errors.count == 1)
       #expect(firstFrames == [true])
     }
@@ -291,7 +282,7 @@
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.label(), compatibilityPolicy: policy, executionLimits: limits,
         resourceResolver: nil, onError: { errors.append($0) })
-      try await until("the document opens") { !view.isOpeningDocument }
+      try await waitUntil("the document opens") { !view.isOpeningDocument }
       try #require(errors.isEmpty, "\(errors)")
       view.namedValueSeed = {
         [(name: NativeTestDocuments.labelName, value: .text(NativeTestDocuments.overLimitText()))]
@@ -299,7 +290,7 @@
 
       view.configureHostDensity(2)
       // Settled: the reopen finished and has nothing left to apply or report.
-      try await until("the reopen settles") {
+      try await waitUntil("the reopen settles") {
         !view.isOpeningDocument && !view.isBusy && !errors.isEmpty
       }
       #expect(errors.count == 1, "\(errors)")
@@ -322,7 +313,7 @@
       let view = RemoteComposeNativePlayerView(
         data: NativeTestDocuments.label(), executionLimits: limits, resourceResolver: nil,
         onError: { errors.append($0) })
-      try await until("the document opens") { !view.isOpeningDocument }
+      try await waitUntil("the document opens") { !view.isOpeningDocument }
       let tooLong = NativeTestDocuments.overLimitText()
       view.namedValueSeed = {
         [
@@ -344,7 +335,7 @@
         answer = await view.submit(.text("Ready"), for: NativeTestDocuments.titleName)
         if answer == .deferred { await view.inputAvailability.wait(after: mark) }
       }
-      try await until("the reopen settles") { !view.isBusy }
+      try await waitUntil("the reopen settles") { !view.isBusy }
       #expect(answer == .accepted)
       // "title=Seeded" came in the seed, before the first frame; only the write is input.
       #expect(applied == ["title=Ready"])
@@ -360,7 +351,7 @@
       var firstFrames: [Bool?] = []
       view.onSessionOpened = { [unowned view] in firstFrames.append(isBoxShown(in: view)) }
       view.configureHostDensity(2)
-      try await until("the reopen finishes") { !view.isOpeningDocument }
+      try await waitUntil("the reopen finishes") { !view.isOpeningDocument }
       #expect(firstFrames == [true])
     }
 
@@ -374,7 +365,7 @@
       var firstFrames: [Bool?] = []
       view.onSessionOpened = { [unowned view] in firstFrames.append(isBoxShown(in: view)) }
       view.configureHostDensity(2)
-      try await until("the reopen finishes") { !view.isOpeningDocument }
+      try await waitUntil("the reopen finishes") { !view.isOpeningDocument }
       #expect(firstFrames == [false])
     }
 
@@ -391,7 +382,7 @@
       view.onSessionOpened = { [unowned view] in firstFrames.append(isBoxShown(in: view)) }
 
       view.load(NativeTestDocuments.shownBox(size: 300))
-      try await until("the new document opens") { !view.isOpeningDocument }
+      try await waitUntil("the new document opens") { !view.isOpeningDocument }
       #expect(firstFrames == [false])
       #expect(view.namedValueSeed == nil)
     }
@@ -402,11 +393,22 @@
       var view: RemoteComposeNativePlayerView? = try await openedView()
       let availability = try #require(view?.inputAvailability)
       let mark = availability.mark
+      #expect(!availability.isClosed)
       moveToBackground(try #require(view))
       view = nil
       // UIKit may hold the view in the current autorelease pool until the main queue turns over.
-      try await until("the player is released and signals") { availability.mark != mark }
+      try await waitUntil("the player is released and closes its availability") {
+        availability.isClosed
+      }
+      #expect(availability.mark != mark, "closing signals")
       await availability.wait(after: mark)
+      // A waiter that starts after the close, from the current mark, returns at once too.
+      var lateWaiterReturned = false
+      Task { @MainActor in
+        await availability.wait(after: availability.mark)
+        lateWaiterReturned = true
+      }
+      try await waitUntil("a waiter that starts after the close returns") { lateWaiterReturned }
     }
   }
 #endif
