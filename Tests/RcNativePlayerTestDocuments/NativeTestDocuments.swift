@@ -26,9 +26,11 @@ public enum NativeTestDocuments {
   public static let titleName = "title"
   /// That string's value until a host sets it.
   public static let titleInitial = "Title"
-  /// The string variables ``label()`` declares as ``labelName`` and ``titleName``.
-  public static let labelStringID = 60
-  public static let titleStringID = 61
+  /// The string variable ``label()`` declares as ``labelName`` (``labelVariableID`` is the one
+  /// the other documents declare under that name).
+  public static let labelDocumentLabelStringID = 60
+  /// The string variable ``label()`` declares as ``titleName``.
+  public static let labelDocumentTitleStringID = 61
 
   /// The text colour of every test document: opaque black, as the signed integer the wire holds.
   public static let opaqueBlack = Int(Int32(bitPattern: 0xFF00_0000))
@@ -66,13 +68,13 @@ public enum NativeTestDocuments {
     typealias Kind = NativeTestWire.NamedType
     let wire = NativeTestWire()
     wire.header(width: 200, height: 100)
-    wire.u8(Op.dataText).int(labelStringID).utf8(labelInitial)
-      .named(labelStringID, Kind.string, labelName)
-    wire.u8(Op.dataText).int(titleStringID).utf8(titleInitial)
-      .named(titleStringID, Kind.string, titleName)
+    wire.u8(Op.dataText).int(labelDocumentLabelStringID).utf8(labelInitial)
+      .named(labelDocumentLabelStringID, Kind.string, labelName)
+    wire.u8(Op.dataText).int(labelDocumentTitleStringID).utf8(titleInitial)
+      .named(labelDocumentTitleStringID, Kind.string, titleName)
     wire.u8(Op.layoutRoot).int(1)
-    wire.text(id: labelID, reading: labelStringID)
-    wire.text(id: labelID + 1, reading: titleStringID)
+    wire.text(id: labelID, reading: labelDocumentLabelStringID)
+    wire.text(id: labelID + 1, reading: labelDocumentTitleStringID)
     wire.u8(Op.containerEnd)
     return wire.data
   }

@@ -39,13 +39,17 @@
       let wire = NativeTestWire()
       wire.header(width: 200, height: 100)
       typealias Documents = NativeTestDocuments
-      wire.u8(Op.dataText).int(Documents.labelStringID).utf8(Documents.labelInitial).named(
-        Documents.labelStringID, NativeTestWire.NamedType.string, "USER:\(Documents.labelName)")
-      wire.u8(Op.dataText).int(Documents.titleStringID).utf8(Documents.titleInitial).named(
-        Documents.titleStringID, NativeTestWire.NamedType.string, "USER:\(Documents.titleName)")
+      wire.u8(Op.dataText).int(Documents.labelDocumentLabelStringID).utf8(Documents.labelInitial)
+        .named(
+          Documents.labelDocumentLabelStringID, NativeTestWire.NamedType.string,
+          "USER:\(Documents.labelName)")
+      wire.u8(Op.dataText).int(Documents.labelDocumentTitleStringID).utf8(Documents.titleInitial)
+        .named(
+          Documents.labelDocumentTitleStringID, NativeTestWire.NamedType.string,
+          "USER:\(Documents.titleName)")
       wire.u8(Op.layoutRoot).int(1)
-      wire.text(id: labelID, reading: Documents.labelStringID)
-      wire.text(id: titleID, reading: Documents.titleStringID)
+      wire.text(id: labelID, reading: Documents.labelDocumentLabelStringID)
+      wire.text(id: titleID, reading: Documents.labelDocumentTitleStringID)
       wire.u8(Op.containerEnd)
       return wire.data
     }
