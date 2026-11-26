@@ -21,6 +21,12 @@ extension Writer {
   static func integerOperator(_ operation: Int) -> Int {
     NativeSwiftIntegerOperator.offset + operation
   }
+
+  /// A NaN-boxed `MatrixExpression` operator word, as Kotlin's `RcMatrixEvaluator.operator`.
+  static func matrixOperator(_ operation: Int) -> Int {
+    let payload = UInt32(NativeSwiftMatrixExpression.operatorOffset + operation)
+    return Int(Int32(bitPattern: 0xff80_0000 | payload))
+  }
 }
 
 extension NativeSwiftNodeSnapshot {

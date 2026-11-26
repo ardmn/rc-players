@@ -7,7 +7,8 @@ import Testing
 /// runs `applyContentStateOperation` once per pass in wire order, integer expressions read
 /// `integerVariable`, float expressions publish both views through `setFloat`, integer expressions
 /// through `setInteger`, and a document action's integer write is an `overrideInteger` that
-/// `applyIntegerExpression` respects.
+/// `applyIntegerExpression` respects. Kotlin's answers for the cases no other Kotlin test pins are
+/// in `RcValueOrderReferenceTest` (runtime commonTest).
 @Suite struct NativeSwiftValueOrderTests {
   private typealias Op = NativeSwiftWireOpcode
   private typealias Named = NativeSwiftNamedVariableType
