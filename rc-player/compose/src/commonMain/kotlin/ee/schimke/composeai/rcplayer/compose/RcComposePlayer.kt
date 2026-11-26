@@ -5327,17 +5327,18 @@ private fun rcLayerFloat(
   state: RcPlayerState,
 ): () -> Float {
   // Each reader is remembered for what it captures, so a recomposition that changed none of them
-  // returns the same reader, and `RcModulateAlphaLayer.bind` sees no change.
+  // returns the same reader, and `RcModulateAlphaLayer.bind` sees no change. A float is keyed by
+  // its bits: `==` would keep a `0f` reader for `-0f`, and never match NaN.
   val word =
     (attribute as? RcGraphicsLayerAttribute.FloatValue)?.value
-      ?: return remember(default) { { default } }
+      ?: return remember(default.toRawBits()) { { default } }
   val target = state.resolve(word)
-  val referencedId = word.referencedId ?: return remember(target) { { target } }
+  val referencedId = word.referencedId ?: return remember(target.toRawBits()) { { target } }
   if (state.isContinuouslyDriven(referencedId)) {
     // Resolved in the layer block, not captured here: a component whose parameters did not change
     // is skipped on recomposition, so a captured value left a clock-bound layer on its first frame
     // for good. Reading the frame time in the same block is what re-runs it each frame.
-    val frame = LocalRcFrameTime.current ?: return remember(target) { { target } }
+    val frame = LocalRcFrameTime.current ?: return remember(target.toRawBits()) { { target } }
     return remember(frame, state, word) {
       {
         frame.floatValue
