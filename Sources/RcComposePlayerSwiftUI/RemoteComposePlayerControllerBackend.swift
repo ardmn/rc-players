@@ -245,8 +245,10 @@ protocol ControllerBackendProtocol: AnyObject {
     /// reopens is seeded with it (`seedValues`) and judges it afresh: there a value that breaks an
     /// execution limit is left out of the first frame and reported through `onError` once per
     /// session, and that session stays open and takes later writes. It stops as soon as the player
-    /// is gone, the task is cancelled, or `isCurrent` says a newer value for this name has
-    /// started, the player was rebuilt, or a reopen took the value in its seed.
+    /// is gone, the task is cancelled, or `isCurrent` turns false. The player view cancels a
+    /// delivery's task when a newer value for its name starts, the player is rebuilt, or a reopen
+    /// takes the value in its seed, and passes `!Task.isCancelled`; `isCurrent` lets a caller
+    /// without its own task supersede a delivery.
     @MainActor
     func deliver<Target: NativeNamedValueTarget>(
       for name: String, to target: () -> Target?, isCurrent: () -> Bool

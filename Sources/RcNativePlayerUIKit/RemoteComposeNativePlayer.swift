@@ -802,18 +802,18 @@
       let onFirstFrameModelBuilt = onFirstFrameModelBuilt
       let hostWriteCounts = hostWriteCounts
       let seed = (namedValueSeed?() ?? []).map { entry in
-        let hostWrite = NativeHostValue(
+        let seedWrite = NativeHostValue(
           value: entry.value.coreValue, writeNumber: hostWriteCounts[entry.name] ?? 0)
-        return (name: entry.name, hostWrite: hostWrite)
+        return (name: entry.name, seedWrite: seedWrite)
       }
       // A reopen that supersedes this open before it presents starts from the same values.
       let startingValues = Task {
         let carried = await carried?.value ?? .none
         var seeded: [NativeStartingValue] = []
         var takenHostWrites = carried.takenHostWrites
-        for (name, hostWrite) in seed where carried.takenHostWrites[name] != hostWrite {
-          seeded.append(NativeStartingValue(name: name, value: hostWrite.value))
-          takenHostWrites[name] = hostWrite
+        for (name, seedWrite) in seed where carried.takenHostWrites[name] != seedWrite {
+          seeded.append(NativeStartingValue(name: name, value: seedWrite.value))
+          takenHostWrites[name] = seedWrite
         }
         return NativeCarriedValues(
           values: NativeStartingValue.merging(carried.values, with: seeded),
