@@ -802,18 +802,18 @@
       let onFirstFrameModelBuilt = onFirstFrameModelBuilt
       let hostWriteCounts = hostWriteCounts
       let seed = (namedValueSeed?() ?? []).map { entry in
-        let write = NativeHostValue(
+        let hostWrite = NativeHostValue(
           value: entry.value.coreValue, writeNumber: hostWriteCounts[entry.name] ?? 0)
-        return (name: entry.name, write: write)
+        return (name: entry.name, hostWrite: hostWrite)
       }
       // A reopen that supersedes this open before it presents starts from the same values.
       let startingValues = Task {
         let carried = await carried?.value ?? .none
         var seeded: [NativeStartingValue] = []
         var takenHostWrites = carried.takenHostWrites
-        for (name, write) in seed where carried.takenHostWrites[name] != write {
-          seeded.append(NativeStartingValue(name: name, value: write.value))
-          takenHostWrites[name] = write
+        for (name, hostWrite) in seed where carried.takenHostWrites[name] != hostWrite {
+          seeded.append(NativeStartingValue(name: name, value: hostWrite.value))
+          takenHostWrites[name] = hostWrite
         }
         return NativeCarriedValues(
           values: NativeStartingValue.merging(carried.values, with: seeded),
@@ -840,12 +840,13 @@
             }
             var initialStarting: [NativeStartingValue] = []
             var takenHostWrites = startedFrom.takenHostWrites
-            for name in resolvedByName.keys.sorted() {
-              if let value = resolvedByName[name] {
-                initialStarting.append(NativeStartingValue(name: name, value: value))
-                if takenHostWrites[name] == nil {
-                  takenHostWrites[name] = NativeHostValue(value: value, writeNumber: 0)
-                }
+            // In name order, so the session applies them, and reports any it refuses, in the
+            // same order every time. O(n log n) in the initial values, a handful.
+            let initialByName = resolvedByName.sorted { $0.key < $1.key }  // lint-ok: reason above
+            for (name, value) in initialByName {
+              initialStarting.append(NativeStartingValue(name: name, value: value))
+              if takenHostWrites[name] == nil {
+                takenHostWrites[name] = NativeHostValue(value: value, writeNumber: 0)
               }
             }
             startedFrom = NativeCarriedValues(
@@ -955,11 +956,11 @@
             var kept: [NativeStartingValue] = []
             var refusals: [NativeLeftOutValue] = []
             func keepRenderable(
-              _ group: ArraySlice<NativeStartingValue>, knownFailure knownError: (any Error)?
+              _ group: ArraySlice<NativeStartingValue>, knownFailure: (any Error)?
             )
               async throws
             {
-              var failure = knownError
+              var failure = knownFailure
               if failure == nil {
                 do {
                   opened = try await openRendering(kept + group)
@@ -1344,9 +1345,9 @@
       switch outcome {
       case .accepted:
         presentation.failedWrites[declared] = nil
-        if let write = pending.hostWrite {
+        if let writeNumber = pending.hostWrite {
           presentation.takenHostWrites[name] = NativeHostValue(
-            value: value.coreValue, writeNumber: write)
+            value: value.coreValue, writeNumber: writeNumber)
         }
       case .failed:
         presentation.failedWrites[declared] = value.coreValue

@@ -119,9 +119,9 @@ protocol ControllerBackendProtocol: AnyObject {
     func attach(_ declarations: NativeSwiftNamedVariableDeclarations) {
       self.declarations = declarations
       var kept: [String: ControllerNamedValue] = [:]
-      // In key order, so that when two stored names resolve to one declared name ("foo" and
-      // "USER:foo") the same one wins every time. O(n log n) in the stored names, a handful.
-      for (name, value) in values.sorted(by: { $0.key < $1.key }) {  // lint-ok: reason above
+      // In name order, so that when two stored names resolve to one declared name ("foo" and
+      // "USER:foo") the same one wins every time.
+      for (name, value) in values.sortedByName {
         guard let declared = declarations.declaredName(for: name),
           declarations.accepts(value, for: declared)
         else { continue }
@@ -161,17 +161,16 @@ protocol ControllerBackendProtocol: AnyObject {
       updateHandlers[owner] = handler
       guard let handler else { return }
       var seeded: [String: ControllerNamedValue] = [:]
-      // Key order, as in `attach`: two initial names that resolve to one declared name always
+      // Name order, as in `attach`: two initial names that resolve to one declared name always
       // leave the same one seeded.
-      for (name, value) in initial.sorted(by: { $0.key < $1.key }) {  // lint-ok: reason above
+      for (name, value) in initial.sortedByName {
         guard let declared = declarations.declaredName(for: name),
           declarations.accepts(value, for: declared)
         else { continue }
         seeded[declared] = value
       }
-      // Replayed in key order, so the player receives the values in the same order every time.
-      let replay = values.sorted(by: { $0.key < $1.key })  // lint-ok: reason above
-      for (name, value) in replay where seeded[name] != value {
+      // Replayed in name order, so the player receives the values in the same order every time.
+      for (name, value) in values.sortedByName where seeded[name] != value {
         handler(name, value)
       }
     }
@@ -182,10 +181,9 @@ protocol ControllerBackendProtocol: AnyObject {
 
     /// Every value stored so far, sorted by key, for seeding a brand-new player's first open
     /// before its declarations finish loading on the main actor. Sorted because a seed is applied
-    /// in order and a dictionary's order changes from run to run; O(n log n) in the stored names.
+    /// in order and a dictionary's order changes from run to run.
     var initialSeedValues: [(name: String, value: RemoteComposeNativeNamedValue)] {
-      values.sorted { $0.key < $1.key }  // lint-ok: reason above
-        .map { (name: $0.key, value: $0.value.nativeValue) }
+      values.sortedByName.map { (name: $0.key, value: $0.value.nativeValue) }
     }
 
     /// The values written so far, by the name the player's document declares them under, which
@@ -268,6 +266,15 @@ protocol ControllerBackendProtocol: AnyObject {
         }
         await availability.wait(after: mark)
       }
+    }
+  }
+
+  extension Dictionary where Key == String {
+    /// The entries in name order: the order the controller re-keys, replays and seeds its values
+    /// in, since a dictionary's own order changes from run to run. O(n log n) in the stored names,
+    /// a handful.
+    var sortedByName: [(key: String, value: Value)] {
+      sorted { $0.key < $1.key }  // lint-ok: reason above
     }
   }
 
