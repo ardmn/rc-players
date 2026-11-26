@@ -1896,7 +1896,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         result[id] = dark
       }
     }
-    for expression in document.colorExpressions {
+    // Nor a colour expression: a host-set colour ignores the document's writes, as AndroidX
+    // `RemoteComposeState.updateColor` and `RcPlayerState.setColor` do, or an expression-backed
+    // named colour would replace the host's value every frame.
+    for expression in document.colorExpressions where !hostSetColors.contains(expression.outputID) {
       let mode = expression.modeAndAlpha & 0xff
       switch mode {
       case NativeSwiftColorExpressionMode.colorColorInterpolate...NativeSwiftColorExpressionMode.idIDInterpolate:
