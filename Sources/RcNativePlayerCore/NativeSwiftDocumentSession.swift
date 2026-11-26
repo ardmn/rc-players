@@ -575,11 +575,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private func execute(_ actions: [ParsedAction], values: inout [Int: Float]) throws
     -> [NativeSwiftEvent]
   {
-    func storeInteger(_ id: Int, _ value: Int) {
-      integers[id] = value
+    func storeActionInteger(_ id: Int, _ value: Int) {
       writtenIDs.insert(id)
-      floatOverrides.removeValue(forKey: id)
-      values[id] = Float(value)
+      if storeInteger(id, value) { values[id] = Float(value) }
     }
     func storeActionFloat(_ id: Int, _ value: Float) {
       storeFloat(id, value)
@@ -594,13 +592,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       switch action {
       case .integerExpression(let targetID, let expressionID):
         if let expression = document.integerExpressions[expressionID] {
-          storeInteger(
+          storeActionInteger(
             targetID,
             try NativeSwiftIntegerExpression.evaluate(
               mask: expression.mask, tokens: expression.tokens, values: integers,
               offset: expression.offset))
         } else if let value = integers[expressionID] {
-          storeInteger(targetID, value)
+          storeActionInteger(targetID, value)
         }
       case .floatExpression(let targetID, let expressionID):
         guard let expression = document.expressions.first(where: { $0.id == expressionID })
@@ -611,7 +609,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
             expression.words, values: values, opcode: expression.opcode,
             offset: expression.offset))
       case .integerValue(let targetID, let value):
-        storeInteger(targetID, value)
+        storeActionInteger(targetID, value)
       case .floatValue(let targetID, let value):
         let resolved = NativeSwiftFloatExpression.resolve(value, values: values)
         if resolved.isFinite { storeActionFloat(targetID, resolved) }
@@ -829,12 +827,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       colors[id] = argb
       hostSetColors.insert(id)
     case .integer(let value, let float):
-      integers[id] = value
       writtenIDs.insert(id)
       if let float {
+        // A carried value restores both views exactly as the previous session left them.
+        integers[id] = value
         floatOverrides[id] = float
       } else {
-        floatOverrides.removeValue(forKey: id)
+        storeInteger(id, value)
       }
     }
     staticSnapshotCache = nil
@@ -1339,6 +1338,23 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     integers[id] = Self.integerView(of: value)
   }
 
+  /// An integer write — `RcPlayerState.setInteger`, as AndroidX `RemoteComposeState.updateInteger`:
+  /// nothing for the integer the id already holds, else both views, the float being the integer.
+  /// Where the document has a float of its own at the id, an override carries the new float;
+  /// otherwise the float view is the integer's projection, which follows the id's later integer
+  /// writes (an integer expression's). Returns whether the id changed.
+  @discardableResult
+  private func storeInteger(_ id: Int, _ value: Int) -> Bool {
+    guard integers[id] != value else { return false }
+    integers[id] = value
+    if floats[id] != nil {
+      floatOverrides[id] = Float(value)
+    } else {
+      floatOverrides.removeValue(forKey: id)
+    }
+    return true
+  }
+
   private static func integerView(of value: Float) -> Int {
     Int(Int32(clamping: nativeSwiftClampedInt(value)))
   }
@@ -1349,9 +1365,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private func resolveIntegerExpressions() throws {
     for id in document.integerExpressionOrder {
       guard let expression = document.integerExpressions[id] else { continue }
-      integers[id] = try NativeSwiftIntegerExpression.evaluate(
-        mask: expression.mask, tokens: expression.tokens, values: integers,
-        offset: expression.offset)
+      // As the reference's `applyIntegerExpression`: a `setInteger`, both views.
+      storeInteger(
+        id,
+        try NativeSwiftIntegerExpression.evaluate(
+          mask: expression.mask, tokens: expression.tokens, values: integers,
+          offset: expression.offset))
     }
   }
 
@@ -1746,9 +1765,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     staticSnapshotCache = nil
   }
 
-  /// A particle register: the reference publishes it through `setFloat`, both numeric views.
+  /// A particle register: the reference publishes it through `setFloat`, both numeric views, and
+  /// it replaces whatever an earlier write left there, an integer write's float view included.
   private func publishParticleFloat(_ id: Int, _ value: Float) {
     floats[id] = value
+    floatOverrides.removeValue(forKey: id)
     integers[id] = Self.integerView(of: value)
   }
 

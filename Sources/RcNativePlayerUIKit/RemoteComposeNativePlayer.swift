@@ -215,15 +215,28 @@
   }
 
   /// A named value a new session starts from, by the name the document declares it under.
-  private struct NativeStartingValue: Equatable {
+  struct NativeStartingValue: Equatable {
     let name: String
     let value: NativeSwiftNamedValue
 
     /// `values`, then `later`, without an earlier entry for a name `later` sets again: only the
     /// newest value of each name is applied, or judged against the limits.
+    ///
+    /// Except a plain integer equal to the integer an earlier entry carries: applying it would
+    /// change nothing (`RcPlayerState.setInteger` returns early), so the earlier entry, with the
+    /// float view a float write gave it, stands.
     static func merging(_ values: [Self], with later: [Self]) -> [Self] {
-      let names = Set(later.map(\.name))
-      return values.filter { !names.contains($0.name) } + later
+      let unchanged = Set(
+        later.compactMap { entry -> String? in
+          guard case .integer(let value, nil) = entry.value,
+            let earlier = values.last(where: { $0.name == entry.name }),
+            case .integer(value, _) = earlier.value
+          else { return nil }
+          return entry.name
+        })
+      let names = Set(later.map(\.name)).subtracting(unchanged)
+      return values.filter { !names.contains($0.name) }
+        + later.filter { !unchanged.contains($0.name) }
     }
   }
 

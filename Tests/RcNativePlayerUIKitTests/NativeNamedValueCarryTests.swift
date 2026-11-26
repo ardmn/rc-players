@@ -98,6 +98,21 @@
       #expect(await second.writtenNamedValues().map(\.value) == [.integer(2, float: 2.75)])
     }
 
+    /// A seed equal to the integer a reopen carries changes nothing, as Kotlin's `setInteger`
+    /// returns early for an unchanged integer: the carried value, with the float a float write
+    /// gave it, is what the new session starts from. Any other seed replaces the carried value.
+    @Test func aSeedEqualToTheCarriedIntegerKeepsTheCarriedFloat() {
+      typealias Value = NativeStartingValue
+      let carried = [
+        Value(name: "i", value: .integer(2, float: 2.5)), Value(name: "s", value: .text("a")),
+      ]
+      #expect(Value.merging(carried, with: [Value(name: "i", value: .integer(2))]) == carried)
+      let other = Value(name: "i", value: .integer(3))
+      #expect(Value.merging(carried, with: [other]) == [carried[1], other])
+      let fromAFloat = Value(name: "i", value: .integer(2, float: 2.75))
+      #expect(Value.merging(carried, with: [fromAFloat]) == [carried[1], fromAFloat])
+    }
+
     /// A value carried by its declared name lands in that variable, not in the one the host's
     /// name rule would pick: with both "foo" and "USER:foo" declared, a host's "foo" means
     /// "USER:foo", but the carried "foo" is the bare variable the document wrote.
