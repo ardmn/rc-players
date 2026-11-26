@@ -39,4 +39,24 @@ class RcFloatExpressionEvaluatorRobustnessTest {
     val expression = List(200) { word(1f) } + List(199) { op(1) }
     assertEquals(200f, evaluator.evaluate(expression))
   }
+
+  private val list = RcFloatWord(0xff800000.toInt() or 0x200005)
+
+  /** AndroidX throws past `A_SUM_TILL`'s 10 000 iterations; a host's infinity reaches it. */
+  @Test
+  fun aSumPastTheIterationLimitReadsZero() {
+    val evaluator = RcFloatExpressionEvaluator { id ->
+      if (id == 0x200005) floatArrayOf(1f, 2f) else null
+    }
+    assertEquals(3f, evaluator.evaluate(listOf(list, word(1f), op(76))))
+    assertEquals(0f, evaluator.evaluate(listOf(list, word(Float.POSITIVE_INFINITY), op(76))))
+  }
+
+  /** `A_LERP` reads AndroidX's `array[array.length - 1]`: out of bounds on an empty list, 0. */
+  @Test
+  fun aLerpOverAnEmptyListReadsZero() {
+    val evaluator = RcFloatExpressionEvaluator { id -> if (id == 0x200005) FloatArray(0) else null }
+    assertEquals(0f, evaluator.evaluate(listOf(list, word(0.5f), op(79))))
+    assertEquals(0f, evaluator.evaluate(listOf(list, word(2f), op(79))))
+  }
 }

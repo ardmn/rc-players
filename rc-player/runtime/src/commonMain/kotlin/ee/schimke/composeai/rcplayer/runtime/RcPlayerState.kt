@@ -2080,8 +2080,7 @@ private constructor(
   // AndroidX RemoteComposeState.updateFloat publishes both numeric views. Integer expressions
   // consume float results (including comparisons) through the same ID, truncating toward zero.
   // AndroidX writes only a value `!=` the one it holds (an unset id holds 0), so a zero written
-  // over
-  // a zero keeps the sign already there; NaN is never equal to itself and is always written.
+  // over a zero keeps the sign already there; NaN is never equal to itself and is always written.
   private fun storeFloat(id: Int, value: Float) {
     val previous = floats[id] ?: 0f
     floats[id] = if (value == previous) previous else value
