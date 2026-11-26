@@ -113,6 +113,49 @@
       #expect(Value.merging(carried, with: [fromAFloat]) == [carried[1], fromAFloat])
     }
 
+    /// `merging` keeps the result of the straightforward rule — drop an earlier entry of a name a
+    /// later one sets, unless that later one is a plain integer equal to the last earlier integer
+    /// of the name — on lists large enough that a scan per later entry would show (5000 each),
+    /// with repeated names, integers with and without a float view, and other types mixed in.
+    @Test func mergingMatchesTheRuleOnLargeLists() {
+      typealias Value = NativeStartingValue
+      func reference(_ values: [Value], with later: [Value]) -> [Value] {
+        let unchanged = Set(
+          later.compactMap { entry -> String? in
+            guard case .integer(let value, nil) = entry.value,
+              let earlier = values.last(where: { $0.name == entry.name }),
+              case .integer(value, _) = earlier.value
+            else { return nil }
+            return entry.name
+          })
+        let names = Set(later.map(\.name)).subtracting(unchanged)
+        return values.filter { !names.contains($0.name) }
+          + later.filter { !unchanged.contains($0.name) }
+      }
+      var generator = SystemRandomNumberGenerator()
+      func value(_ seed: Int) -> NativeSwiftNamedValue {
+        switch seed % 4 {
+        case 0: .integer(seed % 3)
+        case 1: .integer(seed % 3, float: Float(seed % 3) + 0.5)
+        case 2: .text("t\(seed % 2)")
+        default: .float(Float(seed % 2))
+        }
+      }
+      for _ in 0..<3 {
+        let values = (0..<5000).map { _ in
+          Value(
+            name: "n\(Int.random(in: 0..<3000, using: &generator))",
+            value: value(Int.random(in: 0..<12, using: &generator)))
+        }
+        let later = (0..<5000).map { _ in
+          Value(
+            name: "n\(Int.random(in: 0..<6000, using: &generator))",
+            value: value(Int.random(in: 0..<12, using: &generator)))
+        }
+        #expect(Value.merging(values, with: later) == reference(values, with: later))
+      }
+    }
+
     /// A value carried by its declared name lands in that variable, not in the one the host's
     /// name rule would pick: with both "foo" and "USER:foo" declared, a host's "foo" means
     /// "USER:foo", but the carried "foo" is the bare variable the document wrote.

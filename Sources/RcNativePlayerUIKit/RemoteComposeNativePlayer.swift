@@ -225,17 +225,25 @@
     /// Except a plain integer equal to the integer an earlier entry carries: applying it would
     /// change nothing (`RcPlayerState.setInteger` returns early), so the earlier entry, with the
     /// float view a float write gave it, stands.
+    ///
+    /// Linear in both lists: the last earlier value of each name is looked up in a dictionary.
     static func merging(_ values: [Self], with later: [Self]) -> [Self] {
-      let unchanged = Set(
-        later.compactMap { entry -> String? in
-          guard case .integer(let value, nil) = entry.value,
-            let earlier = values.last(where: { $0.name == entry.name }),
-            case .integer(value, _) = earlier.value
-          else { return nil }
-          return entry.name
-        })
-      let names = Set(later.map(\.name)).subtracting(unchanged)
-      return values.filter { !names.contains($0.name) }
+      var lastEarlier: [String: NativeSwiftNamedValue] = [:]
+      lastEarlier.reserveCapacity(values.count)
+      for entry in values { lastEarlier[entry.name] = entry.value }
+      var replaced: Set<String> = []
+      var unchanged: Set<String> = []
+      for entry in later {
+        if case .integer(let value, nil) = entry.value,
+          case .integer(value, _)? = lastEarlier[entry.name]
+        {
+          unchanged.insert(entry.name)
+        } else {
+          replaced.insert(entry.name)
+        }
+      }
+      replaced.subtract(unchanged)
+      return values.filter { !replaced.contains($0.name) }
         + later.filter { !unchanged.contains($0.name) }
     }
   }
