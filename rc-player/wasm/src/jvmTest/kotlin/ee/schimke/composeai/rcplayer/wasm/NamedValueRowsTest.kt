@@ -1,6 +1,9 @@
 package ee.schimke.composeai.rcplayer.wasm
 
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
+import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.join
+import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.read
+import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.row
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -11,6 +14,8 @@ import kotlin.test.assertEquals
  * a browser and is covered by `scripts/wasm-smoke`'s `named-values-elements` case.
  */
 class NamedValueRowsTest {
+  private val fieldSeparator = NAMED_VALUE_FIELD_SEPARATOR
+  private val rowSeparator = NAMED_VALUE_ROW_SEPARATOR
   private val orange = "USER:WearM3.primary" to RcNamedValue.Color(0xFFFF8800.toInt())
 
   @Test
@@ -28,7 +33,10 @@ class NamedValueRowsTest {
     // `kind` is encoded like `name` and `value`, so it is decoded like them too: `%64p` is `dp`.
     assertEquals(
       mapOf("USER:name" to RcNamedValue.FloatValue(1f)),
-      read(listOf("%64p", "%6Eame", "%31", "s").joinToString("\u0000")),
+      read(
+        listOf("%64p", "%6Eame", "%31", NAMED_VALUE_TEXT_MARK)
+          .joinToString(NAMED_VALUE_FIELD_SEPARATOR),
+      ),
     )
   }
 
@@ -36,7 +44,12 @@ class NamedValueRowsTest {
   fun aMalformedRowIsDroppedOnItsOwn() {
     val good = row("color", "WearM3.primary", "#FFFF8800")
     for (bad in
-      listOf("", "color\u0000x", "a\u0000b\u0000c\u0000d\u0000e", row("nope", "x", "1"))) {
+      listOf(
+        "",
+        listOf("color", "x").joinToString(fieldSeparator),
+        listOf("a", "b", "c", "d", "e").joinToString(fieldSeparator),
+        row("nope", "x", "1"),
+      )) {
       assertEquals(mapOf(orange), read(join(bad, good)), "before: $bad")
       assertEquals(mapOf(orange), read(join(good, bad)), "after: $bad")
     }
@@ -46,11 +59,19 @@ class NamedValueRowsTest {
   fun controlCharactersInAKindCannotSpellAnotherRow() {
     // Unescaped, this kind would split into a junk row and a `color` row overriding the colour
     // with blue. Escaped, it is one row whose kind is not a kind, dropped beside the good one.
-    val forged = row("x\u0000a\u0000b\u0000s\u0001color", "WearM3.primary", "#FF0000FF")
+    val forged =
+      row(
+        "x${fieldSeparator}a${fieldSeparator}b${fieldSeparator}s${rowSeparator}color",
+        "WearM3.primary",
+        "#FF0000FF",
+      )
     val good = row("color", "WearM3.primary", "#FFFF8800")
     assertEquals(mapOf(orange), read(join(good, forged)))
     assertEquals(mapOf(orange), read(join(forged, good)))
-    assertEquals(emptyMap(), read(row("color\u0000\u0001", "WearM3.primary", "#FF0000FF")))
+    assertEquals(
+      emptyMap(),
+      read(row("color$fieldSeparator$rowSeparator", "WearM3.primary", "#FF0000FF")),
+    )
   }
 
   @Test
@@ -58,21 +79,4 @@ class NamedValueRowsTest {
     val blue = row("color", "WearM3.primary", "#FF0000FF")
     assertEquals(mapOf(orange), read(join(blue, row("color", "WearM3.primary", "#FFFF8800"))))
   }
-
-  private fun read(rows: String) = namedValuesFromRows(rows, ::decodeUriComponent)
-
-  private fun join(vararg rows: String) = rows.joinToString("\u0001")
-
-  /**
-   * A row as `flattenNamedValuesFromLocation` writes it, each text field escaped as
-   * `encodeURIComponent`.
-   */
-  private fun row(kind: String, name: String, value: String, isNumber: Boolean = false) =
-    listOf(
-        encodeUriComponent(kind),
-        encodeUriComponent(name),
-        encodeUriComponent(value),
-        if (isNumber) "n" else "s",
-      )
-      .joinToString("\u0000")
 }
