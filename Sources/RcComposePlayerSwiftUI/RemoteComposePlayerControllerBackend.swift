@@ -117,8 +117,10 @@ protocol ControllerBackendProtocol: AnyObject {
     func attach(_ declarations: NativeSwiftNamedVariableDeclarations) {
       self.declarations = declarations
       var kept: [String: ControllerNamedValue] = [:]
-      for name in values.keys.sorted() {
-        guard let value = values[name], let declared = declarations.declaredName(for: name),
+      // In key order, so that when two stored names resolve to one declared name ("foo" and
+      // "USER:foo") the same one wins every time. O(n log n) in the stored names, a handful.
+      for (name, value) in values.sorted(by: { $0.key < $1.key }) {
+        guard let declared = declarations.declaredName(for: name),
           declarations.accepts(value, for: declared)
         else { continue }
         kept[declared] = value
@@ -157,15 +159,16 @@ protocol ControllerBackendProtocol: AnyObject {
       updateHandlers[owner] = handler
       guard let handler else { return }
       var seeded: [String: ControllerNamedValue] = [:]
-      for name in initial.keys.sorted() {
-        guard let value = initial[name], let declared = declarations.declaredName(for: name),
+      // Key order, as in `attach`: two initial names that resolve to one declared name always
+      // leave the same one seeded.
+      for (name, value) in initial.sorted(by: { $0.key < $1.key }) {
+        guard let declared = declarations.declaredName(for: name),
           declarations.accepts(value, for: declared)
         else { continue }
         seeded[declared] = value
       }
-      for name in values.keys.sorted() {
-        guard let value = values[name] else { continue }
-        if seeded[name] == value { continue }
+      // Replayed in key order, so the player receives the values in the same order every time.
+      for (name, value) in values.sorted(by: { $0.key < $1.key }) where seeded[name] != value {
         handler(name, value)
       }
     }
@@ -175,11 +178,10 @@ protocol ControllerBackendProtocol: AnyObject {
     var storedValues: [String: ControllerNamedValue] { values }
 
     /// Every value stored so far, sorted by key, for seeding a brand-new player's first open
-    /// before its declarations finish loading on the main actor.
+    /// before its declarations finish loading on the main actor. Sorted because a seed is applied
+    /// in order and a dictionary's order changes from run to run; O(n log n) in the stored names.
     var initialSeedValues: [(name: String, value: RemoteComposeNativeNamedValue)] {
-      values.keys.sorted().compactMap { name in
-        values[name].map { (name: name, value: $0.nativeValue) }
-      }
+      values.sorted { $0.key < $1.key }.map { (name: $0.key, value: $0.value.nativeValue) }
     }
 
     /// The values written so far, by the name the player's document declares them under, which
