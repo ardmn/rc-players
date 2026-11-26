@@ -56,6 +56,115 @@ import Testing
     #expect(written == -2, "integer view of -2.75: \(String(describing: written))")
   }
 
+  /// `RcPlayerStateTest.namedFloatActionsAndRestorationRefreshTheIntegerView` (the action half): a
+  /// document action's float write is also its integer view.
+  @Test func aDocumentFloatActionRefreshesTheIntegerView() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(51).float(1.75)
+    document.u8(Op.integerExpression).int(53).int(1).int(1).int(51)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
+    document.u8(Op.modifierClick)
+      .u8(Op.valueFloatChangeAction).int(51).float(3.5)
+      .u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    #expect(try session.probeValues(timeSeconds: 0).integers[53] == 3)
+  }
+
+  /// `RcPlayerStateTest.namedFloatActionsAndRestorationRefreshTheIntegerView` (the expression
+  /// tail): a float expression's result is also its integer view, truncated, and an integer
+  /// expression reading it sees that view in the same resolution.
+  @Test func aFloatExpressionResultIsAlsoItsIntegerView() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(51).float(1.75)
+    // 53 = [51] * 2 = 3.5.
+    document.u8(Op.animatedFloat).int(53).int(3)
+      .int(Writer.nanReference(51)).int(Writer.literal(2))
+      .int(Writer.floatOperator(NativeSwiftFloatOperator.mul))
+    // 54 reads 53's integer view through an integer expression.
+    document.u8(Op.integerExpression).int(54).int(1).int(1).int(53)
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    let values = try session.probeValues(timeSeconds: 0)
+    #expect(values.floats[53] == 3.5)
+    withKnownIssue("a float expression publishes no integer view") {
+      #expect(values.integers[53] == 3, "\(String(describing: values.integers[53]))")
+      #expect(values.integers[54] == 3, "\(String(describing: values.integers[54]))")
+    }
+  }
+
+  /// `RcSystemVariableTest.anIntegerExpressionOverTheClockReadsItTruncated`: an integer expression
+  /// that reads a clock id reads the clock, truncated.
+  @Test func anIntegerExpressionOverTheClockReadsItTruncated() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    // `TIME_IN_SEC % 60`: the seconds digit of a digital clock.
+    document.u8(Op.integerExpression).int(150).int(0b101).int(3)
+      .int(NativeSwiftSystemVariables.timeInSeconds).int(60)
+      .int(NativeSwiftIntegerOperator.offset + NativeSwiftIntegerOperator.mod)
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    let clock = NativeSwiftWallClock(epochMillis: 1_787_243_445_250)
+    let value = try session.probeValues(timeSeconds: 0, wallClock: clock).integers[150]
+    withKnownIssue("integer expressions do not read the clock") {
+      #expect(value == 45, "\(String(describing: value))")
+    }
+  }
+
+  /// AndroidX `RemoteComposeState.overrideFloat`, which an `EVENT_ACTION` handler's data writes
+  /// through (the Kotlin player has no event handlers): the float is also its integer view.
+  @Test func eventDataIsAlsoItsIntegerView() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(40).float(1)
+    document.u8(Op.integerExpression).int(41).int(1).int(1).int(40)
+    document.u8(Op.eventAction).int(NativeSwiftEventActionWire.version)
+      .int(5).int(7).u16(NativeSwiftEventActionWire.flagUnconditional).u16(1)
+      .int(1).int(40)
+    document.u8(Op.containerEnd)
+    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.dispatchEvent(type: 5, metadata: 7, data: [2.5], timeSeconds: 0)
+    let values = try session.probeValues(timeSeconds: 0)
+    #expect(values.floats[40] == 2.5)
+    #expect(values.integers[41] == 2, "\(String(describing: values.integers[41]))")
+  }
+
+  /// `RcPlayerStateTest.anActionWriteSurvivesTheDeclarationsThatReplayEveryFrame`: a document
+  /// action's write sticks over the declaration that defaults the id, for floats and integers.
+  @Test func anActionWriteSurvivesTheDeclarationsThatReplayEveryFrame() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(50).int(1).int(Writer.literal(0.5))
+    document.u8(Op.integerExpression).int(51).int(1 << 2).int(3).int(2).int(3)
+      .int(NativeSwiftIntegerOperator.offset + NativeSwiftIntegerOperator.add)
+    document.u8(Op.animatedFloat).int(52).int(3)
+      .int(Writer.nanReference(50)).int(Writer.literal(0.25))
+      .int(Writer.floatOperator(NativeSwiftFloatOperator.add))
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
+    document.u8(Op.modifierClick)
+      .u8(Op.valueFloatExpressionChangeAction).int(50).int(52)
+      .u8(Op.valueIntegerChangeAction).int(51).int(9)
+      .u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    let initial = try session.probeValues(timeSeconds: 0)
+    #expect(initial.floats[50] == 0.5 && initial.integers[51] == 5)
+
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    let first = try session.probeValues(timeSeconds: 0.1)
+    #expect(first.floats[50] == 0.75)
+    withKnownIssue("a document action's integer write is not kept over its declaring expression") {
+      #expect(first.integers[51] == 9, "\(String(describing: first.integers[51]))")
+    }
+
+    _ = try session.click(componentID: 3, timeSeconds: 0.2)
+    #expect(try session.probeValues(timeSeconds: 0.3).floats[50] == 1.0)
+  }
+
   /// `RcPlayerStateTest.integerValuesAlsoPopulateTheSharedFloatNamespace`: an integer is also its
   /// float view, and an integer write moves that view — including when a float write reached the
   /// id first (Kotlin's `setInteger` rewrites `floats[id]`).
@@ -78,7 +187,7 @@ import Testing
     #expect(values.integers[51] == 9)
     #expect(
       values.floats[51] == 9,
-      "a stale float write shadows the integer's float view: \(String(describing: values.floats[51]))"
+      "stale float view: \(String(describing: values.floats[51]))"
     )
   }
 
