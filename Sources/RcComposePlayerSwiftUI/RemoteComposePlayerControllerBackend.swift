@@ -244,9 +244,10 @@ protocol ControllerBackendProtocol: AnyObject {
     /// value stays with the controller, as on the Kotlin player, and each session the player
     /// reopens is seeded with it (`seedValues`) and judges it afresh: there a value that breaks an
     /// execution limit is left out of the first frame and reported through `onError` once per
-    /// session, and that session stays open and takes later writes. It stops as soon as the player
-    /// is gone or the task is cancelled: the player view cancels a delivery's task when a newer
-    /// value for its name starts, the player is rebuilt, or a reopen takes the value in its seed.
+    /// session, and that session stays open and takes later writes. It stops at its next check
+    /// once the player is gone or the task is cancelled (an offer already being answered still
+    /// gets its answer): the player view cancels a delivery's task when a newer value for its name
+    /// starts, the player is rebuilt, or a reopen takes the value in its seed.
     @MainActor
     func deliver<Target: NativeNamedValueTarget>(
       for name: String, to target: () -> Target?

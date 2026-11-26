@@ -221,8 +221,8 @@ import Testing
     #expect(target.calls == [.integer(5)])
   }
 
-  /// A waiting delivery ends when the player goes away or when its task is cancelled — a newer
-  /// value for the name, a reopen taking it in its seed, or a rebuild.
+  /// A waiting delivery ends when the player goes away or when its task is cancelled, whether it
+  /// is waiting for a signal or its offer is being answered.
   @Test func aWaitingDeliveryEndsWithThePlayerOrItsTask() async throws {
     var target: RecordingTarget? = RecordingTarget()
     let availability = target!.inputAvailability
@@ -245,12 +245,12 @@ import Testing
     await delivery.value
     #expect(cancelled.calls == [.integer(5)])
 
-    // Superseded: the player view cancels the delivery's task when a newer value starts, here
-    // while its first offer is being answered.
+    // Cancelled while its first offer is being answered, as the player view cancels it when a
+    // newer value starts; the signal only keeps a missed cancellation from hanging the test.
     let superseded = RecordingTarget()
     superseded.answers = [.deferred]
     var supersededDelivery: Task<Void, Never>?
-    superseded.onCall = {
+    superseded.onCall = { [unowned superseded] in
       supersededDelivery?.cancel()
       superseded.inputAvailability.signal()
     }
