@@ -119,13 +119,13 @@ class RcLayerFloatTest {
     val steps = mutableListOf<Int>()
     val readers = mutableListOf<() -> Float>()
     var attribute by mutableStateOf(attributes.first())
-    var recompositions by mutableIntStateOf(0)
+    var step by mutableIntStateOf(0)
     val frame = mutableFloatStateOf(0f)
     val scene =
       ImageComposeScene(width = 1, height = 1, density = Density(1f)) {
         CompositionLocalProvider(LocalRcFrameTime provides frame.takeIf { withFrameClock }) {
-          Reader(attribute, recompositions) { step, reader ->
-            steps += step
+          Reader(attribute, step) { composedStep, reader ->
+            steps += composedStep
             readers += reader
           }
         }
@@ -135,7 +135,7 @@ class RcLayerFloatTest {
       for ((index, next) in attributes.withIndex().drop(1)) {
         beforeStep(index)
         attribute = next
-        recompositions = index
+        step = index
         Snapshot.sendApplyNotifications()
         scene.render(index * FRAME_NANOS)
       }
@@ -148,7 +148,8 @@ class RcLayerFloatTest {
   }
 
   /**
-   * Reports the reader `rcLayerFloat` returns in recomposition [step], which changes every step.
+   * Reports the reader `rcLayerFloat` returns with the recomposition's [step]. Reading [step] is
+   * what keeps this composable from being skipped: Compose skips on unchanged parameters it reads.
    */
   @Composable
   private fun Reader(

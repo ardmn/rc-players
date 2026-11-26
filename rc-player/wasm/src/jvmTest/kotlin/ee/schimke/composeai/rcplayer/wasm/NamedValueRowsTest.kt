@@ -1,9 +1,9 @@
 package ee.schimke.composeai.rcplayer.wasm
 
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
-import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.fields
 import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.join
 import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.markedRow
+import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.rawRow
 import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.read
 import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.row
 import kotlin.test.Test
@@ -34,7 +34,7 @@ class NamedValueRowsTest {
     assertEquals(
       mapOf("USER:name" to RcNamedValue.FloatValue(1f)),
       read(
-        fields("%64p", "%6Eame", "%31", NAMED_VALUE_TEXT_MARK),
+        rawRow("%64p", "%6Eame", "%31", NAMED_VALUE_TEXT_MARK),
       ),
     )
   }
@@ -45,8 +45,8 @@ class NamedValueRowsTest {
     for (bad in
       listOf(
         "",
-        fields("color", "x"),
-        fields("a", "b", "c", "d", "e"),
+        rawRow("color", "x"),
+        rawRow("a", "b", "c", "d", "e"),
         row("nope", "x", "1"),
       )) {
       assertEquals(mapOf(orange), read(join(bad, good)), "before: $bad")
@@ -60,7 +60,7 @@ class NamedValueRowsTest {
     // with blue. Escaped, it is one row whose kind is not a kind, dropped beside the good one.
     val forged =
       row(
-        fields("x", "a", "b", NAMED_VALUE_TEXT_MARK) + NAMED_VALUE_ROW_SEPARATOR + "color",
+        rawRow("x", "a", "b", NAMED_VALUE_TEXT_MARK) + NAMED_VALUE_ROW_SEPARATOR + "color",
         "WearM3.primary",
         "#FF0000FF",
       )

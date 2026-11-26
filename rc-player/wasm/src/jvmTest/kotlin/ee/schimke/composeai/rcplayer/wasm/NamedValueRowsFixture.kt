@@ -17,8 +17,8 @@ internal object NamedValueRowsFixture {
 
   /** [row] with [mark] as its last field, which the JS never writes unless it is one of the two. */
   fun markedRow(kind: String, name: String, value: String, mark: String) =
-    fields(encodeUriComponent(kind), encodeUriComponent(name), encodeUriComponent(value), mark)
+    rawRow(encodeUriComponent(kind), encodeUriComponent(name), encodeUriComponent(value), mark)
 
-  /** [parts] as one row's fields, as written, whatever their count. */
-  fun fields(vararg parts: String) = parts.joinToString(NAMED_VALUE_FIELD_SEPARATOR)
+  /** One row of [parts] as fields, as written, whatever their count. */
+  fun rawRow(vararg parts: String) = parts.joinToString(NAMED_VALUE_FIELD_SEPARATOR)
 }
