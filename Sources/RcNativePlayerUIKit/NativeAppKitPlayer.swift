@@ -618,8 +618,7 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
       png: png, tree: player.layoutTree(),
       values: values.isEmpty
         ? nil
-        : try reportedValues(
-           session: session, timeSeconds: timeSeconds, wallClock: wallClock, request: values),
+        : try reportedValues(session: session, timeSeconds: timeSeconds, request: values),
       records: records,
       inputHandled: inputHandled)
   }
@@ -1060,16 +1059,17 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
     ]
   }
 
-  /// The values a probe asked for, each resolved at the frame's own instant.
+  /// The values a probe asked for, as the frame's own resolution left them: the capture resolved
+  /// this instant just before, and resolving again would move a document whose values read their
+  /// own previous ones on past the frame the PNG shows.
   ///
   /// A named target addresses a variable the document declared; a numeric one addresses a slot
   /// directly. A slot the document left empty reports null rather than being omitted — that is an
   /// observation, and the runner distinguishes it from a probe this player cannot answer.
   private static func reportedValues(
-    session: NativeSwiftDocumentSession, timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock,
-    request: NativeMacValueRequest
+    session: NativeSwiftDocumentSession, timeSeconds: TimeInterval, request: NativeMacValueRequest
   ) throws -> [String: Any] {
-    let resolved = try session.probeValues(timeSeconds: timeSeconds, wallClock: wallClock)
+    let resolved = session.currentValues()
     func report(_ targets: [String], _ read: (Int) throws -> Any?) throws -> [String: Any] {
       var result: [String: Any] = [:]
       for target in targets {

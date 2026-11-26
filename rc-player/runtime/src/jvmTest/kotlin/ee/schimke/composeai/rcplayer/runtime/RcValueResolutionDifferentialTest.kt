@@ -67,10 +67,9 @@ import kotlin.test.fail
  * pass's operations are not, and no value is generated that the Swift session would refuse (a
  * non-finite float, a stack deeper than AndroidX's 128).
  *
- * This test fails when the committed fixture is not what the Kotlin player produces now (a deleted
- * fixture fails Gradle's input check first; restore it from git, then update it). After a
- * deliberate change to the generator or the Kotlin player, rewrite it — the same run then passes —
- * with `scripts/agent-gradle.sh :rc-player-runtime:jvmTest --tests
+ * This test fails when the committed fixture is not what the Kotlin player produces now, or is
+ * missing. After a deliberate change to the generator or the Kotlin player, rewrite it — the same
+ * run then passes — with `scripts/agent-gradle.sh :rc-player-runtime:jvmTest --tests
  * '*RcValueResolutionDifferentialTest*' -Prc.valueResolutionDifferential.update=true`, then run the
  * Swift suite.
  */
@@ -109,6 +108,7 @@ class RcValueResolutionDifferentialTest {
   fun theGeneratedDocumentsCoverEveryKind() {
     assertEquals(OperationKind.entries.toSet(), cases.flatMap { it.kinds }.toSet())
     assertEquals(StepKind.entries.toSet(), cases.flatMap { it.steps }.map { it.kind }.toSet())
+    assertEquals(ActionKind.entries.toSet(), cases.flatMap { it.actionKinds }.toSet())
   }
 
   /** What a generated operation is, for [theGeneratedDocumentsCoverEveryKind]. */
@@ -130,6 +130,14 @@ class RcValueResolutionDifferentialTest {
     COLOR_ATTRIBUTE,
   }
 
+  /** What a generated click action writes. */
+  private enum class ActionKind {
+    INTEGER,
+    FLOAT,
+    INTEGER_EXPRESSION,
+    FLOAT_EXPRESSION,
+  }
+
   /**
    * A kind of step and the letter the fixture spells it with; the Swift suite's step kind reads the
    * same letters and fails on one it does not know.
@@ -143,8 +151,8 @@ class RcValueResolutionDifferentialTest {
   }
 
   /**
-   * One step. A frame's [argument] is the index of its time in [FRAME_TIMES]; a write's is the
-   * value (a float as its bits); [id] is the id a by-id write targets.
+   * One step. [argument] is a frame's index into [FRAME_TIMES], a float write's value as its bits,
+   * an integer write's value, or 0 for a click; [id] is the id a by-id write targets.
    */
   private data class Step(val kind: StepKind, val argument: Int, val id: Int = 0)
 
@@ -155,6 +163,7 @@ class RcValueResolutionDifferentialTest {
     val seed: Long,
     val document: RcDocument,
     val kinds: Set<OperationKind>,
+    val actionKinds: Set<ActionKind>,
     val steps: List<Step>,
   )
 
@@ -164,21 +173,23 @@ class RcValueResolutionDifferentialTest {
     val floatExpressionIds = mutableSetOf<Int>()
     val integerExpressionIds = mutableSetOf<Int>()
 
-    fun numeric(): Int =
+    /** An id an operation reads: now and then the player's own. */
+    fun readID(): Int =
       if (random.nextInt(8) == 0) SYSTEM_IDS[random.nextInt(SYSTEM_IDS.size)]
       else NUMERIC_IDS[random.nextInt(NUMERIC_IDS.size)]
 
-    fun target(): Int =
+    /** An id an operation writes: rarely a system id, which the write then claims. */
+    fun writeID(): Int =
       if (random.nextInt(16) == 0) SYSTEM_IDS[random.nextInt(SYSTEM_IDS.size)]
       else NUMERIC_IDS[random.nextInt(NUMERIC_IDS.size)]
 
-    fun quarter(range: Int): Float = random.nextInt(-range, range + 1) / 4f
+    fun quarters(limit: Int): Float = random.nextInt(-limit, limit + 1) / 4f
 
     fun smallInteger(): Int = random.nextInt(-INTEGER_LIMIT, INTEGER_LIMIT + 1)
 
     fun floatOperand(): RcFloatWord =
-      if (random.nextBoolean()) reference(numeric())
-      else RcFloatWord.literal(quarter(OPERAND_QUARTERS))
+      if (random.nextBoolean()) reference(readID())
+      else RcFloatWord.literal(quarters(OPERAND_QUARTERS))
 
     operations += TEXT_IDS.mapIndexed { index, id -> RcTextData(id, TEXTS[index]) }
     operations += COLOR_IDS.mapIndexed { index, id -> RcColorConstant(id, COLORS[index]) }
@@ -202,7 +213,7 @@ class RcValueResolutionDifferentialTest {
     // unset id to the reference's own NaN bits, the Swift session to 0 (and its evaluator refuses a
     // non-finite result), which is a difference in how a missing value reads, not in order.
     operations += NUMERIC_IDS.map { id ->
-      if (random.nextBoolean()) RcFloatConstant(id, RcFloatWord.literal(quarter(QUARTERS)))
+      if (random.nextBoolean()) RcFloatConstant(id, RcFloatWord.literal(quarters(QUARTERS)))
       else RcIntegerConstant(id, smallInteger())
     }
     repeat(random.nextInt(6, 18)) {
@@ -210,8 +221,8 @@ class RcValueResolutionDifferentialTest {
       val operation =
         when (kind) {
           OperationKind.FLOAT_CONSTANT ->
-            RcFloatConstant(target(), RcFloatWord.literal(quarter(QUARTERS)))
-          OperationKind.INTEGER_CONSTANT -> RcIntegerConstant(target(), smallInteger())
+            RcFloatConstant(writeID(), RcFloatWord.literal(quarters(QUARTERS)))
+          OperationKind.INTEGER_CONSTANT -> RcIntegerConstant(writeID(), smallInteger())
           OperationKind.FLOAT_EXPRESSION -> {
             // `a (b op)*`. A product's second operand is a literal, so a cycle multiplying itself
             // over a sequence of frames stays finite.
@@ -228,16 +239,12 @@ class RcValueResolutionDifferentialTest {
             }
             // One float expression per id: the Kotlin player memoises an expression's inputs by
             // the id it writes, so a second expression at that id is skipped while the first's
-            // inputs stand still (a Kotlin bug, ardmn/work#135, not an order the Swift session
-            // should
-            // copy). A few draws find a free id; with none, the operation is a constant instead.
-            val id = generateSequence {
-              target()
-            }
-              .take(FREE_ID_DRAWS)
-              .firstOrNull { it !in floatExpressionIds }
+            // inputs stand still (a Kotlin bug, not an order to copy). A few draws
+            // find a free id; with none, the operation is a constant instead.
+            val freeIDs = generateSequence(::writeID).take(FREE_ID_DRAWS)
+            val id = freeIDs.firstOrNull { it !in floatExpressionIds }
             if (id == null) {
-              RcFloatConstant(target(), RcFloatWord.literal(quarter(QUARTERS)))
+              RcFloatConstant(writeID(), RcFloatWord.literal(quarters(QUARTERS)))
             } else {
               floatExpressionIds += id
               RcFloatExpression(id, words, null)
@@ -249,7 +256,7 @@ class RcValueResolutionDifferentialTest {
             fun operand() {
               if (random.nextBoolean()) {
                 mask = mask or (1 shl values.size)
-                values += numeric()
+                values += readID()
               } else {
                 values += random.nextInt(-LITERAL_LIMIT, LITERAL_LIMIT + 1)
               }
@@ -260,18 +267,18 @@ class RcValueResolutionDifferentialTest {
               mask = mask or (1 shl values.size)
               values += INTEGER_OPERATORS[random.nextInt(INTEGER_OPERATORS.size)]
             }
-            val id = target()
+            val id = writeID()
             integerExpressionIds += id
             RcIntegerExpression(id, mask, values)
           }
           OperationKind.ID_LOOKUP ->
             RcIdLookup(
-              target(),
+              writeID(),
               ID_LIST,
               RcFloatWord.literal(random.nextInt(LOOKUP_IDS.size).toFloat()),
             )
           OperationKind.DATA_MAP_LOOKUP ->
-            RcDataMapLookup(target(), DATA_MAP, DATA_MAP_KEYS[random.nextInt(DATA_MAP_KEYS.size)])
+            RcDataMapLookup(writeID(), DATA_MAP, DATA_MAP_KEYS[random.nextInt(DATA_MAP_KEYS.size)])
           OperationKind.TEXT_MERGE ->
             RcTextMerge(
               TEXT_IDS[random.nextInt(TEXT_IDS.size)],
@@ -279,11 +286,11 @@ class RcValueResolutionDifferentialTest {
               TEXT_IDS[random.nextInt(TEXT_IDS.size)],
             )
           OperationKind.TEXT_LENGTH ->
-            RcTextLength(target(), TEXT_IDS[random.nextInt(TEXT_IDS.size)])
+            RcTextLength(writeID(), TEXT_IDS[random.nextInt(TEXT_IDS.size)])
           OperationKind.TEXT_FROM_FLOAT ->
             RcTextFromFloat(
               outId = TEXT_IDS[random.nextInt(TEXT_IDS.size)],
-              value = reference(numeric()),
+              value = reference(readID()),
               digitsBefore = 3,
               digitsAfter = 2,
               flags = 0,
@@ -313,7 +320,7 @@ class RcValueResolutionDifferentialTest {
             )
           OperationKind.IMAGE_ATTRIBUTE ->
             RcImageAttribute(
-              target(),
+              writeID(),
               BITMAP,
               if (random.nextBoolean()) RcImageAttribute.IMAGE_WIDTH
               else RcImageAttribute.IMAGE_HEIGHT,
@@ -329,7 +336,7 @@ class RcValueResolutionDifferentialTest {
             )
           OperationKind.COLOR_ATTRIBUTE ->
             RcColorAttribute(
-              target(),
+              writeID(),
               COLOR_IDS[random.nextInt(COLOR_IDS.size)],
               COLOR_ATTRIBUTES[random.nextInt(COLOR_ATTRIBUTES.size)],
             )
@@ -343,28 +350,31 @@ class RcValueResolutionDifferentialTest {
 
     val actions =
       List(random.nextInt(1, 4)) {
-        when (random.nextInt(4)) {
-          0 -> RcValueIntegerChangeAction(target(), smallInteger())
-          1 -> RcValueFloatChangeAction(target(), RcFloatWord.literal(quarter(QUARTERS)))
-          2 ->
+        when (ActionKind.entries[random.nextInt(ActionKind.entries.size)]) {
+          ActionKind.INTEGER -> RcValueIntegerChangeAction(writeID(), smallInteger())
+          ActionKind.FLOAT ->
+            RcValueFloatChangeAction(writeID(), RcFloatWord.literal(quarters(QUARTERS)))
+          ActionKind.INTEGER_EXPRESSION ->
             integerExpressionIds.randomOrNull(random)?.let {
-              RcValueIntegerExpressionChangeAction(target().toLong(), it.toLong())
-            } ?: RcValueIntegerChangeAction(target(), smallInteger())
-          else ->
+              RcValueIntegerExpressionChangeAction(writeID().toLong(), it.toLong())
+            } ?: RcValueIntegerChangeAction(writeID(), smallInteger())
+          ActionKind.FLOAT_EXPRESSION ->
             floatExpressionIds.randomOrNull(random)?.let {
-              RcValueFloatExpressionChangeAction(target(), it)
-            } ?: RcValueFloatChangeAction(target(), RcFloatWord.literal(quarter(QUARTERS)))
+              RcValueFloatExpressionChangeAction(writeID(), it)
+            } ?: RcValueFloatChangeAction(writeID(), RcFloatWord.literal(quarters(QUARTERS)))
         }
       }
     val document =
       RcDocument(
         RcHeader(RcVersion(1, 1, 0), legacyWidth = 100, legacyHeight = 100, modern = false),
-        operations +
-          listOf(RcRootLayout(1), RcLayoutContent(2), RcBoxLayout(CLICK_COMPONENT, -1, 1, 1)) +
-          listOf(RcClickModifier) +
-          actions +
-          listOf(CONTAINER_END, RcLayoutContent(4), CONTAINER_END, CONTAINER_END) +
-          listOf(CONTAINER_END, CONTAINER_END),
+        buildList {
+          addAll(operations)
+          addAll(listOf(RcRootLayout(1), RcLayoutContent(2)))
+          addAll(listOf(RcBoxLayout(CLICK_COMPONENT, -1, 1, 1), RcClickModifier))
+          addAll(actions)
+          addAll(listOf(CONTAINER_END, RcLayoutContent(4), CONTAINER_END, CONTAINER_END))
+          addAll(listOf(CONTAINER_END, CONTAINER_END))
+        },
       )
     val steps = buildList {
       add(Step(StepKind.FRAME, 0))
@@ -373,15 +383,24 @@ class RcValueResolutionDifferentialTest {
         add(
           when (kind) {
             StepKind.FRAME -> Step(kind, random.nextInt(FRAME_TIMES.size))
-            StepKind.SET_FLOAT_BY_ID -> Step(kind, quarter(QUARTERS).toRawBits(), target())
-            StepKind.SET_NAMED_FLOAT -> Step(kind, quarter(QUARTERS).toRawBits())
+            StepKind.SET_FLOAT_BY_ID -> Step(kind, quarters(QUARTERS).toRawBits(), writeID())
+            StepKind.SET_NAMED_FLOAT -> Step(kind, quarters(QUARTERS).toRawBits())
             StepKind.SET_NAMED_INTEGER -> Step(kind, smallInteger())
             StepKind.CLICK -> Step(kind, 0)
           },
         )
       }
     }
-    return Case(random.seed, document, kinds, steps)
+    val actionKinds =
+      actions.mapTo(mutableSetOf()) { action ->
+        when (action) {
+          is RcValueIntegerChangeAction -> ActionKind.INTEGER
+          is RcValueFloatChangeAction -> ActionKind.FLOAT
+          is RcValueIntegerExpressionChangeAction -> ActionKind.INTEGER_EXPRESSION
+          else -> ActionKind.FLOAT_EXPRESSION
+        }
+      }
+    return Case(random.seed, document, kinds, actionKinds, steps)
   }
 
   /** The document's state after each step, as the Kotlin player gets there: one entry per slot. */
@@ -443,7 +462,9 @@ class RcValueResolutionDifferentialTest {
     appendLine("  \"epochMillis\": $EPOCH_MILLIS,")
     appendLine("  \"frameTimes\": [${FRAME_TIMES.joinToString(", ")}],")
     appendLine("  \"observedIds\": [${OBSERVED_IDS.joinToString(", ")}],")
+    // Sorted, so the fixture does not follow the set's declaration order.
     appendLine("  \"systemIds\": [${RcSystemVariables.ALL.sorted().joinToString(", ")}],")
+    appendLine("  \"documents\": $DOCUMENTS,")
     appendLine("  \"textIds\": [${TEXT_IDS.joinToString(", ")}],")
     appendLine("  \"colorIds\": [${COLOR_IDS.joinToString(", ")}],")
     appendLine("  \"clickComponent\": $CLICK_COMPONENT,")
@@ -477,10 +498,10 @@ class RcValueResolutionDifferentialTest {
   private fun jsonString(value: String): String = buildString {
     append('"')
     value.forEach { character ->
-      when {
-        character == '"' -> append("\\\"")
-        character == '\\' -> append("\\\\")
-        character < ' ' -> append("\\u%04x".format(character.code))
+      when (character) {
+        '"' -> append("\\\"")
+        '\\' -> append("\\\\")
+        in '\u0000'..'\u001f' -> append("\\u%04x".format(character.code))
         else -> append(character)
       }
     }
@@ -551,8 +572,8 @@ class RcValueResolutionDifferentialTest {
     const val DOCUMENTS = 300
     const val FIRST_SEED = 9_600L
 
-    /** `RcSystemVariableTest.EPOCH_MILLIS`, which the Swift suite's `KotlinReference` names. */
-    const val EPOCH_MILLIS = 1_787_243_445_250L
+    /** The Swift suite's `KotlinReference.epochMillis` names the same instant. */
+    const val EPOCH_MILLIS = RcSystemVariableTest.EPOCH_MILLIS
     val FRAME_TIMES = listOf(0f, 0.25f, 0.5f, 1f, 2f)
 
     /** The ids the generated operations write and read, so they collide often. */
@@ -608,10 +629,14 @@ class RcValueResolutionDifferentialTest {
      */
     val MULTIPLIERS = listOf(-1f, 0.5f, 2f)
 
-    /** The range of an integer constant or action value, and of an integer expression's literal. */
+    /** The range of an integer constant and of an action's integer value. */
     const val INTEGER_LIMIT = 20
-    const val FREE_ID_DRAWS = 8
+
+    /** The range of an integer expression's literal operand. */
     const val LITERAL_LIMIT = 10
+
+    /** How many ids a float expression draws for one no other float expression writes. */
+    const val FREE_ID_DRAWS = 8
 
     /**
      * Float constants and writes are quarters in `-QUARTERS / 4 .. QUARTERS / 4`; operands

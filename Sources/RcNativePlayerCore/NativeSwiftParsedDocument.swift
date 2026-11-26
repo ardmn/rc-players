@@ -34,6 +34,21 @@ enum ParsedResolutionStep {
   case textLength(ParsedTextLength)
   case timeAttribute(ParsedTimeAttribute)
   case matrixVectorMath(ParsedMatrixVectorMath)
+
+  /// The numeric ids the step writes.
+  var numericOutputIDs: [Int] {
+    switch self {
+    case .floatExpression(let expression): [expression.id]
+    case .integerExpression(let id, _), .imageSize(let id, _): [id]
+    case .colorAttribute(let attribute): [attribute.outputID]
+    case .idLookup(let lookup): [lookup.outputID]
+    case .dataMapLookup(let lookup): [lookup.outputID]
+    case .textLength(let length): [length.outputID]
+    case .timeAttribute(let attribute): [attribute.outputID]
+    case .matrixVectorMath(let operation): operation.outputIDs
+    case .colorExpression, .colorTheme, .text: []
+    }
+  }
 }
 
 struct ParsedDocument {
@@ -123,6 +138,10 @@ struct ParsedDocument {
   let imageSnapshots: [NativeSwiftImageResourceSnapshot]
   /// The components `componentValues` bind, as `NativeSwiftDocumentSnapshot.boundComponents`.
   let boundComponentIDs: Set<Int>
+  /// Whether a float expression reads a number that it or a later step writes: on the first
+  /// resolution that number is not there yet, so the expression may fail until the steps run
+  /// again. See `NativeSwiftDocumentSession.resolveFrame`.
+  let floatExpressionsReadForward: Bool
   /// Whether any layout word reads a component-value binding's output, which invalidates a
   /// subtree estimate once that binding is written. See `publishComponentValues`.
   let layoutReadsComponentValues: Bool
@@ -191,12 +210,6 @@ struct ParsedColorExpression {
   /// keeps a display link or a one-second wakeup alive for a document that never changes.
   /// Modes 4...6 build a colour from float channels, so all three are words, and mode 6 carries its
   /// alpha as a reference in the high half of `modeAndAlpha`.
-  /// `ID_ARGB`'s alpha: the float id the mode word's high half names, as a reference word.
-  var alphaReferenceWord: UInt32 {
-    NativeSwiftFloatExpression.referenceWord(
-      UInt32(truncatingIfNeeded: modeAndAlpha >> 16) & 0xffff)
-  }
-
   var floatWords: [UInt32] {
     func word(_ value: Int) -> UInt32 { UInt32(bitPattern: Int32(truncatingIfNeeded: value)) }
     switch modeAndAlpha & 0xff {
@@ -209,6 +222,12 @@ struct ParsedColorExpression {
     default:
       return []
     }
+  }
+
+  /// `ID_ARGB`'s alpha: the float id the mode word's high half names, as a reference word.
+  var alphaReferenceWord: UInt32 {
+    NativeSwiftFloatExpression.referenceWord(
+      UInt32(truncatingIfNeeded: modeAndAlpha >> 16) & 0xffff)
   }
 }
 

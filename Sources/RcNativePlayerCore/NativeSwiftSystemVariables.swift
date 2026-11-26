@@ -62,22 +62,29 @@ public enum NativeSwiftSystemVariables {
   /// Every id this player loads at the start of a resolution, so the session can tell one from a
   /// document's own (`isSystem`): a write to one claims it from the player
   /// (`RcPlayerState.claimedSystemIds`), and an integer expression reads an unclaimed one as its
-  /// float truncated. The reference's `RcSystemVariables.ALL` also has `WINDOW_WIDTH` and
-  /// `WINDOW_HEIGHT` (5, 6) and `ANIMATION_DELTA_TIME` (31), which this core does not supply; at
-  /// those ids a document's value is its own. The differential fixture carries Kotlin's set, and
+  /// float truncated. The reference's `RcSystemVariables.ALL` also has `unsuppliedIDs`, which this
+  /// core does not load; at those ids a document's value is its own. The differential fixture carries Kotlin's set, and
   /// `NativeSwiftValueResolutionDifferentialTests` fails when the two drift.
   static let allIDs = [
     continuousSeconds, timeInSeconds, timeInMinutes, timeInHours, calendarMonth, offsetToUTC,
     weekDay, dayOfMonth, density, animationTime, epochSecond, fontSize, dayOfYear, year,
   ]
 
-  /// `allIDs` as bits, every id being below 64 (a test holds it to that): a resolution asks of
-  /// every value it writes whether it is a system id, so the answer is a shift rather than a hash.
+  /// The reference's ids this core does not load: `WINDOW_WIDTH`, `WINDOW_HEIGHT` and
+  /// `ANIMATION_DELTA_TIME`.
+  static let unsuppliedIDs: Set<Int> = [5, 6, 31]
+
+  /// `allIDs` as bits, every id being below `maskWidth` (a test holds it to that): a resolution
+  /// asks of every value it writes whether it is a system id, so the answer is a shift rather
+  /// than a hash.
   private static let allMask: UInt64 = allIDs.reduce(0) { $0 | (1 << UInt64($1)) }
+
+  /// How many ids `allMask` can hold.
+  static let maskWidth = UInt64.bitWidth
 
   /// Whether `id` is one of `allIDs`.
   @inline(__always) static func isSystem(_ id: Int) -> Bool {
-    id >= 0 && id < 64 && allMask & (1 << UInt64(id)) != 0
+    id >= 0 && id < maskWidth && allMask & (1 << UInt64(id)) != 0
   }
 }
 

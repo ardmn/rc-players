@@ -16,7 +16,7 @@ import Testing
 /// step, and there is no allow-list: the generator stays out of the differences that are not about
 /// order. It declares every id before anything reads it (Kotlin reads an unset reference as its own
 /// NaN bits, this session as 0), writes one float expression per id (Kotlin's input memo skips a
-/// second one at an id, ardmn/work#135) and builds no expression deeper than the evaluator's
+/// second one at an id) and builds no expression deeper than the evaluator's
 /// 128-entry stack, which this session keeps from AndroidX by decision.
 @Suite struct NativeSwiftValueResolutionDifferentialTests {
   /// The fixture, as the Kotlin test writes it; `format` must be the one this suite reads.
@@ -24,15 +24,26 @@ import Testing
     let format: Int
     let epochMillis: Int64
     let frameTimes: [Double]
-    let observedIds: [Int]
+    let observedIDs: [Int]
     /// Kotlin's `RcSystemVariables.ALL`.
-    let systemIds: [Int]
-    let textIds: [Int]
-    let colorIds: [Int]
+    let systemIDs: [Int]
+    let textIDs: [Int]
+    let colorIDs: [Int]
     let clickComponent: Int
     let namedFloat: String
     let namedInteger: String
+    /// How many documents the Kotlin generator wrote.
+    let documents: Int
     let cases: [Case]
+
+    private enum CodingKeys: String, CodingKey {
+      case format, epochMillis, frameTimes, clickComponent, namedFloat, namedInteger, documents
+      case cases
+      case observedIDs = "observedIds"
+      case systemIDs = "systemIds"
+      case textIDs = "textIds"
+      case colorIDs = "colorIds"
+    }
   }
 
   private struct Case: Decodable {
@@ -45,6 +56,8 @@ import Testing
 
   private struct Step: Decodable {
     let kind: StepKind
+    /// A frame's index into `frameTimes`; a float write's value as its bits; an integer write's
+    /// value; 0 for a click.
     let argument: Int
     let id: Int
     let changes: [Change]
@@ -55,16 +68,7 @@ import Testing
       argument = try container.decode(Int.self)
       id = try container.decode(Int.self)
       changes = try container.decode([Change].self)
-      try Self.expectEnd(of: container)
-    }
-
-    /// An element the Kotlin side added and this suite does not read fails the decode rather than
-    /// being dropped.
-    static func expectEnd(of container: UnkeyedDecodingContainer) throws {
-      guard container.isAtEnd else {
-        throw DecodingError.dataCorruptedError(
-          in: container, debugDescription: "an element this suite does not read")
-      }
+      try container.expectEnd()
     }
   }
 
@@ -77,7 +81,7 @@ import Testing
       var container = try decoder.unkeyedContainer()
       slot = try container.decode(Int.self)
       value = try container.decode(String?.self)
-      try Step.expectEnd(of: container)
+      try container.expectEnd()
     }
   }
 
@@ -100,7 +104,7 @@ import Testing
   @Test func everyGeneratedDocumentResolvesAsTheKotlinPlayerDoes() throws {
     let fixture = try Self.fixture()
     try #require(fixture.format == Self.fixtureFormat)
-    #expect(fixture.cases.count >= 100, "\(fixture.cases.count) cases")
+    #expect(fixture.cases.count == fixture.documents, "\(fixture.cases.count) cases")
     let labels = Self.labels(fixture)
     var mismatches: [String] = []
     for testCase in fixture.cases {
@@ -120,7 +124,7 @@ import Testing
           observed = try session.probeValues(
             timeSeconds: time,
             wallClock: NativeSwiftWallClock(
-              epochMillis: fixture.epochMillis + Int64((time * 1000).rounded())))
+              epochMillis: fixture.epochMillis + Int64(time * 1000)))
         case .setFloatByID:
           _ = session.setFloat(Self.float(step.argument), forID: step.id)
           observed = session.currentValues()
@@ -158,37 +162,54 @@ import Testing
     Float(bitPattern: UInt32(truncatingIfNeeded: bits))
   }
 
-  /// The ids this core loads are Kotlin's, less the three it does not supply (`allIDs`), and each
-  /// fits the 64-bit mask `isSystem` reads.
+  /// The ids this core loads are Kotlin's, less the ones it does not supply (`allIDs`), each fits
+  /// the mask `isSystem` reads, and a clocked resolution loads every one of them.
   @Test func theSystemIDsAreKotlinsLessTheOnesThisCoreDoesNotLoad() throws {
+    typealias System = NativeSwiftSystemVariables
     let fixture = try Self.fixture()
-    let notSupplied: Set<Int> = [5, 6, 31]  // WINDOW_WIDTH, WINDOW_HEIGHT, ANIMATION_DELTA_TIME
-    #expect(
-      Set(NativeSwiftSystemVariables.allIDs) == Set(fixture.systemIds).subtracting(notSupplied))
-    #expect(NativeSwiftSystemVariables.allIDs.allSatisfy { (0..<64).contains($0) })
-    #expect(NativeSwiftSystemVariables.allIDs.allSatisfy(NativeSwiftSystemVariables.isSystem))
-    let unlisted = (0..<64).filter { !NativeSwiftSystemVariables.allIDs.contains($0) }
-    #expect(!unlisted.contains(where: NativeSwiftSystemVariables.isSystem))
+    #expect(Set(System.allIDs) == Set(fixture.systemIDs).subtracting(System.unsuppliedIDs))
+    let maskRange = 0..<System.maskWidth
+    #expect(System.allIDs.allSatisfy(maskRange.contains))
+    #expect(System.allIDs.allSatisfy(System.isSystem))
+    let unlisted = maskRange.filter { !System.allIDs.contains($0) }
+    #expect(!unlisted.contains(where: System.isSystem))
+    let firstCase = try #require(fixture.cases.first)
+    let session = try NativeSwiftDocumentSession.open(
+      data: try #require(Data(base64Encoded: firstCase.document)))
+    let values = try session.probeValues(
+      timeSeconds: 0, wallClock: NativeSwiftWallClock(epochMillis: fixture.epochMillis))
+    #expect(System.allIDs.allSatisfy { values.floats[$0] != nil }, "a system id was not loaded")
   }
 
   /// What each observed slot is, for a mismatch report.
   private static func labels(_ fixture: Fixture) -> [String] {
-    fixture.observedIds.map { "#\($0)" } + fixture.textIds.map { "T\($0)" }
-      + fixture.colorIds.map { "C\($0)" }
+    fixture.observedIDs.map { "#\($0)" } + fixture.textIDs.map { "T\($0)" }
+      + fixture.colorIDs.map { "C\($0)" }
   }
 
   /// The session's views in the fixture's spelling: `integer/floatBits` per id (`-` for none), each
   /// text, each colour as unsigned hex.
   private static func views(_ values: NativeSwiftProbeValues, _ fixture: Fixture) -> [String?] {
-    let numbers: [String?] = fixture.observedIds.map { id in
+    let numbers: [String?] = fixture.observedIDs.map { id in
       let integer = values.integers[id].map(String.init) ?? "-"
       let float = values.floats[id].map { String($0.bitPattern, radix: 16) } ?? "-"
       return "\(integer)/\(float)"
     }
-    let texts: [String?] = fixture.textIds.map { values.texts[$0] }
-    let colors: [String?] = fixture.colorIds.map { id in
+    let texts: [String?] = fixture.textIDs.map { values.texts[$0] }
+    let colors: [String?] = fixture.colorIDs.map { id in
       values.colors[id].map { String($0, radix: 16) } ?? "-"
     }
     return numbers + texts + colors
+  }
+}
+
+extension UnkeyedDecodingContainer {
+  /// An element the Kotlin side added and this suite does not read fails the decode rather than
+  /// being dropped.
+  fileprivate func expectEnd() throws {
+    guard isAtEnd else {
+      throw DecodingError.dataCorruptedError(
+        in: self, debugDescription: "an element this suite does not read")
+    }
   }
 }

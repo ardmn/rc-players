@@ -1895,10 +1895,9 @@ import Testing
     let unclocked = try NativeSwiftDocumentSession.open(
       data: timed.data, toleratingRootlessData: true
     ).probeValues(timeSeconds: 0)
-    // The same session without a clock keeps what the clocked resolution wrote at 28, as a time
-    // attribute with nothing to measure from writes nothing.
+    // The same session without a clock leaves 28 unset again, as it leaves the calendar.
     let reused = try timedSession.probeValues(timeSeconds: 0)
-    #expect(reused.floats[28] == -10, "\(String(describing: reused.floats[28]))")
+    #expect(reused.floats[28] == nil, "\(String(describing: reused.floats[28]))")
     #expect(
       unclocked.floats[28] == nil && unclocked.floats[24] == 2023,
       "an unclocked time attribute resolved to \(String(describing: unclocked.floats[28]))")

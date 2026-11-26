@@ -13,8 +13,7 @@ import Testing
 /// its own; data-only documents with no frame are read through `probeValues`.
 ///
 /// The known issues left are not resolution order: the decoder's decode-time conditionals and
-/// unrolled loops, the float evaluator's refusals and the float animation runtime
-/// (ardmn/work#136, ardmn/work#137).
+/// unrolled loops, the float evaluator's refusals and the float animation runtime.
 ///
 /// The cases `NativeSwiftValueOrderTests`, `NativeSwiftKotlinParityTests`,
 /// `NativeSwiftFloatIntegerViewTests` and `NativeSwiftIntegerWriteTests` already port are not
@@ -1084,8 +1083,9 @@ import Testing
       .int(Self.mul)
     let sub = Writer.floatOperator(NativeSwiftFloatOperator.sub)
     let max = Writer.floatOperator(NativeSwiftFloatOperator.max)
+    let (eventType, filter) = (5, 7)
     document.u8(Op.eventAction).int(NativeSwiftEventActionWire.version)
-      .int(5).int(7).u16(0).u16(1)
+      .int(eventType).int(filter).u16(0).u16(1)
       .int(1).int(40)
       .int(5).int(Writer.nanReference(41)).float(5).int(sub).float(0).int(max)
     document.u8(Op.valueIntegerChangeAction).int(60).int(1)
@@ -1093,7 +1093,8 @@ import Testing
     document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
     _ = try session.snapshot(timeSeconds: 0)
-    let dispatch = try session.dispatchEvent(type: 5, metadata: 7, data: [3], timeSeconds: 0)
+    let dispatch = try session.dispatchEvent(
+      type: eventType, metadata: filter, data: [3], timeSeconds: 0)
     #expect(dispatch.handledFlags == [1], "\(dispatch.handledFlags)")
     #expect(session.currentValues().integers[60] == 1)
   }
@@ -1153,6 +1154,23 @@ import Testing
     #expect(session.clearNamedValue("v"))
     let seen = try [0.0, 1.0].map { try session.probeValues(timeSeconds: $0).floats[50] }
     #expect(seen == [0, 0], "\(seen)")
+  }
+
+  /// A float expression that divides by a number a later step writes cannot be finite on the
+  /// first pass, when that number is not there yet: the first resolution runs the steps once more
+  /// rather than refusing the document. F50 = 10 / [51], then F51 = 1 + 1: 5.
+  @Test func aDivisionByALaterExpressionResolvesOnTheFirstFrame() throws {
+    let div = Writer.floatOperator(NativeSwiftFloatOperator.div)
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(50).int(3).float(10).int(Writer.nanReference(51)).int(div)
+    document.u8(Op.animatedFloat).int(51).int(3).float(1).float(1).int(Self.add)
+    document.u8(Op.layoutRoot).int(1)
+    Self.drawWidth(document, of: 50)
+    document.u8(Op.containerEnd)
+    let widths = Self.drawnWidths(
+      try NativeSwiftDocumentSession.open(data: document.data).snapshot(timeSeconds: 0))
+    #expect(widths == [5], "\(widths)")
   }
 
   /// A frame with no wall clock after one with a clock leaves EPOCH_SECOND unset, as it leaves the

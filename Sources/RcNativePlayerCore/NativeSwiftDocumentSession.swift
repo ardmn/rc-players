@@ -23,12 +23,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// The float view of every numeric value, live (`RcPlayerState.floats`): the document's constants
   /// as loaded, then whatever a resolution step, an action or a host wrote. A value write goes
   /// through `storeFloat`, `setFloat` or `setInteger`, so the integer view below moves with it; only
-  /// a system load (float only), a carried value and a clear write the views themselves.
+  /// a system load (float only) and a carried value write the views themselves.
   ///
   /// This and `integers` are read and written several times per value a resolution computes, and
   /// only ever under `stateLock`, so the runtime's per-access exclusivity check is switched off for
   /// them: it bought nothing the lock does not already guarantee and cost about a tenth of a
-  /// resolution's time at 5000 values (`scenarios.resolutionCost`).
+  /// resolution's time at 5000 values (`scenarios.resolutionCost`). Nothing may hold a mutable
+  /// access to either while another starts: no `inout` of them across a call that reads them.
   @exclusivity(unchecked) private var floats: [Int: Float]
   /// The integer view of every numeric value, live (`RcPlayerState.integers`).
   @exclusivity(unchecked) private var integers: [Int: Int]
@@ -72,9 +73,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private var writtenIntegerAndTextIDs: Set<Int> = []
   /// The instant and wall clock the last resolution ran at, which a float expression's animation
   /// (an action's included) and a time attribute read.
-  private var frameTimeSeconds: TimeInterval = 0
   private var frameWallClock: NativeSwiftWallClock?
-  /// The instant the last resolution ran at, nil before the first; see `resolveUnlessResolved`.
+  /// The instant the last resolution ran at, which an animation and a time attribute read.
+  private var frameTimeSeconds: TimeInterval = 0
+  /// The instant the last resolution that finished ran at, nil before one has (or while one runs);
+  /// see `resolveUnlessResolved`.
   private var resolvedFrameTime: TimeInterval?
   /// What the host last measured its bound components at, which a probe resolves against rather
   /// than this core's estimate.
@@ -135,11 +138,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // value at.
     // A `FloatConstant` that names another value is one too, though the decoder runs it as an
     // expression.
-    let aliasIDs = document.expressions.lazy
-      .filter { $0.opcode == NativeSwiftWireOpcode.dataFloat }.map(\.id)
-    let claimed = Set(
-      (document.numericConstants.map(\.id) + document.componentValues.map(\.valueID) + aliasIDs)
-        .filter(NativeSwiftSystemVariables.isSystem))
+    var claimed = Set(document.numericConstants.map(\.id))
+    claimed.formUnion(document.componentValues.map(\.valueID))
+    claimed.formUnion(
+      document.expressions.filter { $0.opcode == NativeSwiftWireOpcode.dataFloat }.map(\.id))
+    claimed = claimed.filter(NativeSwiftSystemVariables.isSystem)
     (claimedSystemIDs, documentClaimedSystemIDs) = (claimed, claimed)
   }
 
@@ -232,8 +235,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     recordedIntegers = other.recordedIntegers
     hostSetColors = other.hostSetColors
     writtenIntegerAndTextIDs = other.writtenIntegerAndTextIDs
-    frameTimeSeconds = other.frameTimeSeconds
     frameWallClock = other.frameWallClock
+    frameTimeSeconds = other.frameTimeSeconds
     resolvedFrameTime = other.resolvedFrameTime
     lastMeasuredComponents = other.lastMeasuredComponents
     hostDensity = other.hostDensity
@@ -355,15 +358,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       return cached.snapshot
     }
     lastMeasuredComponents = measuredComponents
-    try resolveFrame(
-      timeSeconds: timeSeconds, wallClock: wallClock, measuredComponents: measuredComponents)
-    // What the document runs after its values, against the live store: a `RUN_ACTION` body's
-    // writes and the particle registers are what the rest of this frame draws with.
-    if try runFrameActions(timeSeconds: timeSeconds) {
-      try resolveAgain()
-    }
-    // The values over the registers the particles just published are this frame's too.
-    if advanceParticles(timeSeconds: timeSeconds) { try resolveAgain() }
+    try resolveFrameAndRunDocument(timeSeconds: timeSeconds, wallClock: wallClock)
     advanceImpulses(values: floats, timeSeconds: timeSeconds)
     if lastFrameEffectsTime != timeSeconds, !document.frameEffects.isEmpty {
       lastFrameEffectsTime = timeSeconds
@@ -565,7 +560,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// for `type`, in document order. A handler takes the event when its filter equals `metadata`: it
   /// writes `data` into its data ids, slot by slot (a zero id skips a slot), then, unless its
   /// condition evaluates to zero, runs its actions and reports its flags. Once a handler has written
-  /// its data the document's steps run again (`resolveAgain`), so the condition and the actions
+  /// its data the document's steps run again (`reapplyResolutionSteps`), so the condition and the actions
   /// read the values derived from that data.
   public func dispatchEvent(
     type: Int, metadata: Int, data: [Float] = [], timeSeconds: TimeInterval
@@ -583,7 +578,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         wroteData = true
       }
       // The values derived from the event's data are worked out before its condition reads them.
-      if wroteData { try resolveAgain() }
+      if wroteData { try reapplyResolutionSteps() }
       if let condition = handler.condition {
         let result = try NativeSwiftFloatExpression.evaluate(
           condition, values: floats, opcode: NativeSwiftWireOpcode.eventAction,
@@ -599,7 +594,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// Runs every `RUN_ACTION` body that follows a component, once per frame instant, as the
   /// reference does each time it paints the document: its writes land in the live store. Returns
   /// whether any action ran, in which case the caller works the frame's values out once more
-  /// (`resolveAgain`), so the values derived from those writes draw in the same frame, as the
+  /// (`reapplyResolutionSteps`), so the values derived from those writes draw in the same frame, as the
   /// reference's draw pass, which runs after the action, computes them.
   private func runFrameActions(timeSeconds: TimeInterval) throws -> Bool {
     guard !document.runActions.isEmpty, lastRunActionFrameTime != timeSeconds else { return false }
@@ -719,12 +714,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   ) throws -> NativeSwiftProbeValues {
     stateLock.lock()
     defer { stateLock.unlock() }
-    try resolveFrame(
-      timeSeconds: timeSeconds, wallClock: wallClock, measuredComponents: lastMeasuredComponents)
-    if try runFrameActions(timeSeconds: timeSeconds) {
-      try resolveAgain()
-    }
-    if advanceParticles(timeSeconds: timeSeconds) { try resolveAgain() }
+    try resolveFrameAndRunDocument(timeSeconds: timeSeconds, wallClock: wallClock)
     // The resolution updated retained state, so a previously cached static frame is no longer a
     // valid result for a later snapshot.
     staticSnapshotCache = nil
@@ -957,8 +947,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// Restores the named variable `name` to the value the document recorded, discarding the
   /// host's override — the inverse of the `set*` methods, as the Kotlin player's
   /// `clearNamedValue` is. The recorded value is the document's own, never one a host seeded when
-  /// the session opened. A named system variable goes back to the player's clock. A document
-  /// action's earlier write to the variable is discarded with the override.
+  /// the session opened (0 where it recorded none). A named system variable goes back to the
+  /// player's clock. A document action's override at the id stays, as Kotlin's clear keeps it.
   ///
   /// Returns whether `name` is a variable a host can write; a name the document does not declare
   /// (or declares as an image) is ignored, and clearing twice changes nothing.
@@ -1656,7 +1646,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// reads a number or colour a later step writes reads the previous resolution's value, as it
   /// does in Kotlin (a text reads the document's, as `beginFrame` reset them). Only when an input
   /// moved after the pass — a measured component value — do the steps run once more
-  /// (`resolveAgain`).
+  /// (`reapplyResolutionSteps`).
   ///
   /// Cost: O(steps + the expression words they evaluate) per resolution, plus the component-value
   /// estimates when the document binds any; the same steps once more when a component value moved.
@@ -1666,32 +1656,52 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   ) throws {
     frameTimeSeconds = timeSeconds
     frameWallClock = wallClock
-    resolvedFrameTime = timeSeconds
+    // Only a resolution that finished counts for `resolveUnlessResolved`.
+    resolvedFrameTime = nil
     beginFrame(timeSeconds: timeSeconds, wallClock: wallClock)
-    // Before the measurement a component value still holds its previous size (0 on the first
-    // frame), so a step that divides by one may fail yet: it keeps its previous value, and the
-    // second pass after the measurement (`resolveAgain`, every step) runs it for real and throws
-    // if it still fails. A document that binds no component has nothing to wait for.
+    // A step may read a value that is not there yet: a component value before its measurement (0
+    // on the first frame), or a number a later step writes, on the first resolution. Then a step
+    // that divides by one can fail: it keeps its previous value, and the second pass
+    // (`reapplyResolutionSteps`, every step) runs it for real and throws if it still fails. A
+    // document with neither has nothing to wait for.
     let bindsComponentValues = !document.componentValues.isEmpty
-    var stepFailedBeforeMeasurement = false
+    let mayWait = bindsComponentValues || document.floatExpressionsReadForward
+    var stepFailedWaiting = false
     for step in document.resolutionSteps {
       do {
-        try apply(step)
+        try applyStep(step)
       } catch {
-        guard bindsComponentValues else { throw error }
-        stepFailedBeforeMeasurement = true
+        guard mayWait else { throw error }
+        stepFailedWaiting = true
       }
     }
-    guard bindsComponentValues else { return }
-    // `RcPlayerState.publishComponentValues`: a measured value that moved is stored, and the
-    // document's values are worked out once more so the ones over it see it. Kotlin refreshes the
-    // float expressions there, and its settle pass applies the content operations again before the
-    // frame is drawn (`RcSettledLayout`, `RcFirstFrameSettleTest`); here that second pass runs at
-    // once, so a colour or text built on a refreshed float does not draw a frame stale. An
-    // unchanged measurement — every frame once the layout is stable — costs nothing more.
-    if publishComponentValues(measuredComponents) || stepFailedBeforeMeasurement {
-      try resolveAgain()
+    if bindsComponentValues {
+      // `RcPlayerState.publishComponentValues`: a measured value that moved is stored, and the
+      // document's values are worked out once more so the ones over it see it. Kotlin refreshes
+      // the float expressions there, and its settle pass applies the content operations again
+      // before the frame is drawn (`RcSettledLayout`, `RcFirstFrameSettleTest`); here that second
+      // pass runs at once, so a colour or text built on a refreshed float does not draw a frame
+      // stale. An unchanged measurement — every frame once the layout is stable — costs nothing.
+      if publishComponentValues(measuredComponents) || stepFailedWaiting {
+        try reapplyResolutionSteps()
+      }
+    } else if stepFailedWaiting {
+      try reapplyResolutionSteps()
     }
+    resolvedFrameTime = timeSeconds
+  }
+
+  /// One resolution against the last measurements, then what the document runs after its values,
+  /// against the live store: a `RUN_ACTION` body's writes and the particle registers, each followed
+  /// by the steps once more so the values over them are this frame's too. With particles that is
+  /// every frame: twice the steps' cost, three times with run actions as well.
+  private func resolveFrameAndRunDocument(
+    timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock?
+  ) throws {
+    try resolveFrame(
+      timeSeconds: timeSeconds, wallClock: wallClock, measuredComponents: lastMeasuredComponents)
+    if try runFrameActions(timeSeconds: timeSeconds) { try reapplyResolutionSteps() }
+    if advanceParticles(timeSeconds: timeSeconds) { try reapplyResolutionSteps() }
   }
 
   /// Every step once more, at the same instant, for a frame whose inputs moved after its pass — a
@@ -1699,8 +1709,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// as the Kotlin player's settle pass (`RcSettledLayout`'s `onSettled`) and draw pass apply the
   /// operations again without a new `beginFrame`. At most once per cause, so a value that reads its
   /// own previous one moves on by one more pass on such a frame, as there.
-  private func resolveAgain() throws {
-    for step in document.resolutionSteps { try apply(step) }
+  private func reapplyResolutionSteps() throws {
+    for step in document.resolutionSteps { try applyStep(step) }
   }
 
   /// For a conformance read at `timeSeconds` (a matrix, a float list, particle state): the values
@@ -1734,30 +1744,31 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// moves rather than standing at the 1970 epoch.
   private func loadSystemVariables(timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock?) {
     typealias System = NativeSwiftSystemVariables
-    let load = loadSystem
     let animationTime = Float(timeSeconds)
     let fields = wallClock?.fields
-    load(
+    loadSystem(
       System.continuousSeconds,
       fields.map { Float($0.secondOfHour) + Float($0.millisOfSecond) * 0.001 } ?? animationTime)
-    load(System.timeInSeconds, fields.map { Float($0.secondOfHour) })
-    load(System.timeInMinutes, fields.map { Float($0.hour * 60 + $0.minute) })
-    load(System.timeInHours, fields.map { Float($0.hour) })
-    load(System.calendarMonth, fields.map { Float($0.month) })
-    load(System.offsetToUTC, wallClock.map { Float($0.offsetSeconds) })
-    load(System.weekDay, fields.map { Float($0.isoDayOfWeek) })
-    load(System.dayOfMonth, fields.map { Float($0.dayOfMonth) })
-    load(System.dayOfYear, fields.map { Float($0.dayOfYear) })
-    load(System.year, fields.map { Float($0.year) })
-    load(System.animationTime, animationTime)
+    loadSystem(System.timeInSeconds, fields.map { Float($0.secondOfHour) })
+    loadSystem(System.timeInMinutes, fields.map { Float($0.hour * 60 + $0.minute) })
+    loadSystem(System.timeInHours, fields.map { Float($0.hour) })
+    loadSystem(System.calendarMonth, fields.map { Float($0.month) })
+    loadSystem(System.offsetToUTC, wallClock.map { Float($0.offsetSeconds) })
+    loadSystem(System.weekDay, fields.map { Float($0.isoDayOfWeek) })
+    loadSystem(System.dayOfMonth, fields.map { Float($0.dayOfMonth) })
+    loadSystem(System.dayOfYear, fields.map { Float($0.dayOfYear) })
+    loadSystem(System.year, fields.map { Float($0.year) })
+    loadSystem(System.animationTime, animationTime)
     loadHostDensity()
     // An integer the player owns, written as one (both views), as the reference's `setInteger`.
     // Without a wall clock it is left unset, as the calendar is.
-    if let wallClock, !claimedSystemIDs.contains(System.epochSecond) {
-      setInteger(
-        System.epochSecond, Int(NativeSwiftWallClock.floorDiv(wallClock.epochMillis, 1000)))
-    } else if wallClock == nil {
-      load(System.epochSecond, nil)
+    if let wallClock {
+      if !claimedSystemIDs.contains(System.epochSecond) {
+        setInteger(
+          System.epochSecond, Int(NativeSwiftWallClock.floorDiv(wallClock.epochMillis, 1000)))
+      }
+    } else {
+      loadSystem(System.epochSecond, nil)
     }
   }
 
@@ -1778,10 +1789,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   }
 
   /// One step, as `RcPlayerState.applyContentStateOperation` applies its operation, with two
-  /// differences: a lookup whose list, index, map or key is missing leaves its output as it was
-  /// where Kotlin refuses the document, and a step under a `THEME` marker is not skipped for the
-  /// other theme (this core's markers scope nothing; see `setRequestedTheme`).
-  private func apply(_ step: ParsedResolutionStep) throws {
+  /// differences: an id lookup or data-map lookup whose list, index, map or key is missing leaves
+  /// its output as it was, and a text lookup clamps its index, where Kotlin refuses the document;
+  /// and a step under a `THEME` marker is not skipped for the other theme (this core's markers
+  /// scope nothing; see `setRequestedTheme`).
+  private func applyStep(_ step: ParsedResolutionStep) throws {
     switch step {
     case .floatExpression(let expression):
       try applyFloatExpression(expression)
@@ -1817,6 +1829,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         attribute, timeSeconds: frameTimeSeconds, wallClock: frameWallClock)
       {
         setFloat(attribute.outputID, value)
+      } else if frameWallClock == nil {
+        // Nothing to measure from without a wall clock: unset, as the calendar is then.
+        floats[attribute.outputID] = nil
+        integers[attribute.outputID] = nil
       }
     case .matrixVectorMath(let operation):
       applyMatrixVectorMath(operation)
@@ -1889,7 +1905,6 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private func publishComponentValues(
     _ measuredComponents: [Int: NativeSwiftMeasuredSize]
   ) -> Bool {
-    typealias Kind = NativeSwiftComponentValueType
     var changed = false
     // Subtree estimates are pure in (node, dimension) for one `floats` table, so they are shared
     // across bindings -- a parent and child both bound, or a width and height binding on one node,
@@ -1898,12 +1913,15 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     var estimates: [NativeSwiftEstimateKey: Float] = [:]
     for binding in document.componentValues {
       // Width and height are the only two types the decoder accepts, and the two a host reports.
-      let isWidth = binding.type == Kind.width
+      let isWidth = binding.type == NativeSwiftComponentValueType.width
       let documentSize = Float(isWidth ? document.width : document.height)
       let value: Float
-      if let measured = measuredComponents[binding.componentID] {
-        // A real measurement wins over any estimate.
-        value = isWidth ? measured.width : measured.height
+      if let measured = measuredComponents[binding.componentID],
+        case let size = isWidth ? measured.width : measured.height, size.isFinite, size >= 0
+      {
+        // A real measurement wins over any estimate; a host's non-finite or negative one is
+        // ignored, as it would stay in the live store.
+        value = size
       } else if let node = document.nodes[binding.componentID] {
         if document.layoutReadsComponentValues { estimates.removeAll(keepingCapacity: true) }
         value = estimatedDimension(
@@ -1988,7 +2006,6 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     return true
   }
 
-
   /// `RcPlayerState.applyTextOperation`: one text producer against the live store. A text not
   /// (yet) produced reads as empty.
   private func applyTextOperation(_ operation: ParsedTextOperation) {
@@ -2021,7 +2038,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       let length = nativeSwiftClampedInt(
         NativeSwiftFloatExpression.resolve(subtext.length, values: floats))
       // Clamp against the remaining units before adding, so a saturated length cannot overflow.
-      let end = length == -1 ? units.count : start + min(max(length, 0), units.count - start)
+      let end = length == -1 ? units.count : start + length.clamped(to: 0...(units.count - start))
       texts[subtext.outputID] = String(decoding: units[start..<end], as: UTF16.self)
     }
   }
@@ -2099,9 +2116,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   }
 
   private func colorAttribute(_ type: Int, of color: UInt32) -> Float {
-    let red = Float((color >> 16) & 0xff) / 255
-    let green = Float((color >> 8) & 0xff) / 255
-    let blue = Float(color & 0xff) / 255
+    let red = Float((color >> 16) & 0xff) / AndroidXColorMath.maximum
+    let green = Float((color >> 8) & 0xff) / AndroidXColorMath.maximum
+    let blue = Float(color & 0xff) / AndroidXColorMath.maximum
     let maximum = max(red, green, blue)
     let minimum = min(red, green, blue)
     let delta = maximum - minimum
@@ -2120,7 +2137,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case NativeSwiftColorAttributeType.red: return red
     case NativeSwiftColorAttributeType.green: return green
     case NativeSwiftColorAttributeType.blue: return blue
-    default: return Float((color >> 24) & 0xff) / 255
+    default: return Float((color >> 24) & 0xff) / AndroidXColorMath.maximum
     }
   }
 
@@ -2146,28 +2163,19 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case Mode.hsv...Mode.idARGB:
       let alpha: Float =
         switch mode {
-        case Mode.hsv: Float(expression.modeAndAlpha >> 16) / ColorChannel.maximum
-        case Mode.argb: Float(expression.modeAndAlpha >> 16) / ColorChannel.argbAlphaScale
+        case Mode.hsv: Float(expression.modeAndAlpha >> 16) / AndroidXColorMath.maximum
+        case Mode.argb: Float(expression.modeAndAlpha >> 16) / AndroidXColorMath.argbAlphaScale
         default: NativeSwiftFloatExpression.resolve(expression.alphaReferenceWord, values: floats)
         }
-      let (first, second, third) = (
-        float(expression.first), float(expression.second), float(expression.third)
-      )
       return mode == Mode.hsv
-        ? hsvColor(alpha: alpha, hue: first, saturation: second, brightness: third)
-        : argbColor(alpha: alpha, red: first, green: second, blue: third)
+        ? hsvColor(
+          alpha: alpha, hue: float(expression.first), saturation: float(expression.second),
+          brightness: float(expression.third))
+        : argbColor(
+          alpha: alpha, red: float(expression.first), green: float(expression.second),
+          blue: float(expression.third))
     default: return nil
     }
-  }
-
-  /// The colour arithmetic constants AndroidX's `Utils` and `ColorExpression` use.
-  private enum ColorChannel {
-    /// A channel's largest byte, which a normalised channel is scaled by.
-    static let maximum: Float = 255
-    /// The display gamma an interpolation mixes in linear light under.
-    static let gamma = 2.2
-    /// The fixed-point scale of `ARGB` mode's alpha, in the mode word's high half.
-    static let argbAlphaScale: Float = 1024
   }
 
   /// AndroidX `Utils.interpolateColor`, as the Kotlin player's `RcColorEvaluator.interpolate`
@@ -2177,22 +2185,24 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     if tween.isNaN || tween == 0 { return first }
     if tween == 1 { return second }
     func linearChannel(_ color: UInt32, shift: UInt32) -> Float {
-      Float(pow(Double(Float((color >> shift) & 0xff) / ColorChannel.maximum), ColorChannel.gamma))
+      let channel = Float((color >> shift) & 0xff) / AndroidXColorMath.maximum
+      return Float(pow(Double(channel), AndroidXColorMath.gamma))
     }
     func truncatedByte(_ value: Float) -> UInt32 {
       // `Float.toInt()`: NaN is 0, and the clamp bounds the rest.
       guard !value.isNaN else { return 0 }
-      return UInt32(min(max(value, 0), ColorChannel.maximum))
+      return UInt32(value.clamped(to: 0...AndroidXColorMath.maximum))
     }
     func mixedChannel(_ shift: UInt32) -> UInt32 {
       let from = linearChannel(first, shift: shift)
       let mixed = from + tween * (linearChannel(second, shift: shift) - from)
-      return truncatedByte(Float(pow(Double(mixed), 1 / ColorChannel.gamma)) * ColorChannel.maximum)
+      let encoded = Float(pow(Double(mixed), 1 / AndroidXColorMath.gamma))
+      return truncatedByte(encoded * AndroidXColorMath.maximum)
     }
-    let firstAlpha = Float(first >> 24) / ColorChannel.maximum
-    let secondAlpha = Float(second >> 24) / ColorChannel.maximum
+    let firstAlpha = Float(first >> 24) / AndroidXColorMath.maximum
+    let secondAlpha = Float(second >> 24) / AndroidXColorMath.maximum
     let alpha = truncatedByte(
-      (firstAlpha + tween * (secondAlpha - firstAlpha)) * ColorChannel.maximum)
+      (firstAlpha + tween * (secondAlpha - firstAlpha)) * AndroidXColorMath.maximum)
     return alpha << 24 | mixedChannel(16) << 16 | mixedChannel(8) << 8 | mixedChannel(0)
   }
 
@@ -2203,8 +2213,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// that. A colour is not worth failing a frame over, so a non-finite channel saturates instead.
   private func argbColor(alpha: Float, red: Float, green: Float, blue: Float) -> UInt32 {
     func byte(_ value: Float) -> UInt32 {
-      guard value.isFinite else { return value > 0 ? 255 : 0 }
-      return UInt32((min(max(value, 0), 1) * 255).rounded())
+      guard value.isFinite else { return value > 0 ? UInt32(AndroidXColorMath.maximum) : 0 }
+      return UInt32((value.clamped(to: 0...1) * AndroidXColorMath.maximum).rounded())
     }
     return byte(alpha) << 24 | byte(red) << 16 | byte(green) << 8 | byte(blue)
   }
@@ -2351,7 +2361,6 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     return available
   }
 
-
   /// Flattens a bare content wrapper into its parent for measurement.
   ///
   /// The padding test runs on resolved values, not on words: a wrapper whose padding is computed
@@ -2390,6 +2399,17 @@ extension Comparable {
 extension Int {
   /// The index nearest to the value within non-empty `indices`.
   fileprivate func clamped(to indices: Range<Int>) -> Int {
-    clamped(to: indices.lowerBound...(indices.upperBound - 1))
+    precondition(!indices.isEmpty, "no index to clamp to")
+    return clamped(to: indices.lowerBound...(indices.upperBound - 1))
   }
+}
+
+/// The colour arithmetic constants AndroidX's `Utils` and `ColorExpression` use.
+private enum AndroidXColorMath {
+  /// A channel's largest byte, which a normalised channel is scaled by.
+  static let maximum: Float = 255
+  /// The display gamma an interpolation mixes in linear light under.
+  static let gamma = 2.2
+  /// The fixed-point scale of `ARGB` mode's alpha, in the mode word's high half.
+  static let argbAlphaScale: Float = 1024
 }

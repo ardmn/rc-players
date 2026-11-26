@@ -3126,6 +3126,17 @@ enum NativeSwiftDocumentDecoder {
         pending.append(contentsOf: node.children)
       }
     }
+    var lastWriter: [Int: Int] = [:]
+    for (index, step) in resolutionSteps.enumerated() {
+      for id in step.numericOutputIDs { lastWriter[id] = index }
+    }
+    let floatExpressionsReadForward = resolutionSteps.enumerated().contains { index, step in
+      guard case .floatExpression(let expression) = step else { return false }
+      return expression.words.contains { word in
+        NativeSwiftFloatExpression.referenceID(word).flatMap { lastWriter[$0] }.map { $0 >= index }
+          ?? false
+      }
+    }
     return ParsedDocument(
       width: width, height: height, density: density, densityBehavior: densityBehavior,
       root: root, nodes: nodes, texts: texts, floats: floats,
@@ -3159,6 +3170,7 @@ enum NativeSwiftDocumentDecoder {
       imageSnapshots: images.values.filter { !$0.isComponentOffscreenBuffer }
         .sorted { $0.id < $1.id }.map(\.snapshot),
       boundComponentIDs: Set(componentValues.map(\.componentID)),
+      floatExpressionsReadForward: floatExpressionsReadForward,
       layoutReadsComponentValues: !componentValueIDs.isEmpty
         && root.references(anyOf: componentValueIDs))
   }

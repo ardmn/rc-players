@@ -69,7 +69,7 @@ kotlin {
 // longer sets. `-Prc.valueResolutionDifferential.update=true` rewrites the fixture in the same run
 // that checks it, so that run is never up to date or taken from the cache.
 abstract class ValueResolutionDifferentialFixture : CommandLineArgumentProvider {
-  @get:InputFile @get:PathSensitive(PathSensitivity.NONE) abstract val fixture: RegularFileProperty
+  @get:InputFiles @get:PathSensitive(PathSensitivity.NONE) abstract val fixture: RegularFileProperty
 
   @get:Input abstract val update: Property<Boolean>
 
@@ -81,7 +81,8 @@ abstract class ValueResolutionDifferentialFixture : CommandLineArgumentProvider 
 }
 
 tasks.named<Test>("jvmTest") {
-  val update = providers.gradleProperty("rc.valueResolutionDifferential.update").orNull == "true"
+  val updateFixture =
+    providers.gradleProperty("rc.valueResolutionDifferential.update").orNull == "true"
   jvmArgumentProviders.add(
     objects.newInstance<ValueResolutionDifferentialFixture>().apply {
       fixture.set(
@@ -89,10 +90,10 @@ tasks.named<Test>("jvmTest") {
           "Tests/RcNativePlayerCoreTests/Fixtures/value-resolution-differential.json",
         ),
       )
-      this.update.set(update)
+      update.set(updateFixture)
     },
   )
-  if (update) doNotTrackState("rewrites the value-resolution differential fixture")
+  if (updateFixture) doNotTrackState("rewrites the value-resolution differential fixture")
 }
 
 // `checkKotlinAbi` is not wired into `check` by the Kotlin Gradle plugin, so an unrecorded surface
