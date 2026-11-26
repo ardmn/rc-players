@@ -138,8 +138,11 @@ internal val EMBED_TYPE_NAMES: List<String> =
  */
 internal const val NAMED_VALUE_ROW_SEPARATOR: String = "\u0001"
 
-/** Separates a row's fields; see [NAMED_VALUE_ROW_SEPARATOR]. */
-internal const val NAMED_VALUE_FIELD_SEPARATOR: String = "\u0000"
+/**
+ * Separates a row's fields; see [NAMED_VALUE_ROW_SEPARATOR]. `Main.kt` joins `navigator.languages`
+ * with the same character, but that is a format of its own.
+ */
+internal const val NAMED_VALUE_FIELD_SEPARATOR: String = "\u0000" // lint-ok: definition
 
 /** A row's encoded text fields: `kind`, `name` and `value`. */
 internal const val NAMED_VALUE_TEXT_FIELD_COUNT: Int = 3

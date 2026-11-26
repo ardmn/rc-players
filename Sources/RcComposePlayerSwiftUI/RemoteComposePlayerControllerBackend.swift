@@ -121,7 +121,7 @@ protocol ControllerBackendProtocol: AnyObject {
       var kept: [String: ControllerNamedValue] = [:]
       // In key order, so that when two stored names resolve to one declared name ("foo" and
       // "USER:foo") the same one wins every time. O(n log n) in the stored names, a handful.
-      for (name, value) in values.sorted(by: { $0.key < $1.key }) {
+      for (name, value) in values.sorted(by: { $0.key < $1.key }) {  // lint-ok: reason above
         guard let declared = declarations.declaredName(for: name),
           declarations.accepts(value, for: declared)
         else { continue }
@@ -163,14 +163,15 @@ protocol ControllerBackendProtocol: AnyObject {
       var seeded: [String: ControllerNamedValue] = [:]
       // Key order, as in `attach`: two initial names that resolve to one declared name always
       // leave the same one seeded.
-      for (name, value) in initial.sorted(by: { $0.key < $1.key }) {
+      for (name, value) in initial.sorted(by: { $0.key < $1.key }) {  // lint-ok: reason above
         guard let declared = declarations.declaredName(for: name),
           declarations.accepts(value, for: declared)
         else { continue }
         seeded[declared] = value
       }
       // Replayed in key order, so the player receives the values in the same order every time.
-      for (name, value) in values.sorted(by: { $0.key < $1.key }) where seeded[name] != value {
+      let replay = values.sorted(by: { $0.key < $1.key })  // lint-ok: reason above
+      for (name, value) in replay where seeded[name] != value {
         handler(name, value)
       }
     }
@@ -183,7 +184,8 @@ protocol ControllerBackendProtocol: AnyObject {
     /// before its declarations finish loading on the main actor. Sorted because a seed is applied
     /// in order and a dictionary's order changes from run to run; O(n log n) in the stored names.
     var initialSeedValues: [(name: String, value: RemoteComposeNativeNamedValue)] {
-      values.sorted { $0.key < $1.key }.map { (name: $0.key, value: $0.value.nativeValue) }
+      values.sorted { $0.key < $1.key }  // lint-ok: reason above
+        .map { (name: $0.key, value: $0.value.nativeValue) }
     }
 
     /// The values written so far, by the name the player's document declares them under, which
