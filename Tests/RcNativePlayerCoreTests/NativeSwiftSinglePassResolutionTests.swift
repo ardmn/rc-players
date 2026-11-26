@@ -12,6 +12,10 @@ import Testing
 /// values are read from what the snapshot drew, not from `probeValues`, which resolves again on
 /// its own; data-only documents with no frame are read through `probeValues`.
 ///
+/// The known issues left are not resolution order: the decoder's decode-time conditionals and
+/// unrolled loops, the float evaluator's refusals and the float animation runtime
+/// (ardmn/work#136, #137).
+///
 /// The cases `NativeSwiftValueOrderTests`, `NativeSwiftKotlinParityTests`,
 /// `NativeSwiftFloatIntegerViewTests` and `NativeSwiftIntegerWriteTests` already port are not
 /// repeated here.
@@ -188,9 +192,7 @@ import Testing
     _ = try session.snapshot(timeSeconds: 0)
     #expect(session.setFloat(50, forID: 2))
     let events = try session.click(componentID: 3, timeSeconds: 0)
-    withKnownIssue("an action sends a derived text as the last frame left it") {
-      #expect(events == [.namedAction(name: "ha", value: .text("ticks=50"))], "\(events as Any)")
-    }
+    #expect(events == [.namedAction(name: "ha", value: .text("ticks=50"))], "\(events as Any)")
   }
 
   /// `RcPlayerStateTest.aTextNotYetProducedReadsAsEmptyAndAnEmptyPathExpressionDrawsNothing`, the
@@ -206,9 +208,7 @@ import Testing
       document.u8(Op.textSubtext).int(14).int(1).float(5).float(-1)
     }.probeValues(timeSeconds: 0)
     #expect(values.texts[10] == "abc", "\(values.texts[10] as Any)")
-    withKnownIssue("a length over a text nothing produced is left unset") {
-      #expect(values.floats[11] == 0, "\(values.floats[11] as Any)")
-    }
+    #expect(values.floats[11] == 0, "\(values.floats[11] as Any)")
     #expect(values.texts[12] == "", "\(values.texts[12] as Any)")
     #expect(values.texts[13] == "bc", "\(values.texts[13] as Any)")
     #expect(values.texts[14] == "", "\(values.texts[14] as Any)")
@@ -225,12 +225,8 @@ import Testing
       drawn += Self.drawnTexts(try session.snapshot(timeSeconds: time))
       sent.append(try session.click(componentID: 3, timeSeconds: time))
     }
-    withKnownIssue("a derived text is not reset before each resolution") {
-      #expect(drawn == ["ab", "ab"], "\(drawn)")
-    }
-    withKnownIssue("a derived text is not reset before each resolution") {
-      #expect(sent == [[Self.sentAB], [Self.sentAB]], "\(sent)")
-    }
+    #expect(drawn == ["ab", "ab"], "\(drawn)")
+    #expect(sent == [[Self.sentAB], [Self.sentAB]], "\(sent)")
   }
 
   /// The Kotlin test as written: one frame, then two clicks with no frame between them. Each
@@ -597,9 +593,7 @@ import Testing
     #expect(Self.drawnWidths(try session.snapshot(timeSeconds: 0)) == [100])
     #expect(session.setFloat(999, for: "compWidth"))
     let widths = Self.drawnWidths(try session.snapshot(timeSeconds: 0))
-    withKnownIssue("a host write to a component value's id is kept over the measurement") {
-      #expect(widths == [100], "\(widths)")
-    }
+    #expect(widths == [100], "\(widths)")
   }
 
   // MARK: - Compose module: geometry and visibility
@@ -786,9 +780,7 @@ import Testing
     _ = try session.probeValues(timeSeconds: 0)
     #expect(session.setFloat(1, forID: 43))
     let value = try session.probeValues(timeSeconds: 0).floats[43]
-    withKnownIssue("a host write to an expression's output is kept over the expression") {
-      #expect(value == 6, "Kotlin 6; Swift \(value as Any)")
-    }
+    #expect(value == 6, "Kotlin 6; Swift \(value as Any)")
   }
 
   /// The same write by name: Kotlin's `setNamedValue` is `setFloat` too, so the next evaluation
@@ -802,9 +794,7 @@ import Testing
     #expect(try session.probeValues(timeSeconds: 0).floats[43] == 5)
     #expect(session.setFloat(42, for: "sum"))
     let value = try session.probeValues(timeSeconds: 0).floats[43]
-    withKnownIssue("a host write to an expression's output is kept over the expression") {
-      #expect(value == 5, "Kotlin 5; Swift \(value as Any)")
-    }
+    #expect(value == 5, "Kotlin 5; Swift \(value as Any)")
   }
 
   // MARK: - RcFloatExpressionEvaluatorRobustnessTest
@@ -977,6 +967,62 @@ import Testing
     withKnownIssue("a spring integrates a long frame gap in one unstable step") {
       #expect(next < first && next > 0, "\(next)")
     }
+  }
+
+  // MARK: - Transitions of the live store
+
+  /// `RcValueOrderReferenceTest.cycle`: the store is live, so each resolution starts from what the
+  /// last one left. I60 = [70] + 1, F70 = [60] + 1: 1 and 2 on the first pass, 3 and 4 on the next.
+  @Test func aCycleMovesOnByOnePassPerResolution() throws {
+    let session = try NativeSwiftDocumentSession.open(
+      data: NativeSwiftValueOrderTests.cycleDocument(), toleratingRootlessData: true)
+    let passes = try (0..<3).map { _ in try session.probeValues(timeSeconds: 0) }
+    let seen = passes.map { [$0.integers[60] ?? -1, Int($0.floats[70] ?? -1)] }
+    #expect(seen == [[1, 2], [3, 4], [5, 6]], "\(seen)")
+  }
+
+  /// A host's measurement publishes a component value only when it moved, and a move evaluates
+  /// the float expressions over it again in the same resolution (`publishComponentValues`): F91 =
+  /// [90] * 2 over box 5's measured width.
+  @Test func aMeasuredWidthThatMovesRefreshesTheExpressionsOverIt() throws {
+    let document = Writer()
+    document.header(width: 400, height: 400)
+    document.u8(Op.componentValue).int(NativeSwiftComponentValueType.width).int(5).int(90)
+    document.u8(Op.animatedFloat).int(91).int(3).int(Writer.nanReference(90)).float(2)
+      .int(Self.mul)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(5).int(-1).int(1).int(1)
+    document.u8(Op.layoutContent).int(-1).u8(Op.containerEnd)
+    document.u8(Op.containerEnd)
+    Self.drawWidth(document, of: 91)
+    document.u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    var widths: [Float] = []
+    for (time, width) in [(0.0, Float(40)), (1.0, 40), (2.0, 60)] {
+      let measured = [5: NativeSwiftMeasuredSize(width: width, height: 10)]
+      let snapshot = try session.snapshot(timeSeconds: time, measuredComponents: measured)
+      widths += Self.drawnWidths(snapshot)
+    }
+    #expect(widths == [80, 80, 120], "\(widths)")
+  }
+
+  /// A document action's override is state the session carries: a detached copy keeps it, so
+  /// the declaring expression does not run there either.
+  @Test func anActionOverrideSurvivesADetachedCopy() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(50).int(1).float(3)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
+    document.u8(Op.modifierClick).u8(Op.valueFloatChangeAction).int(50).float(7)
+      .u8(Op.containerEnd)
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    #expect(try session.probeValues(timeSeconds: 0).floats[50] == 3)
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    let copy = session.detachedCopy()
+    #expect(try copy.probeValues(timeSeconds: 1).floats[50] == 7)
+    #expect(try session.probeValues(timeSeconds: 1).floats[50] == 7)
   }
 
   // MARK: - RcParticleRuntimeTest

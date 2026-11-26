@@ -61,6 +61,27 @@ public enum NativeSwiftSystemVariables {
 
   /// Calendar year.
   public static let year = 35
+
+  /// Every id this player loads at the start of a resolution, so the session can tell one from a
+  /// document's own: a write to one claims it from the player (`RcPlayerState.claimedSystemIds`),
+  /// and an integer expression reads an unclaimed one as its float truncated. The reference also
+  /// loads `WINDOW_WIDTH` and `WINDOW_HEIGHT` (5, 6) and `ANIMATION_DELTA_TIME` (31), which this
+  /// core does not supply; at those ids a document's value is its own.
+  static let all: Set<Int> = Set(allIDs)
+
+  private static let allIDs = [
+    continuousSeconds, timeInSeconds, timeInMinutes, timeInHours, calendarMonth, offsetToUTC,
+    weekDay, dayOfMonth, density, animationTime, epochSecond, fontSize, dayOfYear, year,
+  ]
+
+  /// `all` as bits, every id being below 64: a resolution asks of every value it writes whether it
+  /// is a system id, so the answer is a shift rather than a hash.
+  private static let allMask: UInt64 = allIDs.reduce(0) { $0 | (1 << UInt64($1)) }
+
+  /// Whether `id` is in `all`.
+  @inline(__always) static func isSystem(_ id: Int) -> Bool {
+    id >= 0 && id < 64 && allMask & (1 << UInt64(id)) != 0
+  }
 }
 
 /// The host's wall clock, which is what a document's calendar and time-of-day variables read.

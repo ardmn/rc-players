@@ -222,7 +222,9 @@ import Testing
   @Test func customFloatReturnIsAlsoItsIntegerView() throws {
     let output = Writer()
     output.header(width: 100, height: 100)
-    output.u8(Op.animatedFloat).int(70).int(1).float(0.4)
+    // A constant, not an expression: the next evaluation of an expression at 70 would replace
+    // the return, as Kotlin's `setFloat` is replaced.
+    output.u8(Op.dataFloat).int(70).float(0.4)
     output.u8(Op.integerExpression).int(71).int(1).int(1).int(70)
     output.text(id: 40, "demo:SwiftControls")
     output.u8(Op.layoutRoot).int(1)
@@ -435,9 +437,7 @@ import Testing
       data: document.data, toleratingRootlessData: true
     ).probeValues(timeSeconds: 0)
     #expect(values.floats[80] == 5)
-    withKnownIssue("the session resolves integer expressions before the floats they read") {
-      #expect(values.integers[81] == 5, "\(String(describing: values.integers[81]))")
-    }
+    #expect(values.integers[81] == 5, "\(String(describing: values.integers[81]))")
   }
 
   /// Kotlin `ComponentValue` -> `storeFloat(valueId, width)`: an integer expression reads it.
@@ -456,9 +456,7 @@ import Testing
     _ = try session.snapshot()
     let values = try session.probeValues(timeSeconds: 0)
     #expect(values.floats[90] == 100, "\(String(describing: values.floats[90]))")
-    withKnownIssue("the session resolves integer expressions before the floats they read") {
-      #expect(values.integers[91] == 100, "\(String(describing: values.integers[91]))")
-    }
+    #expect(values.integers[91] == 100, "\(String(describing: values.integers[91]))")
   }
 
   /// Kotlin: a float constant at EPOCH_SECOND claims the id; `load` publishes integers = trunc(f).
@@ -496,10 +494,8 @@ import Testing
     _ = try session.snapshot(timeSeconds: 0)
     let values = try session.probeValues(timeSeconds: 0)
     #expect(values.floats[73] == 2.75, "\(String(describing: values.floats[73]))")
-    withKnownIssue("a data-map float lookup publishes no integer view") {
-      #expect(values.integers[73] == 2, "\(String(describing: values.integers[73]))")
-      #expect(values.integers[74] == 2, "\(String(describing: values.integers[74]))")
-    }
+    #expect(values.integers[73] == 2, "\(String(describing: values.integers[73]))")
+    #expect(values.integers[74] == 2, "\(String(describing: values.integers[74]))")
   }
 
   /// Kotlin's particle runtime publishes each register through `setFloat`: the register's integer
@@ -563,8 +559,8 @@ import Testing
     #expect(values.integers[51] == 6 && values.integers[53] == 6, "\(values.integers[53] as Any)")
   }
 
-  /// A computed float keeps its float view across resolutions: its integer view is never
-  /// projected back over it, even by a producer the settle pass does not run again.
+  /// A computed float keeps its float view across resolutions: an integer expression over it reads
+  /// its integer view and never writes back over the float.
   @Test func aComputedFloatKeepsItsFloatViewAcrossResolutions() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -572,7 +568,7 @@ import Testing
     // 80 = the red channel of 60, 128 / 255.
     document.u8(Op.attributeColor).int(80).int(60).u16(NativeSwiftColorAttributeType.red)
     document.u8(Op.integerExpression).int(81).int(1).int(1).int(80)
-    // 82 reads 81, so the integer expressions run again once the floats are known.
+    // 82 reads 81, the expression before it in wire order.
     document.u8(Op.animatedFloat).int(82).int(1).int(Writer.nanReference(81))
     let session = try NativeSwiftDocumentSession.open(
       data: document.data, toleratingRootlessData: true)
@@ -581,17 +577,15 @@ import Testing
       #expect(
         values.floats[80] == Float(128) / 255,
         "t=\(time): \(String(describing: values.floats[80]))")
-      withKnownIssue("the session resolves integer expressions before the floats they read") {
-        #expect(values.integers[80] == 0 && values.integers[81] == 0 && values.floats[82] == 0)
-      }
+      #expect(values.integers[80] == 0 && values.integers[81] == 0 && values.floats[82] == 0)
     }
   }
 
-  // MARK: - Integer slots the float evaluator projects
+  // MARK: - Integer writes a float expression reads
 
   /// A host integer write to a variable the document declares with no value of its own: a float
-  /// expression reads it through the projection, on every resolution.
-  @Test func aHostIntegerWithNoDocumentValueIsProjectedToFloats() throws {
+  /// expression reads the float view `setInteger` writes with it, on every resolution.
+  @Test func aHostIntegerWithNoDocumentValueIsReadByAFloatExpression() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
     document.namedVariable(id: 9, type: Named.int, name: "USER:count")
@@ -605,9 +599,9 @@ import Testing
     }
   }
 
-  /// An `ID_LOOKUP` output is an integer slot: a float expression reads it on every resolution,
+  /// An `ID_LOOKUP` output is an integer write: a float expression reads it on every resolution,
   /// not only on the one where the lookup moved.
-  @Test func anIdLookupOutputIsProjectedToFloats() throws {
+  @Test func anIdLookupOutputIsReadByAFloatExpression() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
     document.u8(Op.idList).int(40).int(3).int(11).int(12).int(13)

@@ -4,8 +4,28 @@ import Foundation
 enum ParsedNumericConstant {
   case float(id: Int, value: Float)
   case integer(id: Int, value: Int)
-  /// An `ImageAttribute` size: a float the reference writes again on every pass.
+}
+
+/// One value operation a resolution runs, as `RcPlayerState.applyContentStateOperation` (and, for a
+/// time attribute or matrix-vector math, the canvas draw pass) applies it. The document keeps them
+/// in wire order, so a step reads what the steps before it wrote in the same pass and what the
+/// steps after it wrote in the previous one.
+enum ParsedResolutionStep {
+  case floatExpression(ParsedFloatExpression)
+  case integerExpression(id: Int, ParsedIntegerExpression)
+  case colorExpression(ParsedColorExpression)
+  /// `ColorTheme`: the fallback for the requested theme (light unless dark is requested).
+  case colorTheme(id: Int, light: UInt32, dark: UInt32)
+  case colorAttribute(ParsedColorAttribute)
+  /// `ImageAttribute`: a bitmap's declared width or height.
   case imageSize(id: Int, value: Float)
+  case idLookup(ParsedIdLookup)
+  case dataMapLookup(ParsedDataMapLookup)
+  case text(ParsedTextOperation)
+  /// `TextLength`, and `TextAttribute`'s length selector.
+  case textLength(ParsedTextLength)
+  case timeAttribute(ParsedTimeAttribute)
+  case matrixVectorMath(ParsedMatrixVectorMath)
 }
 
 struct ParsedDocument {
@@ -19,14 +39,14 @@ struct ParsedDocument {
   let floats: [Int: Float]
   let colors: [Int: UInt32]
   let integers: [Int: Int]
-  /// Every literal `FloatConstant`, `IntegerConstant` and image size (`ImageAttribute`), in wire
-  /// order. A float and an integer written at one id share it: the reference applies them in order,
-  /// each publishing both numeric views, which the two maps above cannot say.
+  /// Every literal `FloatConstant` and `IntegerConstant`, in wire order. A float and an integer
+  /// written at one id share it: the reference loads them in order (`RcSeedValues.load`), each
+  /// publishing both numeric views, which the two maps above cannot say.
   let numericConstants: [ParsedNumericConstant]
+  /// What a resolution runs, in wire order; see `ParsedResolutionStep`.
+  let resolutionSteps: [ParsedResolutionStep]
+  /// The last integer expression declared at each id, for an action that evaluates one by id.
   let integerExpressions: [Int: ParsedIntegerExpression]
-  /// The same expressions in the order the document declared them: one may read another's result,
-  /// so evaluation follows the wire rather than a dictionary's iteration order.
-  let integerExpressionOrder: [Int]
   let namedVariables: [String: ParsedNamedVariable]
   let expressions: [ParsedFloatExpression]
   let componentValues: [ParsedComponentValue]
@@ -46,6 +66,9 @@ struct ParsedDocument {
   /// Text producers in exactly the order the wire declared them. A later operation may consume an
   /// earlier result regardless of their concrete operation types.
   let textOperations: [ParsedTextOperation]
+  /// The one text operation that computes each text an action can compute again, by its output
+  /// (`ParsedTextOperation.producers`); see `NativeSwiftDocumentSession.currentText`.
+  let textProducers: [Int: ParsedTextOperation]
   let textFromFloats: [ParsedTextFromFloat]
   let textMerges: [ParsedTextMerge]
   let textTransforms: [ParsedTextTransform]
@@ -68,7 +91,6 @@ struct ParsedDocument {
   let shaderUniformNames: [Int: Set<String>]
   let conditionalTraces: [NativeSwiftConditionalTraceSnapshot]
   let impulses: [ParsedImpulse]
-  let darkColors: [Int: UInt32]
   /// `WAKE_IN` requests, as the words the document wrote.
   let wakeWords: [UInt32]
   let particleDefinitions: [ParsedParticleDefinition]
@@ -105,12 +127,8 @@ struct ParsedDocument {
   let imageSnapshots: [NativeSwiftImageResourceSnapshot]
   /// The components `componentValues` bind, as `NativeSwiftDocumentSnapshot.boundComponents`.
   let boundComponentIDs: Set<Int>
-  /// Whether the tolerant first expression pass can change what the authoritative pass computes:
-  /// a component-value binding reads between them, or an expression reads an id that the same or
-  /// a later expression writes. See `resolvedFloats`.
-  let needsTolerantExpressionPass: Bool
   /// Whether any layout word reads a component-value binding's output, which invalidates a
-  /// subtree estimate once that binding is written. See `resolvedFloats`.
+  /// subtree estimate once that binding is written. See `publishComponentValues`.
   let layoutReadsComponentValues: Bool
 }
 

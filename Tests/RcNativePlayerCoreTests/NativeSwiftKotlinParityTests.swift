@@ -91,10 +91,8 @@ import Testing
       data: document.data, toleratingRootlessData: true)
     let values = try session.probeValues(timeSeconds: 0)
     #expect(values.floats[53] == 3.5)
-    withKnownIssue("a float expression publishes no integer view") {
-      #expect(values.integers[53] == 3, "\(String(describing: values.integers[53]))")
-      #expect(values.integers[54] == 3, "\(String(describing: values.integers[54]))")
-    }
+    #expect(values.integers[53] == 3, "\(String(describing: values.integers[53]))")
+    #expect(values.integers[54] == 3, "\(String(describing: values.integers[54]))")
   }
 
   /// `RcSystemVariableTest.anIntegerExpressionOverTheClockReadsItTruncated`: an integer expression
@@ -110,9 +108,7 @@ import Testing
       data: document.data, toleratingRootlessData: true)
     let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
     let value = try session.probeValues(timeSeconds: 0, wallClock: clock).integers[150]
-    withKnownIssue("integer expressions do not read the clock") {
-      #expect(value == 45, "\(String(describing: value))")
-    }
+    #expect(value == 45, "\(String(describing: value))")
   }
 
   /// AndroidX `RemoteComposeState.overrideFloat`, which an `EVENT_ACTION` handler's data writes
@@ -158,9 +154,7 @@ import Testing
     _ = try session.click(componentID: 3, timeSeconds: 0)
     let first = try session.probeValues(timeSeconds: 0.1)
     #expect(first.floats[50] == 0.75)
-    withKnownIssue("a document action's integer write is not kept over its declaring expression") {
-      #expect(first.integers[51] == 9, "\(String(describing: first.integers[51]))")
-    }
+    #expect(first.integers[51] == 9, "\(String(describing: first.integers[51]))")
 
     _ = try session.click(componentID: 3, timeSeconds: 0.2)
     #expect(try session.probeValues(timeSeconds: 0.3).floats[50] == 1.0)

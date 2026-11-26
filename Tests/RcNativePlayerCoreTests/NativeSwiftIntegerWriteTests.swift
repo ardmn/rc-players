@@ -342,7 +342,7 @@ import Testing
     }
   }
 
-  // MARK: - Image sizes, carried action writes and the settle pass
+  // MARK: - Image sizes, carried action writes and one-pass replacement
 
   /// An 8x4 bitmap whose width is ImageAttribute output 80, read by float expression 81, named
   /// "w" (float) so a host can write it.
@@ -417,9 +417,9 @@ import Testing
   }
 
 
-  /// An integer expression whose float override the settle pass drops shows its integer in the
-  /// same resolution: float expressions reading it do not keep the dropped float for a pass.
-  @Test func theSettlePassReadsAnExpressionWhoseOverrideItDropped() throws {
+  /// A host float write onto an integer expression's output is replaced when the expression next
+  /// runs, and a float expression after it in wire order reads the integer in the same resolution.
+  @Test func aHostFloatWriteOntoAnIntegerExpressionIsReplacedInOneResolution() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
     document.u8(Op.dataFloat).int(45).float(1)

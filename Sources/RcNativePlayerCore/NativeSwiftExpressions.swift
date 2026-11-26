@@ -47,6 +47,13 @@ enum NativeSwiftIntegerExpression {
 
   /// - Parameter offset: the declaring `INTEGER_EXPRESSION`'s byte offset, reported by any error.
   static func evaluate(mask: Int, tokens: [Int], values: [Int: Int], offset: Int) throws -> Int {
+    try evaluate(mask: mask, tokens: tokens, offset: offset) { values[$0] ?? 0 }
+  }
+
+  /// - Parameter variable: what a variable-marked token reads, as the player resolves it.
+  static func evaluate(
+    mask: Int, tokens: [Int], offset: Int, variable: (Int) -> Int
+  ) throws -> Int {
     var stack: [Int32] = []
     stack.reserveCapacity(tokens.count)
     // Operands come off as a tuple, oldest first, rather than as a fresh `Array` per operator.
@@ -74,7 +81,7 @@ enum NativeSwiftIntegerExpression {
     for (index, token) in tokens.enumerated() {
       let marked = UInt32(bitPattern: Int32(mask)) & (UInt32(1) << UInt32(index & 31)) != 0
       if !marked || token < NativeSwiftIntegerOperator.offset {
-        stack.append(Int32(truncatingIfNeeded: marked ? values[token] ?? 0 : token))
+        stack.append(Int32(truncatingIfNeeded: marked ? variable(token) : token))
         continue
       }
       let operation = token - NativeSwiftIntegerOperator.offset
