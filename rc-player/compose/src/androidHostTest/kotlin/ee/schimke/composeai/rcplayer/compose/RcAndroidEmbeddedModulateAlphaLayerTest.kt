@@ -8,14 +8,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.Density
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Rule
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
-import org.robolectric.annotation.GraphicsMode
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.AUTO
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.EMBEDDED_PROBE
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.HOST_PROBE
@@ -25,12 +17,18 @@ import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.OWN_PROBE
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.Probe
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.URL_NESTED
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.URL_OWN
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.child
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.host
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.layer
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.probeEntry
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.ownLayerEmbedded
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.nestedEmbedded
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.ownLayerEmbedded
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.probeEntry
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * Android's side of `RcEmbeddedModulateAlphaLayerTest`. AndroidX's child layers get a
@@ -58,7 +56,8 @@ class RcAndroidEmbeddedModulateAlphaLayerTest {
         probeEntry(EMBEDDED_PROBE, embedded),
         probeEntry(OWN_PROBE, embeddedOwn),
       )
-    val documents = mapOf(
+    val documents =
+      mapOf(
         URL_OWN to ownLayerEmbedded(painted = false),
         URL_NESTED to nestedEmbedded(painted = false),
       )
