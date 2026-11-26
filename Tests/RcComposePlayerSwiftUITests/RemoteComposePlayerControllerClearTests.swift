@@ -163,11 +163,7 @@ import Testing
     let delivery = Task { @MainActor in
       await deliverNamedUpdate(nil, for: "USER:count", to: { target }, isCurrent: { true })
     }
-    let deadline = Date().addingTimeInterval(30)
-    while target.inputAvailability.waiterCount != 1 {
-      try #require(Date() < deadline, "the delivery never waited")
-      await Task.yield()
-    }
+    try await waitUntil("the delivery waits") { target.inputAvailability.waiterCount == 1 }
     #expect(target.clears == ["USER:count"] && target.writes == 0)
 
     target.inputAvailability.signal()

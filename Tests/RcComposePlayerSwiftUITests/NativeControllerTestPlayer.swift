@@ -137,11 +137,7 @@
     func until(
       _ what: @autoclosure () -> String, within seconds: TimeInterval = 30, _ condition: () -> Bool
     ) async throws {
-      let deadline = Date().addingTimeInterval(seconds)
-      while !condition() {
-        try #require(Date() < deadline, "timed out waiting until \(what())")
-        await Task.yield()
-      }
+      try await waitUntil(what(), within: seconds, condition)
     }
 
     /// The document component with `id`, or nil when it is not on screen.

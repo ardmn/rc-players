@@ -26,7 +26,7 @@
         data: NativeTestDocuments.shownBox(), controller: controller, resourceResolver: nil)
       host.loadViewIfNeeded()
       let native = try #require(host.children.first as? RemoteComposeNativePlayerViewController)
-      try await until("the document opens and is attached") {
+      try await waitUntil("the document opens and is attached") {
         !controller.names.isEmpty && !native.isOpeningDocument
       }
       return Player(controller: controller, host: host, view: native.playerView)
@@ -50,7 +50,7 @@
     /// Returns once the player has opened, has nothing left to apply, and the controller has no
     /// write left to deliver; fails the test rather than hanging.
     private func settle(_ player: Player, _ what: String = "the player settles") async throws {
-      try await until(what) {
+      try await waitUntil(what) {
         !player.view.isOpeningDocument && !player.view.isBusy
           && player.host.nativeUpdateTasks.isEmpty
       }
@@ -60,18 +60,6 @@
     private func queueOtherInput(_ player: Player, count: Int = 50) {
       for _ in 0..<count {
         Task { @MainActor in _ = await player.view.submit(.integer(1), for: "missing") }
-      }
-    }
-
-    /// Returns once `condition` holds, yielding to the tasks it waits on; fails the test after
-    /// `seconds` rather than hanging.
-    private func until(
-      _ what: String, within seconds: TimeInterval = 30, _ condition: () -> Bool
-    ) async throws {
-      let deadline = Date().addingTimeInterval(seconds)
-      while !condition() {
-        try #require(Date() < deadline, "timed out waiting until \(what)")
-        await Task.yield()
       }
     }
 
@@ -90,7 +78,7 @@
       #expect(isBoxShown(in: player.view) == false)
       moveToBackground(player.view)
       #expect(player.controller.setInteger(Self.visible, for: "shown"))
-      try await until("the write waits for the player's signal") {
+      try await waitUntil("the write waits for the player's signal") {
         player.view.inputAvailability.waiterCount == 1
       }
       #expect(player.host.nativeUpdateTasks["shown"] != nil, "the delivery is still pending")
@@ -113,7 +101,7 @@
         }
       }
       #expect(player.controller.setInteger(Self.visible, for: "shown"))
-      try await until("input is outstanding") { player.view.hasOutstandingInput }
+      try await waitUntil("input is outstanding") { player.view.hasOutstandingInput }
       moveToBackground(player.view)
       #expect(player.view.isOpeningDocument, "the bytes are reopened on activation")
       activate(player.view)
@@ -130,7 +118,7 @@
       #expect(isBoxShown(in: player.view) == true)
 
       queueOtherInput(player)
-      try await until("input is outstanding") { player.view.hasOutstandingInput }
+      try await waitUntil("input is outstanding") { player.view.hasOutstandingInput }
       moveToBackground(player.view)
       #expect(player.view.isOpeningDocument, "the bytes are reopened on activation")
       activate(player.view)
@@ -151,7 +139,7 @@
       invalid.maximumFrameWork = 0
       native.playerView.configureExecutionLimits(invalid)
       #expect(!native.isOpeningDocument)
-      try await until("the declarations are attached") { !controller.names.isEmpty }
+      try await waitUntil("the declarations are attached") { !controller.names.isEmpty }
       #expect(controller.setInteger(Self.visible, for: "shown"))
       let player = Player(controller: controller, host: host, view: native.playerView)
       try await settle(player, "the failed player refuses the write")
@@ -186,7 +174,7 @@
       let player = try await player()
       queueOtherInput(player)
       #expect(player.controller.setInteger(Self.visible, for: "shown"))
-      try await until("input is outstanding") { player.view.hasOutstandingInput }
+      try await waitUntil("input is outstanding") { player.view.hasOutstandingInput }
       moveToBackground(player.view)
       var applied = 0
       player.view.onInputApplied = { input in
@@ -207,7 +195,7 @@
       let native = RemoteComposeNativePlayerViewController(
         data: NativeTestDocuments.shownBox(), resourceResolver: nil)
       native.loadViewIfNeeded()
-      try await until("the document opens") { !native.isOpeningDocument }
+      try await waitUntil("the document opens") { !native.isOpeningDocument }
       let target = CountingTarget(native)
       let writes = 600
       var finished = 0
@@ -221,7 +209,7 @@
       }
       // A write stranded without a wake-up fails the test instead of hanging it.
       defer { for delivery in deliveries { delivery.cancel() } }
-      try await until("every write is delivered", within: 60) { finished == writes }
+      try await waitUntil("every write is delivered", within: 60) { finished == writes }
       #expect(target.accepted == writes)
       // Each write is offered once, plus once each time it is woken after a deferral: at least
       // `writes - capacity` (256) more, 944 here. A write whose mark goes stale between its offer
