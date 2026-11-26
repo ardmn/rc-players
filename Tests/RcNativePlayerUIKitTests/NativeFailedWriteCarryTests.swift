@@ -176,7 +176,7 @@
       try await settled(view, "retry settles")
       #expect(
         text(NativeTestDocuments.labelID + 1, in: view) == "T2" || good == .refused,
-        NativeTestDocuments.titleName)
+        "title")
       #expect(
         text(NativeTestDocuments.labelID, in: view) != long || bad == .accepted,
         "label: the failing write was carried")
