@@ -12,6 +12,43 @@ import Testing
 /// operator with no array, `A_SUM_TILL` past its limit) the table holds the Kotlin player's value,
 /// marked `k`: the players do not crash there.
 @Suite struct NativeSwiftHostValueParityTests {
+  private typealias Op = NativeSwiftWireOpcode
+
+  /// The fixture's operators this player refuses rather than evaluates over the fixture's three
+  /// operands, so a document using one fails to open instead of drawing a value that differs from
+  /// AndroidX's. Most are not implemented (`unsupported`); `A_DEREF` refuses a missing list and
+  /// `CUBIC` a stack with fewer than its five operands (`malformed`, where AndroidX itself throws).
+  /// The parity test holds every one to a refusal over every operand, so implementing one without
+  /// moving it out of this list fails.
+  static let unimplementedOperators: [Int: String] = [
+    NativeSwiftFloatOperator.arrayDeref: "A_DEREF: a missing list is refused, AndroidX reads 0",
+    NativeSwiftFloatOperator.arraySpline: "A_SPLINE: no spline evaluator",
+    NativeSwiftFloatOperator.randSeed: "RAND_SEED: AndroidX's seeded java.util.Random",
+    NativeSwiftFloatOperator.noiseFrom: "NOISE_FROM: AndroidX's noise table",
+    NativeSwiftFloatOperator.dup: "DUP",
+    NativeSwiftFloatOperator.nop: "NOP",
+    NativeSwiftFloatOperator.storeR0: "STORE_R0: no registers",
+    NativeSwiftFloatOperator.storeR1: "STORE_R1: no registers",
+    NativeSwiftFloatOperator.storeR2: "STORE_R2: no registers",
+    NativeSwiftFloatOperator.storeR3: "STORE_R3: no registers",
+    NativeSwiftFloatOperator.loadR0: "LOAD_R0: no registers",
+    NativeSwiftFloatOperator.loadR1: "LOAD_R1: no registers",
+    NativeSwiftFloatOperator.loadR2: "LOAD_R2: no registers",
+    NativeSwiftFloatOperator.loadR3: "LOAD_R3: no registers",
+    NativeSwiftFloatOperator.cmd1: "CMD1: only inside a particle loop, rewritten before evaluation",
+    NativeSwiftFloatOperator.cmd2: "CMD2: only inside a particle loop, rewritten before evaluation",
+    NativeSwiftFloatOperator.cmd3: "CMD3",
+    NativeSwiftFloatOperator.cmd4: "CMD4",
+    68: "CMD5",
+    69: "CMD6",
+    NativeSwiftFloatOperator.cubic: "CUBIC: five operands; with three AndroidX throws too",
+    NativeSwiftFloatOperator.arraySplineLoop: "A_SPLINE_LOOP: no spline evaluator",
+    NativeSwiftFloatOperator.arraySumTill: "A_SUM_TILL",
+    NativeSwiftFloatOperator.arraySumXY: "A_SUM_XY",
+    NativeSwiftFloatOperator.arraySumSquares: "A_SUM_SQR",
+    NativeSwiftFloatOperator.arrayLerp: "A_LERP",
+  ]
+
   @Test func everyOperatorTreatsNonFiniteOperandsAsAndroidXDoes() throws {
     let fixture = try HostValueParityFixture.load()
     let triples = fixture.operands.flatMap { a in
@@ -19,22 +56,57 @@ import Testing
     }
     #expect(fixture.operators.count > 70)
     var mismatches: [String] = []
+    var compared = 0
     for (operation, expected) in fixture.operators {
       #expect(expected.count == triples.count, "operator \(operation)")
       let words =
         (1...3).map { 0xff80_0000 | UInt32($0) }
         + [NativeSwiftFloatExpression.operatorWord(operation)]
+      let excluded = Self.unimplementedOperators[operation] != nil
       for (operands, result) in zip(triples, expected) {
         let values = Dictionary(uniqueKeysWithValues: zip(1...3, operands))
-        let actual =
-          (try? NativeSwiftFloatExpression.evaluate(
-            words, values: values, arrays: [:], opcode: 0, offset: 0)) ?? 0
-        if !HostValueParityFixture.same(actual, result) {
-          mismatches.append("operator \(operation) over \(operands): \(actual), AndroidX \(result)")
+        do {
+          let actual = try NativeSwiftFloatExpression.evaluate(
+            words, values: values, arrays: [:], opcode: 0, offset: 0)
+          if excluded {
+            mismatches.append("operator \(operation) is listed as unimplemented but evaluates")
+          } else if !HostValueParityFixture.same(actual, result) {
+            mismatches.append(
+              "operator \(operation) over \(operands): \(actual), AndroidX \(result)")
+          } else {
+            compared += 1
+          }
+        } catch is NativeSwiftCoreError where excluded {
+          continue
+        } catch {
+          mismatches.append("operator \(operation) over \(operands): \(error)")
         }
       }
     }
+    #expect(
+      compared == (fixture.operators.count - Self.unimplementedOperators.count) * triples.count)
     #expect(mismatches.isEmpty, "\(mismatches.count) mismatches:\n\(mismatches.prefix(40).joined(separator: "\n"))")
+  }
+
+  /// Each unimplemented operator is in the fixture (so the list cannot go stale) and refuses the
+  /// document that uses it when it is opened, not at some later frame.
+  @Test func aDocumentUsingAnUnimplementedOperatorIsRefused() throws {
+    let fixture = try HostValueParityFixture.load()
+    let operators = Set(fixture.operators.map(\.0))
+    for (operation, name) in Self.unimplementedOperators.sorted(by: { $0.key < $1.key }) {
+      #expect(operators.contains(operation), "\(name) is not in the fixture")
+      let document = Writer()
+      document.header(width: 100, height: 100)
+      document.u8(Op.dataFloat).int(51).float(1.5)
+      document.u8(Op.animatedFloat).int(60).int(4)
+        .int(Writer.nanReference(51)).int(Writer.nanReference(51)).int(Writer.nanReference(51))
+        .int(Writer.floatOperator(operation))
+      document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+      #expect(throws: NativeSwiftCoreError.self, "\(name)") {
+        let session = try NativeSwiftDocumentSession.open(data: document.data)
+        _ = try session.snapshot(timeSeconds: 0)
+      }
+    }
   }
 
   @Test func textFromFloatFormatsNonFiniteValuesAsAndroidXDoes() throws {
