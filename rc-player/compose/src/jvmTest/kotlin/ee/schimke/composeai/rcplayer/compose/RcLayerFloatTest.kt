@@ -63,6 +63,17 @@ class RcLayerFloatTest {
   }
 
   @Test
+  fun aClockDrivenValueWithoutAFrameClockKeepsItsReader() {
+    // Without a frame clock the clock-driven reader is the resolved target, keyed by its bits.
+    val attribute = float(reference(RcSystemVariables.CONTINUOUS_SEC))
+    val readers =
+      readersAcrossRecompositions(listOf(attribute, attribute, attribute), withFrameClock = false)
+    assertSame(readers[0], readers[1])
+    assertSame(readers[0], readers[2])
+    assertEquals(state.resolve(attribute.value).toRawBits(), readers[2]().toRawBits())
+  }
+
+  @Test
   fun aHostWriteToAReferencedValueKeepsItsReader() {
     // The reader reads the eased value, so a write moves the value, not the reader.
     val attribute = float(reference(VARIABLE_ID))
@@ -97,20 +108,26 @@ class RcLayerFloatTest {
 
   /**
    * The reader `rcLayerFloat` returns in each composition: the first with `attributes[0]`, then one
-   * forced recomposition per later attribute, under a frame clock as the player provides one.
+   * forced recomposition per later attribute (exactly one composition each), under a frame clock as
+   * the player provides one unless not [withFrameClock].
    */
   private fun readersAcrossRecompositions(
     attributes: List<RcGraphicsLayerAttribute?>,
+    withFrameClock: Boolean = true,
     beforeStep: (Int) -> Unit = {},
   ): List<() -> Float> {
-    val readersByStep = sortedMapOf<Int, () -> Float>()
+    val steps = mutableListOf<Int>()
+    val readers = mutableListOf<() -> Float>()
     var attribute by mutableStateOf(attributes.first())
     var recompositions by mutableIntStateOf(0)
     val frame = mutableFloatStateOf(0f)
     val scene =
       ImageComposeScene(width = 1, height = 1, density = Density(1f)) {
-        CompositionLocalProvider(LocalRcFrameTime provides frame) {
-          Reader(attribute, recompositions) { step, reader -> readersByStep[step] = reader }
+        CompositionLocalProvider(LocalRcFrameTime provides frame.takeIf { withFrameClock }) {
+          Reader(attribute, recompositions) { step, reader ->
+            steps += step
+            readers += reader
+          }
         }
       }
     try {
@@ -125,7 +142,9 @@ class RcLayerFloatTest {
     } finally {
       scene.close()
     }
-    return readersByStep.values.toList()
+    // One composition per step: an extra one (a snapshot write during composition) fails here.
+    assertEquals(attributes.indices.toList(), steps)
+    return readers
   }
 
   /**
