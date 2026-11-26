@@ -64,7 +64,8 @@
       for index in 0..<40 { wire.text(id: 3000 + index, reading: 700) }
       wire.u8(Op.containerEnd)
       let error = try await UIKitHostValueEdgeFixtures.refusal(of: wire.data)
-      #expect(error.contains("UTF-8 bytes; the limit is \(128 * 1024)"), "\(error)")
+      let limit = RemoteComposeNativeExecutionLimits.default.maximumTextBytes
+      #expect(error.contains("UTF-8 bytes; the limit is \(limit)"), "\(error)")
     }
 
     /// A document of more nodes than the budget is refused (the core's decoder, sharing the
