@@ -2067,24 +2067,30 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
   }
 
+  /// AndroidX `Utils.interpolateColor`, as the Kotlin player's `RcColorEvaluator.interpolate`
+  /// computes it: each colour channel mixed in linear light (gamma 2.2, in Double), alpha mixed
+  /// straight, and every result truncated to a byte, not rounded.
   private func interpolateColor(_ first: UInt32, _ second: UInt32, tween: Float) -> UInt32 {
-    if !tween.isFinite || tween == 0 { return first }
+    if tween.isNaN || tween == 0 { return first }
     if tween == 1 { return second }
-    func channel(_ color: UInt32, shift: UInt32) -> Float {
-      powf(Float((color >> shift) & 0xff) / 255, 2.2)
+    func linear(_ color: UInt32, shift: UInt32) -> Float {
+      Float(pow(Double(Float((color >> shift) & 0xff) / 255), 2.2))
+    }
+    func byte(_ value: Float) -> UInt32 {
+      // `Float.toInt()`: NaN is 0, and the clamp bounds the rest.
+      guard !value.isNaN else { return 0 }
+      return UInt32(min(max(value, 0), 255))
     }
     func encoded(_ value: Float) -> UInt32 {
-      let encoded = powf(max(value, 0), 1 / 2.2)
-      guard encoded.isFinite else { return value > 0 ? 255 : 0 }
-      return UInt32((min(max(encoded, 0), 1) * 255).rounded())
+      byte(Float(pow(Double(value), 1 / 2.2)) * 255)
     }
-    let alpha = Float((first >> 24) & 0xff) + tween * Float(Int((second >> 24) & 0xff) - Int((first >> 24) & 0xff))
-    let red = channel(first, shift: 16) + tween * (channel(second, shift: 16) - channel(first, shift: 16))
-    let green = channel(first, shift: 8) + tween * (channel(second, shift: 8) - channel(first, shift: 8))
-    let blue = channel(first, shift: 0) + tween * (channel(second, shift: 0) - channel(first, shift: 0))
-    let clampedAlpha = min(max(alpha, 0), 255)
-    return UInt32(clampedAlpha.isFinite ? clampedAlpha.rounded() : 0) << 24
-      | encoded(red) << 16 | encoded(green) << 8 | encoded(blue)
+    func mixed(_ shift: UInt32) -> UInt32 {
+      let from = linear(first, shift: shift)
+      return encoded(from + tween * (linear(second, shift: shift) - from))
+    }
+    let firstAlpha = Float(first >> 24) / 255
+    let alpha = byte((firstAlpha + tween * (Float(second >> 24) / 255 - firstAlpha)) * 255)
+    return alpha << 24 | mixed(16) << 16 | mixed(8) << 8 | mixed(0)
   }
 
   /// A colour byte, clamped rather than converted.

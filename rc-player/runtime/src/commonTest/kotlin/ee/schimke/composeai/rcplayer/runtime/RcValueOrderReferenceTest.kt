@@ -1,5 +1,7 @@
 package ee.schimke.composeai.rcplayer.runtime
 
+import ee.schimke.composeai.rcplayer.protocol.RcColorConstant
+import ee.schimke.composeai.rcplayer.protocol.RcColorExpression
 import ee.schimke.composeai.rcplayer.protocol.RcComponentValue
 import ee.schimke.composeai.rcplayer.protocol.RcConditionalOperations
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
@@ -363,5 +365,32 @@ class RcValueOrderReferenceTest {
         state.text(5)
       }
     assertEquals(listOf("ab", "ab"), drawn)
+  }
+
+  /**
+   * A colour interpolation truncates each channel to a byte, as AndroidX `Utils.interpolateColor`
+   * does: half-alpha black to white at 0.25 is 0x9F878787 (159.75 and 135.79 truncated).
+   */
+  @Test
+  fun aColourInterpolationTruncatesEachChannel() {
+    val expression =
+      RcColorExpression(
+        30,
+        RcColorExpression.ID_ID_INTERPOLATE,
+        7,
+        8,
+        RcFloatWord.literal(0.25f).bits,
+      )
+    val state =
+      RcPlayerState(
+        document(
+          RcColorConstant(7, 0x80000000.toInt()),
+          RcColorConstant(8, 0xffffffff.toInt()),
+          expression,
+        ),
+      )
+    state.beginFrame()
+    state.applyAll(expression)
+    assertEquals(0x9f878787.toInt(), state.color(30))
   }
 }

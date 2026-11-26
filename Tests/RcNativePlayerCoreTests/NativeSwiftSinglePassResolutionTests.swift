@@ -361,6 +361,20 @@ import Testing
     #expect(colors[33] == 0x40FF_0000, "\(colors[33].map { String($0, radix: 16) } as Any)")
   }
 
+  /// A colour interpolation truncates each channel to a byte, as AndroidX `Utils.interpolateColor`
+  /// and Kotlin's `RcColorEvaluator` do (Kotlin's answer: `RcValueOrderReferenceTest`): half-alpha
+  /// black to white at 0.25 is 0x9F878787, where rounding gave 0xA0888888. The generated
+  /// differential found it.
+  @Test func aColourInterpolationTruncatesEachChannel() throws {
+    let colors = try Self.open { document in
+      document.u8(Op.colorConstant).int(7).int(Self.argb(0x8000_0000))
+      document.u8(Op.colorConstant).int(8).int(Self.argb(0xFFFF_FFFF))
+      document.u8(Op.colorExpressions).int(30)
+        .int(NativeSwiftColorExpressionMode.idIDInterpolate).int(7).int(8).float(0.25)
+    }.probeValues(timeSeconds: 0).colors
+    #expect(colors[30] == 0x9F87_8787, "\(colors[30].map { String($0, radix: 16) } as Any)")
+  }
+
   /// `RcPlayerStateTest.colorAttributesMatchAndroidXNormalizedComponents`: every channel of
   /// 0x804080C0, normalised.
   @Test func colourAttributesReadEveryNormalisedChannel() throws {
