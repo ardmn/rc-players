@@ -2733,7 +2733,8 @@ private val LocalRcLayoutVersion = compositionLocalOf { 0 }
  * is written after `beginFrame`, so the block runs once the state holds the frame's values rather
  * than the previous frame's. A document that never reads the clock never moves it.
  */
-private val LocalRcFrameTime = staticCompositionLocalOf<FloatState?> { null }
+// Internal, not private, only so `RcLayerFloatTest` can provide a frame clock.
+internal val LocalRcFrameTime = staticCompositionLocalOf<FloatState?> { null }
 
 /**
  * Whether draws below may stop following [LocalRcFrameTime] while they read no clock (see
@@ -5321,14 +5322,15 @@ private fun Modifier.applyGraphicsLayer(
  *   are read straight through.
  */
 @Composable
-private fun rcLayerFloat(
+// Internal, not private, only so `RcLayerFloatTest` can check the readers stay the same object.
+internal fun rcLayerFloat(
   attribute: RcGraphicsLayerAttribute?,
   default: Float,
   state: RcPlayerState,
 ): () -> Float {
   // Each reader is remembered for what it captures, so a recomposition that changed none of them
-  // returns the same reader, and `RcModulateAlphaLayer.bind` sees no change. A float is keyed by
-  // its bits: `==` would keep a `0f` reader for `-0f`, and never match NaN.
+  // returns the same reader, and `RcModulateAlphaLayer.bind` sees no change (`RcLayerFloatTest`).
+  // A float is keyed by its bits: compared as a number, `-0f` would keep the `0f` reader.
   val word =
     (attribute as? RcGraphicsLayerAttribute.FloatValue)?.value
       ?: return remember(default.toRawBits()) { { default } }
