@@ -181,11 +181,16 @@ internal object RcEmbeddedLayerFixture {
    * [EMBEDDED_WIDTH], holding the probe named by [PROBE_TEXT_ID]; red when [painted].
    */
   fun MutableList<RcOperation>.offsetChild(painted: Boolean) =
-    child(20, PROBE_WIDTH.toFloat(), PROBE_TEXT_ID, if (painted) background(1f, 0f) else null)
+    child(
+      id = 20,
+      offsetX = PROBE_WIDTH.toFloat(),
+      probeTextId = PROBE_TEXT_ID,
+      background = if (painted) background(red = 1f, blue = 0f) else null,
+    )
 
   /** The blue child an embedded document leaves at 0..[PROBE_WIDTH]. */
   fun MutableList<RcOperation>.stillChild() =
-    child(10, offsetX = null, probeTextId = null, background(0f, 1f))
+    child(id = 10, offsetX = null, probeTextId = null, background = background(red = 0f, blue = 1f))
 
   /**
    * A [width]x[HEIGHT] document with a half-alpha `ModulateAlpha` layer and an offset child holding

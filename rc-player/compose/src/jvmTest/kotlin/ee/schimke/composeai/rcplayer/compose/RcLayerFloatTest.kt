@@ -103,14 +103,14 @@ class RcLayerFloatTest {
     attributes: List<RcGraphicsLayerAttribute?>,
     beforeStep: (Int) -> Unit = {},
   ): List<() -> Float> {
-    val readers = mutableListOf<() -> Float>()
+    val readersByStep = sortedMapOf<Int, () -> Float>()
     var attribute by mutableStateOf(attributes.first())
     var recompositions by mutableIntStateOf(0)
     val frame = mutableFloatStateOf(0f)
     val scene =
       ImageComposeScene(width = 1, height = 1, density = Density(1f)) {
         CompositionLocalProvider(LocalRcFrameTime provides frame) {
-          Reader(attribute, recompositions) { readers += it }
+          Reader(attribute, recompositions) { step, reader -> readersByStep[step] = reader }
         }
       }
     try {
@@ -125,19 +125,20 @@ class RcLayerFloatTest {
     } finally {
       scene.close()
     }
-    return readers
+    return readersByStep.values.toList()
   }
 
+  /**
+   * Reports the reader `rcLayerFloat` returns in recomposition [step], which changes every step.
+   */
   @Composable
   private fun Reader(
     attribute: RcGraphicsLayerAttribute?,
-    recomposition: Int,
-    onReader: (() -> Float) -> Unit,
+    step: Int,
+    onReader: (step: Int, reader: () -> Float) -> Unit,
   ) {
-    val reader = rcLayerFloat(attribute, 1f, state)
-    // `recomposition` changes on every forced recomposition, so this composable is never skipped.
-    check(recomposition >= 0)
-    SideEffect { onReader(reader) }
+    val reader = rcLayerFloat(attribute, default = 1f, state = state)
+    SideEffect { onReader(step, reader) }
   }
 
   private fun float(word: RcFloatWord) =
