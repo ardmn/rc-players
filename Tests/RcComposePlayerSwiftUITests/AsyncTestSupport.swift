@@ -5,16 +5,18 @@ import Testing
 /// after `seconds` rather than hanging, and stops when the test is cancelled (a `.timeLimit`).
 /// Tests wait on observable state this way (a waiter count, a recorded call), never on a number of
 /// turns or a sleep. The deadline is on the monotonic uptime clock, so a wall-clock change cannot
-/// end it early.
+/// end it early. A timeout is reported at the caller's `sourceLocation`.
 @MainActor
 func waitUntil(
-  _ what: @autoclosure () -> String, within seconds: TimeInterval = 30, _ condition: () -> Bool
+  _ what: @autoclosure () -> String, within seconds: TimeInterval = 30,
+  sourceLocation: SourceLocation = #_sourceLocation, _ condition: () -> Bool
 ) async throws {
   let deadline = ProcessInfo.processInfo.systemUptime + seconds
   while !condition() {
     try Task.checkCancellation()
     try #require(
-      ProcessInfo.processInfo.systemUptime < deadline, "timed out waiting until \(what())")
+      ProcessInfo.processInfo.systemUptime < deadline, "timed out waiting until \(what())",
+      sourceLocation: sourceLocation)
     await Task.yield()
   }
 }

@@ -90,8 +90,16 @@ public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
   }
 
   /// Releases every waiter: input may be accepted now that was not before.
-  func signal() {
+  func signal() { releaseAll(closing: false) }
+
+  /// Releases every waiter, present and future: the player is gone.
+  func close() { releaseAll(closing: true) }
+
+  /// Moves the mark on, and closes when `closing`, under one lock, so a reader that sees
+  /// `isClosed` also sees the new mark; then resumes every waiter.
+  private func releaseAll(closing: Bool) {
     for waiter in locked({ () -> [CheckedContinuation<Void, Never>] in
+      if closing { closed = true }
       epoch &+= 1
       defer {
         waiters.removeAll()
@@ -123,12 +131,6 @@ public final class RemoteComposeNativeInputAvailability: @unchecked Sendable {
       }
       return next
     }?.resume()
-  }
-
-  /// Releases every waiter, present and future: the player is gone.
-  func close() {
-    locked { closed = true }
-    signal()
   }
 
   private func locked<T>(_ body: () -> T) -> T {

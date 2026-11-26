@@ -5,19 +5,20 @@ import Testing
 @_spi(RemoteComposeController) @testable import RcNativePlayerUIKit
 
 /// `deliverNamedUpdate` loops until the player answers finally, and the loop must never spin: a
-/// deferred update (a write or a clear; every test runs both) is offered once per signal, plus once for a signal that arrived during the offer,
-/// and the loop ends on a final answer, cancellation, a gone player, a closed availability or a
-/// delivery that is no longer current. Each test counts the offers exactly.
+/// deferred update (a write or a clear; every test runs both) is offered once per signal, plus once
+/// for a signal that arrived during the offer, and the loop ends on a final answer, cancellation,
+/// a gone player, a closed availability or a delivery that is no longer current. Each test counts
+/// the offers exactly.
 ///
 /// The tests assert state, not timing. A delivery is parked when its availability has one waiter:
 /// it is then suspended on a continuation that only `signal()`, `signalOne()`, `close()` or
 /// cancellation resumes, so while it stays parked its offer count cannot move. No test sleeps or
 /// counts turns; each waits for a state under a deadline. The target refuses after `cap` offers,
 /// and a wait for a parked delivery fails as soon as it has offered more than expected, so a loop
-/// that spins fails at once instead of hanging. A test's time limit cancels a test that still
-/// hangs, and `finish` passes that cancellation on to the delivery; `finish` also fails at once
-/// when the delivery parks where it should return. This follows Apple's
-/// "Testing asynchronous code" (Swift Testing) and Point-Free's "Reliably testing async code":
+/// that spins fails at once instead of hanging. `finish` fails at once when the delivery parks
+/// where it should return, and cancels a delivery its test leaves behind. A test's time limit
+/// cancels a test that still hangs. This follows Apple's "Testing asynchronous code" (Swift
+/// Testing) and Point-Free's "Reliably testing async code":
 /// wait for observable state, not for time. Point-Free's `withMainSerialExecutor` would make the
 /// scheduling itself serial, but it needs a new dependency (swift-concurrency-extras) in an
 /// upstream package, and the waiter count already gives a deterministic state to wait on.
@@ -31,41 +32,47 @@ import Testing
 
   /// Waits until the delivery is parked after exactly `offers` offers; fails at once when it has
   /// offered more or has already returned, so a broken loop fails instead of timing out.
-  private static func parked(_ holder: TargetSlot, after offers: Int) async throws {
-    let target = try #require(holder.target)
-    try await waitUntil("parked after \(offers) offers, at \(target.offers)") {
+  private static func parked(
+    _ holder: TargetSlot, after offers: Int, sourceLocation: SourceLocation = #_sourceLocation
+  ) async throws {
+    let target = try #require(holder.target, sourceLocation: sourceLocation)
+    try await waitUntil(
+      "parked after \(offers) offers, at \(target.offers)", sourceLocation: sourceLocation
+    ) {
       target.availability.waiterCount == 1 || target.offers > offers || holder.isFinished
     }
-    try #require(target.offers <= offers, "offered \(target.offers) times, expected \(offers)")
-    try #require(!holder.isFinished, "the delivery returned instead of parking")
-    try #require(target.availability.waiterCount == 1)
-    try #require(target.offers == offers)
+    try #require(
+      target.offers <= offers, "offered \(target.offers) times, expected \(offers)",
+      sourceLocation: sourceLocation)
+    try #require(
+      !holder.isFinished, "the delivery returned instead of parking",
+      sourceLocation: sourceLocation)
+    try #require(target.availability.waiterCount == 1, sourceLocation: sourceLocation)
+    try #require(target.offers == offers, sourceLocation: sourceLocation)
   }
 
-  /// The delivery's answer, once it has returned. Fails at once when it parks instead, and
-  /// cancelling the awaiting test (its time limit) cancels the delivery, so a delivery that never
-  /// returns fails the test instead of hanging the run.
+  /// The delivery's answer, once it has returned. Fails at once when it parks instead (or when the
+  /// test is cancelled by its time limit), and then cancels the delivery so it is not left behind.
   private static func finish(
-    _ delivery: Task<RemoteComposeNativeInputAdmission?, Never>, of slot: TargetSlot
+    _ delivery: Task<RemoteComposeNativeInputAdmission?, Never>, of slot: TargetSlot,
+    sourceLocation: SourceLocation = #_sourceLocation
   ) async throws -> RemoteComposeNativeInputAdmission? {
-    let availability = slot.target?.availability
-    try await waitUntil("the delivery returns") {
-      slot.isFinished || availability?.waiterCount == 1
+    defer { if !slot.isFinished { delivery.cancel() } }
+    try await waitUntil("the delivery returns", sourceLocation: sourceLocation) {
+      slot.isFinished || slot.availability.waiterCount == 1
     }
-    try #require(slot.isFinished, "the delivery parked instead of returning")
-    return await withTaskCancellationHandler {
-      await delivery.value
-    } onCancel: {
-      delivery.cancel()
-    }
+    try #require(
+      slot.isFinished, "the delivery parked instead of returning", sourceLocation: sourceLocation)
+    return await delivery.value
   }
 
   /// Starts a delivery of `value` to `target` and returns its answer, as `finish` does.
   private static func finish(
-    _ value: ControllerNamedValue?, to target: ScriptedTarget
+    _ value: ControllerNamedValue?, to target: ScriptedTarget,
+    sourceLocation: SourceLocation = #_sourceLocation
   ) async throws -> RemoteComposeNativeInputAdmission? {
     let slot = TargetSlot(target)
-    return try await finish(deliver(value, to: slot), of: slot)
+    return try await finish(deliver(value, to: slot), of: slot, sourceLocation: sourceLocation)
   }
 
   private static func deliver(
@@ -80,8 +87,9 @@ import Testing
     }
   }
 
-  /// 1. Without a signal a deferred update is offered exactly once and the delivery parks; waking it
-  /// with `signalOne()` (room for one more input) gives exactly one more offer and it parks again.
+  /// 1. Without a signal a deferred update is offered exactly once and the delivery parks; waking
+  /// it with `signalOne()` (room for one more input) gives exactly one more offer and it parks
+  /// again.
   @available(macOS 13.0, iOS 16.0, tvOS 16.0, watchOS 9.0, *)
   @Test(.loopLimit, arguments: updates)
   func aDeferredUpdateIsOfferedOnceWithoutASignal(_ value: ControllerNamedValue?) async throws {
@@ -256,9 +264,14 @@ extension Trait where Self == TimeLimitTrait {
 private final class TargetSlot {
   /// The player the delivery offers to; nil once it is gone.
   var target: ScriptedTarget?
+  /// The availability of the player the slot started with; kept once `target` is nil.
+  let availability: RemoteComposeNativeInputAvailability
   /// Whether the delivery task has returned.
   var isFinished = false
-  init(_ target: ScriptedTarget) { self.target = target }
+  init(_ target: ScriptedTarget) {
+    self.target = target
+    availability = target.availability
+  }
 }
 
 /// A native player that counts every offer (write or clear) and answers each by its 1-based
