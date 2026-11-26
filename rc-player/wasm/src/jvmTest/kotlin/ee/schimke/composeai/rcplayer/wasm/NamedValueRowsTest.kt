@@ -80,6 +80,20 @@ class NamedValueRowsTest {
     )
   }
 
+  /**
+   * The row format, pinned: `scripts/wasm-smoke/smoke.mjs` spells these characters itself in its "a
+   * kind that spells another row" case, so a change here must change it too, or that case stops
+   * testing anything.
+   */
+  @Test
+  fun theRowFormatIsTheOneTheSmokeRunForges() {
+    assertEquals("\u0001", NAMED_VALUE_ROW_SEPARATOR)
+    assertEquals("\u0000", NAMED_VALUE_FIELD_SEPARATOR)
+    assertEquals(4, NAMED_VALUE_FIELD_COUNT)
+    assertEquals("n", NAMED_VALUE_NUMBER_MARK)
+    assertEquals("s", NAMED_VALUE_TEXT_MARK)
+  }
+
   @Test
   fun theLaterOfTwoRowsForOneNameWins() {
     val blue = row("color", "WearM3.primary", "#FF0000FF")

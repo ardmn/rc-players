@@ -203,6 +203,7 @@ const CASES = [
           'a lone surrogate in a name': { kind: 'string', name: '\uD800', value: 'x' },
           'a lone surrogate in a value': { kind: 'string', name: 'label', value: 'a\uDC00' },
           'control characters in a kind': { ...blue, kind: 'color\u0000\u0001' },
+          // The bundle's row format, which NamedValueRowsTest pins.
           'a kind that spells another row': { ...blue, kind: 'x\u0000a\u0000b\u0000s\u0001color' },
         }),
         // Every JSON value type as an element.
