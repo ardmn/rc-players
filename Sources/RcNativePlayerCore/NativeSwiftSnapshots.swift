@@ -222,11 +222,9 @@ public enum NativeSwiftTextFormatter {
   /// Java's `Math.round`-style `floor(x + 0.5)`, as the reference writes it.
   private static func javaRound(_ value: Float) -> Int { javaInt((value + 0.5).rounded(.down)) }
 
-  /// Java's float-to-int conversion: truncating, saturating, NaN to 0.
-  private static func javaInt(_ value: Float) -> Int {
-    guard !value.isNaN else { return 0 }
-    return Int(max(min(value, Float(Int32.max)), Float(Int32.min)).rounded(.towardZero))
-  }
+  /// Java's float-to-int conversion: truncating, saturating to `Int32` (`Float(Int32.max)` is
+  /// 2^31, one past it), NaN to 0.
+  private static func javaInt(_ value: Float) -> Int { nativeSwiftIntegerView(value) }
 
   private static func javaLong(_ value: Float) -> Int64 {
     guard !value.isNaN else { return 0 }
@@ -257,6 +255,20 @@ public enum NativeSwiftTextFormatter {
       decimalExponent -= 1
     }
     while digits.count > 1, digits.last == "0" { digits.removeLast() }
+    // Java's `Float.toString` never settles for one significant digit: it prints the two-digit
+    // decimal closest to the exact value, so `Float.MIN_VALUE` is "1.4E-45" where the shortest
+    // digits are "1e-45" (checked against JDK 17, the fixture's JVM). Only a subnormal is coarse
+    // enough for that decimal to differ from `d.0`, so a normal value skips the formatting.
+    if digits.count == 1, value.isSubnormal {
+      let twoDigits = String(format: "%.1e", Double(value.magnitude))
+      if Float(twoDigits) == value.magnitude, let marker = twoDigits.firstIndex(of: "e"),
+        let twoExponent = Int(twoDigits[twoDigits.index(after: marker)...])
+      {
+        digits = Array(twoDigits[..<marker].filter { $0 != "." })
+        decimalExponent = twoExponent + 1
+        while digits.count > 1, digits.last == "0" { digits.removeLast() }
+      }
+    }
     let sign = value < 0 ? "-" : ""
     let magnitude = value.magnitude
     if magnitude >= 1e-3, magnitude < 1e7 {
