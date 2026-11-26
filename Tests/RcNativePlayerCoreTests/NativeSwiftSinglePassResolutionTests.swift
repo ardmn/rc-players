@@ -8,8 +8,9 @@ import Testing
 /// test names the test it ports; the value asserted is Kotlin's, from that Kotlin test or, for an
 /// AndroidX case or an extension of a Kotlin one, from `RcValueOrderReferenceTest`. Where the
 /// session gives something else today the assertion sits in a `withKnownIssue` that says what
-/// differs. Values a frame produces are read from what the snapshot drew, not from
-/// `probeValues`, which resolves again on its own.
+/// differs, one known issue per expectation so a partial fix shows. Where a test runs frames, the
+/// values are read from what the snapshot drew, not from `probeValues`, which resolves again on
+/// its own; data-only documents with no frame are read through `probeValues`.
 ///
 /// The cases `NativeSwiftValueOrderTests`, `NativeSwiftKotlinParityTests`,
 /// `NativeSwiftFloatIntegerViewTests` and `NativeSwiftIntegerWriteTests` already port are not
@@ -64,11 +65,12 @@ import Testing
     node.commands + node.children.flatMap(allCommands)
   }
 
-  /// The texts and rect widths `snapshot` drew, in draw order.
+  /// The texts `snapshot` drew, in draw order.
   private static func drawnTexts(_ snapshot: NativeSwiftDocumentSnapshot) -> [String?] {
     allCommands(snapshot.root).filter { $0.kind == NativeSwiftDrawKind.text }.map(\.text)
   }
 
+  /// The widths of the rects `snapshot` drew, in draw order.
   private static func drawnWidths(_ snapshot: NativeSwiftDocumentSnapshot) -> [Float] {
     allCommands(snapshot.root).filter { $0.kind == NativeSwiftDrawKind.rect }.map { $0.values[2] }
   }
@@ -105,7 +107,8 @@ import Testing
   /// `RcPlayerStateTest.evaluatesEveryAndroidXConditionalTypeIncludingChangedState`, the literal
   /// half: 2 against 3 for each comparison type, plus 3 against 3 so `<` and `<=` differ. The
   /// branch's box is drawn when it holds. Not ported: CHANGED, whose state this core's
-  /// decode-time conditionals do not keep (see `aConditionalReadsAComputedFloat`).
+  /// decode-time conditionals do not keep (see `aConditionalReadsAComputedFloat`); the unknown
+  /// type is the next test.
   @Test(arguments: [
     (NativeSwiftConditionalType.equal, 2, false), (NativeSwiftConditionalType.equal, 3, true),
     (NativeSwiftConditionalType.notEqual, 2, true), (NativeSwiftConditionalType.notEqual, 3, false),
@@ -126,6 +129,19 @@ import Testing
     document.u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd)
     let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
     #expect((root.node(withComponentID: 5) != nil) == holds, "type \(type), \(left) vs 3")
+  }
+  /// The same test's unknown type: Kotlin evaluates `condition(99)` as false, so the branch is not
+  /// drawn.
+  @Test func anUnknownConditionalTypeDoesNotHold() throws {
+    let unknownType = 99
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.conditionalOperations).u8(unknownType).float(2).float(3)
+    document.u8(Op.layoutBox).int(5).int(-1).int(1).int(1)
+    document.u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd)
+    let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
+    #expect(root.node(withComponentID: 5) == nil)
   }
 
   /// An extension of the test above (Kotlin's answer: `RcValueOrderReferenceTest`): over a computed
@@ -202,6 +218,34 @@ import Testing
   /// appends to its own output. Kotlin's `beginFrame` resets derived text, so each frame draws
   /// "ab" and a click sends it (the second frame is pinned in `RcValueOrderReferenceTest`).
   @Test func aMergeOntoItsOwnOutputAppendsOncePerFrame() throws {
+    let session = try NativeSwiftDocumentSession.open(data: Self.selfMergeDocument())
+    var drawn: [String?] = []
+    var sent: [[NativeSwiftEvent]?] = []
+    for time in [0.0, 1.0] {
+      drawn += Self.drawnTexts(try session.snapshot(timeSeconds: time))
+      sent.append(try session.click(componentID: 3, timeSeconds: time))
+    }
+    withKnownIssue("a derived text is not reset before each resolution") {
+      #expect(drawn == ["ab", "ab"], "\(drawn)")
+    }
+    withKnownIssue("a derived text is not reset before each resolution") {
+      #expect(sent == [[Self.sentAB], [Self.sentAB]], "\(sent)")
+    }
+  }
+
+  /// The Kotlin test as written: one frame, then two clicks with no frame between them. Each
+  /// sends the drawn "ab"; an action does not run the merge again.
+  @Test func twoClicksAfterOneFrameSendTheDrawnMerge() throws {
+    let session = try NativeSwiftDocumentSession.open(data: Self.selfMergeDocument())
+    _ = try session.snapshot(timeSeconds: 0)
+    let sent = try (0..<2).map { _ in try session.click(componentID: 3, timeSeconds: 0) }
+    #expect(sent == [[Self.sentAB], [Self.sentAB]], "\(sent)")
+  }
+
+  private static let sentAB = NativeSwiftEvent.namedAction(name: "ha", value: .text("ab"))
+
+  /// T5 = T5 + T3 over T5 "a" and T3 "b", drawn at the root; clicking box 3 sends T5 as "ha".
+  private static func selfMergeDocument() -> Data {
     let document = Writer()
     document.header(width: 100, height: 100)
     document.text(id: 1, "ha")
@@ -215,22 +259,7 @@ import Testing
       .u8(Op.hostNamedAction).int(1).int(NativeSwiftHostActionValueType.string).int(5)
       .u8(Op.containerEnd)
     document.u8(Op.containerEnd).u8(Op.containerEnd)
-    let session = try NativeSwiftDocumentSession.open(data: document.data)
-    var drawn: [String?] = []
-    var sent: [[NativeSwiftEvent]?] = []
-    for time in [0.0, 1.0] {
-      drawn += Self.drawnTexts(try session.snapshot(timeSeconds: time))
-      sent.append(try session.click(componentID: 3, timeSeconds: time))
-    }
-    withKnownIssue("a derived text is not reset before each resolution") {
-      #expect(drawn == ["ab", "ab"], "\(drawn)")
-      #expect(
-        sent == [
-          [.namedAction(name: "ha", value: .text("ab"))],
-          [.namedAction(name: "ha", value: .text("ab"))],
-        ],
-        "\(sent)")
-    }
+    return document.data
   }
 
   /// `RcPlayerStateTest.evaluatesTextOperationsInWireOrder`: T3 = merge, T4 = its tail, F5 = the
@@ -456,14 +485,16 @@ import Testing
     document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
     document.u8(Op.modifierClick).u8(Op.valueFloatExpressionChangeAction).int(50).int(51)
       .u8(Op.containerEnd)
-    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    document.u8(Op.containerEnd)
+    Self.drawWidth(document, of: 50)
+    document.u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
     for _ in 0..<2 {
       _ = try session.snapshot(timeSeconds: 0)
       _ = try session.click(componentID: 3, timeSeconds: 0)
     }
-    let value = try session.probeValues(timeSeconds: 0).floats[50]
-    #expect(value == 9, "\(value as Any)")
+    let widths = Self.drawnWidths(try session.snapshot(timeSeconds: 0))
+    #expect(widths == [9], "\(widths)")
   }
 
   /// AndroidX `ValueIntegerExpressionChangeActionOperationTest.testIncrementMultipleTimes`:
@@ -478,13 +509,15 @@ import Testing
     document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
     document.u8(Op.modifierClick).u8(Op.valueIntegerExpressionChangeAction).long(42).long(60)
       .u8(Op.containerEnd)
-    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    document.u8(Op.containerEnd)
+    Self.drawWidth(document, of: 42)
+    document.u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
-    var seen: [Int?] = []
+    _ = try session.snapshot(timeSeconds: 0)
+    var seen: [Float] = []
     for _ in 0..<3 {
-      _ = try session.snapshot(timeSeconds: 0)
       _ = try session.click(componentID: 3, timeSeconds: 0)
-      seen.append(try session.probeValues(timeSeconds: 0).integers[42])
+      seen += Self.drawnWidths(try session.snapshot(timeSeconds: 0))
     }
     #expect(seen == [1, 2, 3], "\(seen)")
   }
@@ -557,14 +590,15 @@ import Testing
     document.u8(Op.modifierWidth).int(NativeSwiftDimensionType.exact).float(100)
     document.u8(Op.modifierHeight).int(NativeSwiftDimensionType.exact).float(100)
     document.u8(Op.layoutContent).int(-1).u8(Op.containerEnd)
-    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    document.u8(Op.containerEnd)
+    Self.drawWidth(document, of: 90)
+    document.u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
-    _ = try session.snapshot(timeSeconds: 0)
+    #expect(Self.drawnWidths(try session.snapshot(timeSeconds: 0)) == [100])
     #expect(session.setFloat(999, for: "compWidth"))
-    _ = try session.snapshot(timeSeconds: 0)
-    let value = try session.probeValues(timeSeconds: 0).floats[90]
+    let widths = Self.drawnWidths(try session.snapshot(timeSeconds: 0))
     withKnownIssue("a host write to a component value's id is kept over the measurement") {
-      #expect(value == 100, "\(value as Any)")
+      #expect(widths == [100], "\(widths)")
     }
   }
 
@@ -648,8 +682,8 @@ import Testing
 
   /// `RcTimeSourceRenderTest.aHostClockDrivesANamedCalendarField` (with
   /// `RcSystemVariableTest.namingASystemVariableDoesNotClaimIt`): a `NamedVariable` on
-  /// DAY_OF_MONTH or YEAR leaves it the clock's. (Kotlin's check that the name resolves to the
-  /// system id is `NativeSwiftCoreTests.namedVariableDeclarationsAnswerAsTheSessionDoes`' kind.)
+  /// DAY_OF_MONTH or YEAR leaves it the clock's. Not ported: Kotlin's check that the name
+  /// resolves to the system id, which is the declaration scan's, not resolution.
   @Test func namingASystemVariableDoesNotClaimIt() throws {
     let session = try Self.openWithRoot { document in
       document.namedVariable(id: System.dayOfMonth, type: Named.float, name: "cal_day")
@@ -686,13 +720,14 @@ import Testing
   /// `RcSystemVariableTest.aHostWriteToASystemIdClaimsItForGood`: a host write to OFFSET_TO_UTC
   /// before the first frame survives the clock's load.
   @Test func aHostWriteToASystemIdClaimsIt() throws {
-    let session = try Self.openWithRoot { _ in }
+    let session = try Self.openWithRoot { document in
+      Self.drawWidth(document, of: System.offsetToUTC)
+      Self.drawWidth(document, of: System.continuousSeconds)
+    }
     #expect(session.setFloat(2, forID: System.offsetToUTC))
     let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
-    _ = try session.snapshot(timeSeconds: 0, wallClock: clock)
-    let values = try session.probeValues(timeSeconds: 0, wallClock: clock)
-    #expect(values.floats[System.offsetToUTC] == 2, "\(values.floats[System.offsetToUTC] as Any)")
-    #expect(values.floats[System.continuousSeconds] == 1845.25)
+    let widths = Self.drawnWidths(try session.snapshot(timeSeconds: 0, wallClock: clock))
+    #expect(widths == [2, 1845.25], "\(widths)")
   }
 
   /// `RcSystemVariableTest.theDensityBuiltInsAreLoadedAndDefaultToAnUnscaledHost`.
@@ -869,15 +904,15 @@ import Testing
     let quarter = try #require(try Self.animated(session, at: 2))
     withKnownIssue("a tween retargeted mid-flight starts again from its previous target") {
       #expect(abs(retargeted - middle) <= 0.01, "\(retargeted)")
+    }
+    withKnownIssue("a tween retargeted mid-flight starts again from its previous target") {
       #expect(abs(quarter - 25) <= 0.01, "\(quarter)")
     }
     #expect(try Self.animated(session, at: 2.5) == 0)
   }
 
-  /// The spring `remote-m3`'s selection controls record: stiffness 1400, critically damped, 0.001
-  /// stop threshold.
-  /// Kotlin `RcFloatExpressionRuntimeTest`'s words: the spring marker, stiffness, damping, stop
-  /// threshold, and a zero final word.
+  /// The spring `remote-m3`'s selection controls record, as `RcFloatExpressionRuntimeTest` writes
+  /// it: the spring marker, stiffness 1400, critical damping, a 0.001 stop threshold, a zero word.
   private static let spring = [
     Writer.literal(NativeSwiftFloatAnimationMetadata.springMarker), Writer.literal(1400),
     Writer.literal(74.833_15), Writer.literal(0.001), 0,
@@ -892,6 +927,8 @@ import Testing
     let later = try Self.animated(session, at: 5)
     withKnownIssue("a spring starts at 0 rather than at its first target") {
       #expect(first == 1, "Kotlin 1; Swift \(first as Any)")
+    }
+    withKnownIssue("a spring that starts away from its target asks for frames") {
       #expect(!snapshot.needsContinuousFrames)
     }
     withKnownIssue("a spring integrates a long frame gap in one unstable step") {
@@ -913,7 +950,12 @@ import Testing
     let settled = try session.snapshot(timeSeconds: 2)
     withKnownIssue("a spring integrates a long frame gap in one unstable step") {
       #expect(samples.allSatisfy { (-0.01...1.01).contains($0) }, "\(samples)")
-      #expect(samples.last == 1 && !settled.needsContinuousFrames, "\(samples.last as Any)")
+    }
+    withKnownIssue("a spring integrates a long frame gap in one unstable step") {
+      #expect(samples.last == 1, "\(samples.last as Any)")
+    }
+    withKnownIssue("a spring integrates a long frame gap in one unstable step") {
+      #expect(!settled.needsContinuousFrames)
     }
   }
 
@@ -926,9 +968,13 @@ import Testing
     let retargeted = try session.snapshot(timeSeconds: 10)
     let first = try #require(Self.drawnWidths(retargeted).first)
     let next = try #require(try Self.animated(session, at: 10.016))
-    withKnownIssue("a spring starts at 0 rather than at its first target") {
+    withKnownIssue("a spring integrates a long frame gap in one unstable step") {
       #expect(abs(first - 1) < 0.01, "the idle gap was integrated as one step: \(first)")
+    }
+    withKnownIssue("a spring integrates a long frame gap in one unstable step") {
       #expect(retargeted.needsContinuousFrames, "a retargeted spring asks for frames")
+    }
+    withKnownIssue("a spring integrates a long frame gap in one unstable step") {
       #expect(next < first && next > 0, "\(next)")
     }
   }
@@ -943,9 +989,9 @@ import Testing
         .int(Writer.nanReference(System.continuousSeconds))
       document.u8(Op.particleLoop).int(9).int(1).float(0).int(1).int(1)
         .int(Writer.nanReference(70))
+      Self.drawWidth(document, of: 70)
     }
-    _ = try session.snapshot(timeSeconds: 4.5)
-    let value = try session.probeValues(timeSeconds: 4.5).floats[70]
-    #expect(value == 4.5, "\(value as Any)")
+    let widths = Self.drawnWidths(try session.snapshot(timeSeconds: 4.5))
+    #expect(widths == [4.5], "\(widths)")
   }
 }

@@ -25,7 +25,9 @@ extension Writer {
   /// A NaN-boxed `MatrixExpression` operator word, as Kotlin's `RcMatrixEvaluator.operator`.
   static func matrixOperator(_ operation: Int) -> Int {
     let payload = UInt32(NativeSwiftMatrixExpression.operatorOffset + operation)
-    return Int(Int32(bitPattern: 0xff80_0000 | payload))
+    // The NaN box `nanReference` and `floatOperator` put a payload in.
+    let nanBox = UInt32(bitPattern: Int32(Writer.nanReference(0)))
+    return Int(Int32(bitPattern: nanBox | payload))
   }
 }
 

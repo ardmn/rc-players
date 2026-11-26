@@ -62,7 +62,10 @@ import Testing
       case floats
       /// `floats` plus one integer expression over a constant float expression.
       case integerOverStatic
-      /// `floats` plus one integer expression over the moving float.
+      /// `floats` plus one integer expression over the moving float. Today it costs what
+      /// `integerOverStatic` does, because an integer expression does not read a computed float's
+      /// integer view (a known issue in `NativeSwiftValueOrderTests`); a resolver that fixes that
+      /// pays for the moving read here.
       case integerOverMoving
       /// n integer-float expression pairs, each reading the one before it in wire order.
       case interleavedChain
@@ -172,7 +175,8 @@ import Testing
     }
 
     let report = Report(
-      schemaVersion: 1,
+      // 2: `scenarios.resolutionCost` added.
+      schemaVersion: 2,
       sourceRevision: ProcessInfo.processInfo.environment["RC_SOURCE_REVISION"] ?? "unknown",
       iterations: Self.iterations,
       frames: Self.frames,
@@ -369,6 +373,8 @@ import Testing
     typealias Op = NativeSwiftWireOpcode
     let add = Writer.floatOperator(NativeSwiftFloatOperator.add)
     let movingID = 20000
+    // Integer-expression mask: token 0 is a variable id, token 2 an operator.
+    let variableThenOperator = 0b101
     let writer = Writer()
     writer.header(width: 100, height: 100)
     writer.u8(Op.animatedFloat).int(movingID).int(3)
@@ -381,8 +387,8 @@ import Testing
       writer.u8(Op.animatedFloat).int(base).int(1).int(Writer.nanReference(movingID))
       for step in 0..<size {
         let floatIn = base + step * 2
-        // Mask 0b101: token 0 is a variable id, token 2 an operator.
-        writer.u8(Op.integerExpression).int(floatIn + 1).int(0b101).int(3).int(floatIn).int(1)
+        writer.u8(Op.integerExpression).int(floatIn + 1).int(variableThenOperator).int(3)
+          .int(floatIn).int(1)
           .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
         writer.u8(Op.animatedFloat).int(floatIn + 2).int(3).int(Writer.nanReference(floatIn + 1))
           .int(Writer.literal(0.5)).int(add)

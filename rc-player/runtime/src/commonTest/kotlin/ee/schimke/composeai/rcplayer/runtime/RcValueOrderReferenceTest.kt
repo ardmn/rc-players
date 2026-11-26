@@ -26,9 +26,10 @@ import kotlin.test.assertEquals
 /**
  * Kotlin's answers for the Swift `NativeSwiftValueOrderTests` and
  * `NativeSwiftSinglePassResolutionTests` cases that no other Kotlin test pins: one wire-order pass
- * each. The AndroidX-derived cases name their AndroidX test; the value asserted is Kotlin's. A case
- * the document plays through a measure pass or a draw-pass loop is driven through the entry point
- * the Kotlin player uses for it (`publishComponentGeometry`, `forEachLoopValue`).
+ * per frame, as the player runs it. The AndroidX-derived cases name their AndroidX test; the value
+ * asserted is Kotlin's. A case the document plays through a measure pass or a draw-pass loop is
+ * driven through the entry point the Kotlin player uses for it (`publishComponentGeometry`,
+ * `forEachLoopValue`).
  */
 class RcValueOrderReferenceTest {
   private fun ref(id: Int) = RcFloatWord(0x7fc00000 or id)
@@ -44,7 +45,7 @@ class RcValueOrderReferenceTest {
     applyContentStateOperations(operations.map { RcLinkedNode.Operation(it) })
 
   private fun pass(declarations: List<RcOperation>, operations: List<RcOperation>): RcPlayerState {
-    val state = RcPlayerState(RcDocument(RcHeader(RcVersion(0, 1, 0)), declarations + operations))
+    val state = RcPlayerState(document(*(declarations + operations).toTypedArray()))
     state.beginFrame()
     state.applyContentStateOperations(operations.map { RcLinkedNode.Operation(it) })
     return state
@@ -112,11 +113,11 @@ class RcValueOrderReferenceTest {
         else listOf(RcIntegerConstant(52, 4))
       val state =
         RcPlayerState(
-          RcDocument(
-            RcHeader(RcVersion(0, 1, 0)),
-            declarations +
-              integerExpression +
-              (if (constantFirst) emptyList() else listOf(constant)),
+          document(
+            *(declarations +
+                integerExpression +
+                (if (constantFirst) emptyList() else listOf(constant)))
+              .toTypedArray(),
           ),
         )
       state.beginFrame()
@@ -128,8 +129,13 @@ class RcValueOrderReferenceTest {
 
   @Test
   fun constantsReplayInWireOrder() {
+    // The Swift test also reads 51 through an integer expression, I53 = [51], after the load.
+    val reader = RcIntegerExpression(53, 1, listOf(51))
     fun load(vararg operations: RcOperation): RcPlayerState =
-      RcPlayerState(RcDocument(RcHeader(RcVersion(0, 1, 0)), operations.toList()))
+      RcPlayerState(document(*operations, reader)).apply {
+        beginFrame()
+        applyAll(reader)
+      }
     fun f(v: Float) = RcFloatConstant(51, RcFloatWord.literal(v))
     fun i(v: Int) = RcIntegerConstant(51, v)
     val cases =
@@ -144,6 +150,7 @@ class RcValueOrderReferenceTest {
     cases.forEachIndexed { index, (state, expected) ->
       assertEquals(expected.first, state.integer(51), "case $index")
       assertEquals(expected.second, state.float(51), "case $index")
+      assertEquals(expected.first, state.integer(53), "case $index")
     }
   }
 
