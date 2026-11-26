@@ -617,7 +617,14 @@ private fun queryParameterFromLocation(name: String): JsString? =
 
 private fun namedValuesFromLocation(): Map<String, RcNamedValue> =
   namedValuesFromRows(
-    flattenNamedValuesFromLocation()?.toString().orEmpty(),
+    flattenNamedValuesFromLocation(
+        rowSeparator = NAMED_VALUE_ROW_SEPARATOR,
+        fieldSeparator = NAMED_VALUE_FIELD_SEPARATOR,
+        numberMark = NAMED_VALUE_NUMBER_MARK,
+        textMark = NAMED_VALUE_TEXT_MARK,
+      )
+      ?.toString()
+      .orEmpty(),
     decodeComponent = ::decodeUriComponent,
   )
 
@@ -630,9 +637,15 @@ private fun namedValuesFromLocation(): Map<String, RcNamedValue> =
  * missing) is skipped: coerced with `String()`, `["color"]` would read as the kind `color`. The
  * `try` catches the rest — a `value` whose `String()` throws, or text with a lone surrogate, which
  * `encodeURIComponent` refuses with a URIError. All three text fields are encoded, `kind` too:
- * unescaped, a U+0000 or U+0001 in it would break its row or spell another one.
+ * unescaped, a separator in it would break its row or spell another one. The separators and marks
+ * are [namedValuesFromRows]'s, passed in so the row format has one definition.
  */
-private fun flattenNamedValuesFromLocation(): JsString? =
+private fun flattenNamedValuesFromLocation(
+  rowSeparator: String,
+  fieldSeparator: String,
+  numberMark: String,
+  textMark: String,
+): JsString? =
   js(
     """(function () {
       var values;
@@ -648,10 +661,10 @@ private fun flattenNamedValuesFromLocation(): JsString? =
           // The fourth field says whether `value` was a JSON number; parseNamedValue reads it.
           rows.push([encodeURIComponent(value.kind), encodeURIComponent(value.name),
             encodeURIComponent(String(value.value == null ? '' : value.value)),
-            typeof value.value === 'number' ? 'n' : 's'].join('\u0000'));
+            typeof value.value === 'number' ? numberMark : textMark].join(fieldSeparator));
         } catch (error) { /* this element alone is malformed */ }
       });
-      return rows.join('\u0001');
+      return rows.join(rowSeparator);
     })()""",
   )
 
