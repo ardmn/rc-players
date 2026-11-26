@@ -4423,6 +4423,11 @@ final class ee.schimke.composeai.rcplayer.protocol/RcTextMerge : ee.schimke.comp
     final fun equals(kotlin/Any?): kotlin/Boolean // ee.schimke.composeai.rcplayer.protocol/RcTextMerge.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // ee.schimke.composeai.rcplayer.protocol/RcTextMerge.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // ee.schimke.composeai.rcplayer.protocol/RcTextMerge.toString|toString(){}[0]
+
+    final object Companion { // ee.schimke.composeai.rcplayer.protocol/RcTextMerge.Companion|null[0]
+        final const val MAX_LENGTH // ee.schimke.composeai.rcplayer.protocol/RcTextMerge.Companion.MAX_LENGTH|{}MAX_LENGTH[0]
+            final fun <get-MAX_LENGTH>(): kotlin/Int // ee.schimke.composeai.rcplayer.protocol/RcTextMerge.Companion.MAX_LENGTH.<get-MAX_LENGTH>|<get-MAX_LENGTH>(){}[0]
+    }
 }
 
 final class ee.schimke.composeai.rcplayer.protocol/RcTextStyle : ee.schimke.composeai.rcplayer.protocol/RcOperation { // ee.schimke.composeai.rcplayer.protocol/RcTextStyle|null[0]

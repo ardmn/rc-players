@@ -334,16 +334,42 @@ class RcPlayerStateTest {
     }
 
     assertEquals(listOf(1f, 3f, 5f), values)
-    assertFailsWith<IllegalArgumentException> {
+    // AndroidX runs `for (float i = mFromOut; i < mUntilOut; i += mStepOut)` (remote-core
+    // LoopOperation.java:125, androidx-main ef999e6c39e) and never leaves a loop that does not end.
+    // The player runs the same Java loop and stops after 10 000 passes.
+    // The bounds are variables, as a host's values reach a loop: a NaN literal would be an id.
+    fun passes(from: Float, until: Float, step: Float): List<Float> {
+      state.setFloat(30, from)
+      state.setFloat(31, step)
+      state.setFloat(32, until)
+      val seen = mutableListOf<Float>()
       state.forEachLoopValue(
         RcLoopOperation(
           0,
-          RcFloatWord.literal(0f),
-          RcFloatWord.literal(0.00001f),
-          RcFloatWord.literal(1f),
+          RcFloatWord(0x7fc00000 or 30),
+          RcFloatWord(0x7fc00000 or 31),
+          RcFloatWord(0x7fc00000 or 32),
         ),
-      ) {}
+        seen::add,
+      )
+      return seen
     }
+    // 100 000 passes in Java: the resource bound stops the loop at exactly 10 000.
+    val capped = passes(0f, 1f, 0.00001f)
+    assertEquals(10_000, capped.size)
+    assertEquals(0f, capped.first())
+    assertEquals(10_000, passes(0f, Float.POSITIVE_INFINITY, 1f).size)
+    assertEquals(10_000, passes(0f, 1f, 0f).size)
+    // 1e9 + 1 rounds back to 1e9: the index never advances.
+    assertEquals(10_000, passes(1e9f, 2e9f, 1f).size)
+    assertEquals(10_000, passes(Float.NEGATIVE_INFINITY, 0f, 1f).size)
+    // A NaN bound fails `i < until` at once; a NaN step runs the first pass, then the index is NaN.
+    assertTrue(passes(Float.NaN, 1f, 1f).isEmpty())
+    assertTrue(passes(0f, Float.NaN, 1f).isEmpty())
+    assertEquals(listOf(0f), passes(0f, 1f, Float.NaN))
+    assertTrue(passes(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, 1f).isEmpty())
+    // A negative step with from < until runs until the cap, as Java's loop would never end.
+    assertEquals(10_000, passes(0f, 1f, -1f).size)
     val zeroIterations = mutableListOf<Float>()
     state.forEachLoopValue(
       RcLoopOperation(
@@ -355,6 +381,64 @@ class RcPlayerStateTest {
       zeroIterations::add,
     )
     assertTrue(zeroIterations.isEmpty())
+  }
+
+  /** AndroidX `TextMerge` throws past 16K UTF-16 units; the player keeps the text it had. */
+  @Test
+  fun aMergeLongerThanAndroidXsLimitLeavesTheTextUnchanged() {
+    val state = RcPlayerState(RcDocument(RcHeader(RcVersion(1, 0, 0)), emptyList()))
+    state.setText(1, "a".repeat(RcTextMerge.MAX_LENGTH - 1))
+    state.setText(2, "b")
+    state.setText(3, "before")
+
+    state.applyTextOperation(RcTextMerge(3, 1, 2))
+    assertEquals(RcTextMerge.MAX_LENGTH, state.text(3)?.length)
+
+    state.setText(2, "bb")
+    state.applyTextOperation(RcTextMerge(3, 1, 2))
+    assertEquals(RcTextMerge.MAX_LENGTH, state.text(3)?.length)
+    assertEquals('b', state.text(3)?.last())
+  }
+
+  /** AndroidX throws on a dynamic list length outside 0..2000; the player then holds no list. */
+  @Test
+  fun aDynamicListLengthOutsideAndroidXsRangeHoldsNoList() {
+    val state = RcPlayerState(RcDocument(RcHeader(RcVersion(1, 0, 0)), emptyList()))
+    fun declare(length: Float) {
+      state.setFloat(30, length)
+      state.applyDataOperation(RcDynamicFloatList(60, RcFloatWord(0x7fc00000 or 30)))
+    }
+
+    declare(RcFloatList.MAX_VALUES.toFloat())
+    assertEquals(RcFloatList.MAX_VALUES, state.floatValues(60)?.size)
+    for (length in listOf(RcFloatList.MAX_VALUES + 1f, -1f, Float.POSITIVE_INFINITY)) {
+      declare(3f)
+      assertEquals(3, state.floatValues(60)?.size)
+      declare(length)
+      assertNull(state.floatValues(60), "$length")
+    }
+    // NaN truncates to 0, as Java's `(int)` does: an empty list.
+    declare(Float.NaN)
+    assertEquals(0, state.floatValues(60)?.size)
+  }
+
+  /**
+   * AndroidX writes a float only when `previous != value` (RemoteComposeState.java:300,
+   * androidx-main ef999e6c39e; an unset id holding 0), so a zero over a zero keeps its sign, and a
+   * NaN is always written.
+   */
+  @Test
+  fun aZeroWrittenOverAZeroKeepsTheSignAlreadyThere() {
+    val state = RcPlayerState(RcDocument(RcHeader(RcVersion(1, 0, 0)), emptyList()))
+    state.setFloat(30, -0f)
+    assertEquals(0f.toRawBits(), state.float(30)?.toRawBits())
+    state.setFloat(31, 1f)
+    state.setFloat(31, -0f)
+    assertEquals((-0f).toRawBits(), state.float(31)?.toRawBits())
+    state.setFloat(31, 0f)
+    assertEquals((-0f).toRawBits(), state.float(31)?.toRawBits())
+    state.setFloat(31, Float.NaN)
+    assertTrue(state.float(31)!!.isNaN())
   }
 
   @Test
