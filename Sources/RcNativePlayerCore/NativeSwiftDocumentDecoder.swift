@@ -71,8 +71,8 @@ enum NativeSwiftDocumentDecoder {
     var densityBehavior = NativeSwiftDensityBehavior.legacy
     if encodedMajor < 0x10000 {
       major = encodedMajor
-      width = try input.int("width")
-      height = try input.int("height")
+      width = try input.int(NativeSwiftWireField.width)
+      height = try input.int(NativeSwiftWireField.height)
       _ = try input.int("capabilities high word")
       _ = try input.int("capabilities low word")
     } else {
@@ -91,13 +91,13 @@ enum NativeSwiftDocumentDecoder {
         switch type {
         case NativeSwiftHeaderValueType.int:
           guard length == 4 else { throw input.malformed("Invalid integer header property length") }
-          let value = try input.int("header property \(index)")
+          let value = try input.int(NativeSwiftWireField.headerProperty(index))
           if key == NativeSwiftHeaderKey.documentWidth { modernWidth = value }
           if key == NativeSwiftHeaderKey.documentHeight { modernHeight = value }
           if key == NativeSwiftHeaderKey.densityBehavior { densityBehavior = value }
         case NativeSwiftHeaderValueType.float:
           guard length == 4 else { throw input.malformed("Invalid float header property length") }
-          let value = Float(bitPattern: try input.word("header property \(index)"))
+          let value = Float(bitPattern: try input.word(NativeSwiftWireField.headerProperty(index)))
           if key == NativeSwiftHeaderKey.densityAtGeneration { density = value }
         case NativeSwiftHeaderValueType.long:
           guard length == 8 else { throw input.malformed("Invalid long header property length") }
@@ -105,7 +105,7 @@ enum NativeSwiftDocumentDecoder {
           _ = try input.int("header property \(index) low word")
         case NativeSwiftHeaderValueType.string:
           guard length >= 4 else { throw input.malformed("Invalid string header property length") }
-          let value = try input.utf8("header property \(index)", maximum: maximumStringBytes)
+          let value = try input.utf8(NativeSwiftWireField.headerProperty(index), maximum: maximumStringBytes)
           guard value.utf8.count + 4 == length else {
             throw input.malformed("Invalid string header property length")
           }
@@ -342,9 +342,9 @@ enum NativeSwiftDocumentDecoder {
         } else if id == Property.autosize {
           // Kept, as 0 or 1, because it changes the component's size: the text takes the largest
           // font in its range that fits the box. A style can set it for every text using it.
-          properties.integers[id] = Int(try input.u8("\(label) boolean"))
+          properties.integers[id] = Int(try input.u8(NativeSwiftWireField.boolean(of: label)))
         } else if [Property.underline, Property.strikethrough].contains(id) {
-          _ = try input.u8("\(label) boolean")
+          _ = try input.u8(NativeSwiftWireField.boolean(of: label))
         } else if id == Property.fontAxis || id == Property.fontAxisValues {
           let count = Int(try input.u16("\(label) array count"))
           guard count <= maximumProperties else {
@@ -504,7 +504,7 @@ enum NativeSwiftDocumentDecoder {
       while let frame = frames.last {
         switch frame {
         case .call:
-          let childOpcode = try input.u8("nested macro call operation")
+          let childOpcode = try input.u8(NativeSwiftWireField.nestedMacroCallOperation)
           census(childOpcode)
           if childOpcode == NativeSwiftWireOpcode.containerEnd {
             frames.removeLast()
@@ -515,7 +515,7 @@ enum NativeSwiftDocumentDecoder {
               opcode: childOpcode, offset: input.offset - 1,
               reason: "LOOM nested macro calls only support MacroBlock children")
           }
-          _ = try input.int("nested macro block index")
+          _ = try input.int(NativeSwiftWireField.nestedMacroBlockIndex)
           guard bodyDepth + 1 < maximumNestingDepth else {
             throw input.malformed("Macro body nesting exceeds \(maximumNestingDepth)")
           }
@@ -523,7 +523,7 @@ enum NativeSwiftDocumentDecoder {
           frames.append(.body(nesting: 0))
         case .body(let nesting):
           let opcodeOffset = input.offset
-          let opcode = try input.u8("macro body opcode")
+          let opcode = try input.u8(NativeSwiftWireField.macroBodyOpcode)
           census(opcode)
           if opcode == NativeSwiftWireOpcode.containerEnd {
             frames.removeLast()
@@ -569,8 +569,8 @@ enum NativeSwiftDocumentDecoder {
         case NativeSwiftWireOpcode.containerEnd:
           return steps
         case NativeSwiftWireOpcode.dataFloat:
-          let id = try input.int("layout compute float id")
-          let word = try input.word("layout compute float value")
+          let id = try input.int(NativeSwiftWireField.layoutComputeFloatID)
+          let word = try input.word(NativeSwiftWireField.layoutComputeFloatValue)
           if NativeSwiftFloatExpression.referenceID(word) == nil {
             let value = Float(bitPattern: word)
             guard value.isFinite else { throw input.malformed("float value must be finite") }
@@ -597,16 +597,16 @@ enum NativeSwiftDocumentDecoder {
           for _ in 0..<valueCount { words.append(try input.word("layout compute expression word")) }
           steps.append(.float(id: id, words: words, offset: opcodeOffset))
         case NativeSwiftWireOpcode.dynamicFloatList:
-          let id = try input.int("dynamic float list id")
-          let length = try input.word("dynamic float list length")
+          let id = try input.int(NativeSwiftWireField.dynamicFloatListID)
+          let length = try input.word(NativeSwiftWireField.dynamicFloatListLength)
           guard dynamicFloatLists[id] == nil else {
             throw input.malformed("Duplicate dynamic float list \(id)")
           }
           dynamicFloatLists[id] = ParsedDynamicFloatList(lengthWord: length, updates: [])
         case NativeSwiftWireOpcode.updateDynamicFloatList:
-          let id = try input.int("dynamic float list id")
-          let index = try input.word("dynamic float list index")
-          let value = try input.word("dynamic float list value")
+          let id = try input.int(NativeSwiftWireField.dynamicFloatListID)
+          let index = try input.word(NativeSwiftWireField.dynamicFloatListIndex)
+          let value = try input.word(NativeSwiftWireField.dynamicFloatListValue)
           steps.append(.update(listID: id, index: index, value: value))
         default:
           throw NativeSwiftCoreError.unsupported(
@@ -617,9 +617,9 @@ enum NativeSwiftDocumentDecoder {
     }
 
     func skipMacroCallHeader() throws {
-      _ = try input.int("nested macro id")
-      let argumentCount = try input.count("nested macro argument count", maximum: maximumProperties)
-      for _ in 0..<argumentCount { _ = try input.int("nested macro argument") }
+      _ = try input.int(NativeSwiftWireField.nestedMacroID)
+      let argumentCount = try input.count(NativeSwiftWireField.nestedMacroArgumentCount, maximum: maximumProperties)
+      for _ in 0..<argumentCount { _ = try input.int(NativeSwiftWireField.nestedMacroArgument) }
     }
 
     /// Reads past one captured operation's payload, returning whether it opens a container. The
@@ -627,8 +627,8 @@ enum NativeSwiftDocumentDecoder {
     func skipOperationPayload(_ opcode: Int, at opcodeOffset: Int, depth: Int) throws -> Bool {
       switch opcode {
       case NativeSwiftWireOpcode.paintValues:
-        let count = try input.count("macro paint word count", maximum: 1_024)
-        for _ in 0..<count { _ = try input.int("macro paint word") }
+        let count = try input.count(NativeSwiftWireField.macroPaintWordCount, maximum: 1_024)
+        for _ in 0..<count { _ = try input.int(NativeSwiftWireField.macroPaintWord) }
       case NativeSwiftWireOpcode.clipPath, NativeSwiftWireOpcode.drawPath,
         NativeSwiftWireOpcode.macroArgument:
         _ = try input.int("macro clip path id")
@@ -637,7 +637,7 @@ enum NativeSwiftDocumentDecoder {
         // top-level operation, so it recurses at most once into the iterative capture.
         try skipMacroCallHeader()
         while true {
-          let childOpcode = try input.u8("nested macro call operation")
+          let childOpcode = try input.u8(NativeSwiftWireField.nestedMacroCallOperation)
           census(childOpcode)
           if childOpcode == NativeSwiftWireOpcode.containerEnd { break }
           guard childOpcode == NativeSwiftWireOpcode.macroBlock else {
@@ -645,29 +645,29 @@ enum NativeSwiftDocumentDecoder {
               opcode: childOpcode, offset: input.offset - 1,
               reason: "LOOM nested macro calls only support MacroBlock children")
           }
-          _ = try input.int("nested macro block index")
+          _ = try input.int(NativeSwiftWireField.nestedMacroBlockIndex)
           _ = try captureMacroBody(depth: depth + 1)
         }
       case NativeSwiftOpcodeGroup.fourWordDraws:
-        for _ in 0..<4 { _ = try input.word("macro drawing value") }
+        for _ in 0..<4 { _ = try input.word(NativeSwiftWireField.macroDrawingValue) }
       case NativeSwiftWireOpcode.drawBitmap:
-        _ = try input.int("macro bitmap id")
+        _ = try input.int(NativeSwiftWireField.macroBitmapID)
         for _ in 0..<4 { _ = try input.word("macro bitmap destination") }
-        _ = try input.int("macro bitmap description id")
+        _ = try input.int(NativeSwiftWireField.macroBitmapDescriptionID)
       case NativeSwiftWireOpcode.drawCircle:
         for _ in 0..<3 { _ = try input.word("macro circle value") }
       case NativeSwiftWireOpcode.drawToBitmap:
         // Bitmap id, mode and colour; validated when the captured body executes.
-        _ = try input.int("macro draw to bitmap id")
-        _ = try input.int("macro draw to bitmap mode")
-        _ = try input.int("macro draw to bitmap color")
+        _ = try input.int(NativeSwiftWireField.macroDrawToBitmapID)
+        _ = try input.int(NativeSwiftWireField.macroDrawToBitmapMode)
+        _ = try input.int(NativeSwiftWireField.macroDrawToBitmapColor)
       case NativeSwiftWireOpcode.conditionalOperations:
-        _ = try input.u8("conditional type")
-        _ = try input.word("conditional left")
-        _ = try input.word("conditional right")
+        _ = try input.u8(NativeSwiftWireField.conditionalType)
+        _ = try input.word(NativeSwiftWireField.conditionalLeft)
+        _ = try input.word(NativeSwiftWireField.conditionalRight)
         return true
       case NativeSwiftOpcodeGroup.sixWordDraws:
-        for _ in 0..<6 { _ = try input.word("macro drawing value") }
+        for _ in 0..<6 { _ = try input.word(NativeSwiftWireField.macroDrawingValue) }
       case NativeSwiftWireOpcode.layoutBox:
         // BoxLayout declares both its component and animation IDs; positioning is plain data.
         for _ in 0..<4 { _ = try input.int("macro box value") }
@@ -678,7 +678,7 @@ enum NativeSwiftDocumentDecoder {
         return true
       case NativeSwiftWireOpcode.macroBlock:
         // A block outside a MacroCall: a container like any other, inert when it executes.
-        _ = try input.int("macro block index")
+        _ = try input.int(NativeSwiftWireField.macroBlockIndex)
         return true
       default:
         throw NativeSwiftCoreError.unsupported(
@@ -729,11 +729,11 @@ enum NativeSwiftDocumentDecoder {
         // Only the outermost body's direct children are counted, as the recursive walk returned.
         if suspended.isEmpty { children += 1 }
         if opcode == NativeSwiftWireOpcode.conditionalOperations {
-          let type = try input.u8("conditional type")
+          let type = try input.u8(NativeSwiftWireField.conditionalType)
           let left = NativeSwiftFloatExpression.resolve(
-            try input.word("conditional left"), values: floats)
+            try input.word(NativeSwiftWireField.conditionalLeft), values: floats)
           let right = NativeSwiftFloatExpression.resolve(
-            try input.word("conditional right"), values: floats)
+            try input.word(NativeSwiftWireField.conditionalRight), values: floats)
           let inner = try captureMacroBody()
           guard let parentPath = path else { continue }
           let innerPath = "\(parentPath).\(nestedIndex)"
@@ -767,7 +767,7 @@ enum NativeSwiftDocumentDecoder {
             opcode: opcode, offset: opcodeOffset,
             reason: "LOOM macro calls only support MacroBlock children")
         }
-        let index = try input.int("macro block index")
+        let index = try input.int(NativeSwiftWireField.macroBlockIndex)
         guard blocks[index] == nil else { throw input.malformed("Duplicate macro block \(index)") }
         blocks[index] = try captureMacroBody()
       }
@@ -787,7 +787,7 @@ enum NativeSwiftDocumentDecoder {
         replaceWord(at: offset, with: UInt32(bitPattern: Int32(value)))
       }
       func remapFloatReference(at offset: Int) throws {
-        let word = try reader.word("macro drawing value")
+        let word = try reader.word(NativeSwiftWireField.macroDrawingValue)
         if let id = NativeSwiftFloatExpression.referenceID(word), let replacement = mappings[id] {
           replaceWord(
             at: offset,
@@ -813,7 +813,7 @@ enum NativeSwiftDocumentDecoder {
       }
       while !reader.isAtEnd {
         let opcodeOffset = reader.offset
-        let opcode = try reader.u8("macro body opcode")
+        let opcode = try reader.u8(NativeSwiftWireField.macroBodyOpcode)
         switch opcode {
         case NativeSwiftWireOpcode.clipPath:
           // Only the packed path id is remapped; the region operation above it is kept.
@@ -832,29 +832,29 @@ enum NativeSwiftDocumentDecoder {
           // this parent body is resumed. Its MacroBlock children and their contents follow inline
           // and are rewritten by this same walk: the reference inflates a block's operations with
           // the enclosing body's remap context, and a MacroArgument later inserts them as they are.
-          _ = try reader.int("nested macro id")
-          let argumentCount = try reader.count("nested macro argument count", maximum: maximumProperties)
+          _ = try reader.int(NativeSwiftWireField.nestedMacroID)
+          let argumentCount = try reader.count(NativeSwiftWireField.nestedMacroArgumentCount, maximum: maximumProperties)
           for _ in 0..<argumentCount {
             let argumentOffset = reader.offset
-            let argument = try reader.int("nested macro argument")
+            let argument = try reader.int(NativeSwiftWireField.nestedMacroArgument)
             if let replacement = mappings[argument] {
               replaceID(at: argumentOffset, with: replacement)
             }
           }
         case NativeSwiftWireOpcode.macroBlock:
           // Only the slot index, which names a parameter position rather than an id.
-          _ = try reader.int("macro block index")
+          _ = try reader.int(NativeSwiftWireField.macroBlockIndex)
         case NativeSwiftWireOpcode.paintValues:
-          let count = try reader.count("macro paint word count", maximum: 1_024)
-          for _ in 0..<count { _ = try reader.int("macro paint word") }
+          let count = try reader.count(NativeSwiftWireField.macroPaintWordCount, maximum: 1_024)
+          for _ in 0..<count { _ = try reader.int(NativeSwiftWireField.macroPaintWord) }
         case NativeSwiftWireOpcode.macroArgument:
-          _ = try reader.int("macro argument index")
+          _ = try reader.int(NativeSwiftWireField.macroArgumentIndex)
         case NativeSwiftOpcodeGroup.fourWordDraws:
           for _ in 0..<4 { let offset = reader.offset; try remapFloatReference(at: offset) }
         case NativeSwiftWireOpcode.drawBitmap:
-          _ = try reader.int("macro bitmap id")
+          _ = try reader.int(NativeSwiftWireField.macroBitmapID)
           for _ in 0..<4 { let offset = reader.offset; try remapFloatReference(at: offset) }
-          _ = try reader.int("macro bitmap description id")
+          _ = try reader.int(NativeSwiftWireField.macroBitmapDescriptionID)
         case NativeSwiftWireOpcode.drawCircle:
           for _ in 0..<3 { let offset = reader.offset; try remapFloatReference(at: offset) }
         case NativeSwiftWireOpcode.drawToBitmap:
@@ -862,10 +862,10 @@ enum NativeSwiftDocumentDecoder {
           // expansion resolves through its remap context: the whole word, as a parameter names it.
           // Mode and colour are plain `readInt()`s.
           let idOffset = reader.offset
-          let id = try reader.int("macro draw to bitmap id")
+          let id = try reader.int(NativeSwiftWireField.macroDrawToBitmapID)
           if let replacement = mappings[id] { replaceID(at: idOffset, with: replacement) }
-          _ = try reader.int("macro draw to bitmap mode")
-          _ = try reader.int("macro draw to bitmap color")
+          _ = try reader.int(NativeSwiftWireField.macroDrawToBitmapMode)
+          _ = try reader.int(NativeSwiftWireField.macroDrawToBitmapColor)
         case NativeSwiftOpcodeGroup.sixWordDraws:
           for _ in 0..<6 { let offset = reader.offset; try remapFloatReference(at: offset) }
         case NativeSwiftWireOpcode.layoutBox:
@@ -972,9 +972,9 @@ enum NativeSwiftDocumentDecoder {
       }
       switch opcode {
       case NativeSwiftWireOpcode.conditionalOperations:
-        let type = Int(try input.u8("conditional type"))
-        let leftWord = try input.word("conditional left")
-        let rightWord = try input.word("conditional right")
+        let type = Int(try input.u8(NativeSwiftWireField.conditionalType))
+        let leftWord = try input.word(NativeSwiftWireField.conditionalLeft)
+        let rightWord = try input.word(NativeSwiftWireField.conditionalRight)
         let body = try captureMacroBody()
         let left = NativeSwiftFloatExpression.resolve(leftWord, values: floats)
         let right = NativeSwiftFloatExpression.resolve(rightWord, values: floats)
@@ -1043,14 +1043,14 @@ enum NativeSwiftDocumentDecoder {
         if shouldSkip { _ = try input.rawData("skipped operation section", length: length) }
       case NativeSwiftWireOpcode.referencedOperations:
         // ReferencedOperations definition container.
-        let referenceID = try input.int("referenced operations id")
+        let referenceID = try input.int(NativeSwiftWireField.referencedOperationsID)
         guard referencedOperations[referenceID] == nil else {
           throw input.malformed("Duplicate referenced operations \(referenceID)")
         }
         referencedOperations[referenceID] = try captureMacroBody()
       case NativeSwiftWireOpcode.includeReferencedOperations:
         // Inline a previously captured ReferencedOperations body.
-        let referenceID = try input.int("referenced operations id")
+        let referenceID = try input.int(NativeSwiftWireField.referencedOperationsID)
         guard let body = referencedOperations[referenceID] else {
           throw input.malformed("Missing referenced operations \(referenceID)")
         }
@@ -1148,7 +1148,7 @@ enum NativeSwiftDocumentDecoder {
         input = WireReader(expanded)
       case NativeSwiftWireOpcode.macroArgument:
         // Insert the block supplied to the enclosing MacroCall.
-        let index = try input.int("macro argument index")
+        let index = try input.int(NativeSwiftWireField.macroArgumentIndex)
         guard let block = macroBlocks[index] else {
           throw input.malformed("Missing macro block \(index)")
         }
@@ -1159,7 +1159,7 @@ enum NativeSwiftDocumentDecoder {
         input = WireReader(block)
       case NativeSwiftWireOpcode.macroDefine:
         // Macro definition. Definitions are structural and do not execute their body.
-        let macroID = try input.int("macro id")
+        let macroID = try input.int(NativeSwiftWireField.macroID)
         let parameterCount = try input.count("macro parameter count", maximum: maximumProperties)
         let parameterIDs = try (0..<parameterCount).map { _ in try input.int("macro parameter id") }
         let bodySize = try input.count("macro body size", maximum: maximumStringBytes)
@@ -1172,7 +1172,7 @@ enum NativeSwiftDocumentDecoder {
         }
         macroDefinitions[macroID] = MacroDefinition(parameterIDs: parameterIDs, body: body)
       case NativeSwiftWireOpcode.macroCall:  // Macro call container.
-        let macroID = try input.int("macro id")
+        let macroID = try input.int(NativeSwiftWireField.macroID)
         let argumentCount = try input.count("macro argument count", maximum: maximumProperties)
         let arguments = try (0..<argumentCount).map { _ in try input.int("macro argument id") }
         guard let definition = macroDefinitions[macroID] else {
@@ -1491,7 +1491,7 @@ enum NativeSwiftDocumentDecoder {
       case NativeSwiftWireOpcode.modifierWidth:  // Width
         let node = try currentNode(stack, input: input)
         let widthType = try input.dimensionType("width type")
-        let widthWord = try input.word("width")
+        let widthWord = try input.word(NativeSwiftWireField.width)
         // First one wins, because these are a Compose modifier *chain*, not a property. AndroidX
         // emits `width(172.dp)` followed by `fillMaxWidth()` on every title card: the outer
         // modifier fixes the constraint at 172dp and the inner fill then fills exactly that, so the
@@ -1536,15 +1536,15 @@ enum NativeSwiftDocumentDecoder {
       case NativeSwiftWireOpcode.modifierHeight:  // Height
         let node = try currentNode(stack, input: input)
         let heightType = try input.dimensionType("height type")
-        let heightWord = try input.word("height")
+        let heightWord = try input.word(NativeSwiftWireField.height)
         // See `modifierWidth`: the outer modifier of a chain decides, and `WRAP` is not a modifier.
         if node.heightType == NativeSwiftDimensionType.wrap {
           node.heightType = heightType
           node.heightWord = heightWord
         }
       case NativeSwiftWireOpcode.dataFloat:  // Float constant
-        let floatID = try input.int("float id")
-        let constantWord = try input.word("float value")
+        let floatID = try input.int(NativeSwiftWireField.floatID)
+        let constantWord = try input.word(NativeSwiftWireField.floatValue)
         if NativeSwiftFloatExpression.referenceID(constantWord) != nil {
           // A constant that names another value is an alias, not a number. Expressing it as a
           // one-word expression runs it through the same ordered evaluation as any other computed
@@ -1673,7 +1673,7 @@ enum NativeSwiftDocumentDecoder {
           configID: configID, properties: properties, offset: opcodeOffset)
         try begin(node)
       case NativeSwiftWireOpcode.dataText:  // Text data
-        let id = try input.int("text id")
+        let id = try input.int(NativeSwiftWireField.textID)
         texts[id] = try input.utf8("text", maximum: maximumStringBytes)
       case NativeSwiftWireOpcode.colorConstant:  // Color constant
         colors[try input.int("color id")] = UInt32(bitPattern: Int32(try input.int("color")))
@@ -1703,8 +1703,8 @@ enum NativeSwiftDocumentDecoder {
         colors[colorID] = UInt32(bitPattern: Int32(lightFallback))
         darkColors[colorID] = UInt32(bitPattern: Int32(darkFallback))
       case NativeSwiftWireOpcode.dataInt:  // Integer constant
-        let id = try input.int("integer id")
-        let value = try input.int("integer value")
+        let id = try input.int(NativeSwiftWireField.integerID)
+        let value = try input.int(NativeSwiftWireField.integerValue)
         integers[id] = value
         numericConstants.append(.integer(id: id, value: value))
       case NativeSwiftWireOpcode.integerExpression:  // Integer expression
@@ -1733,18 +1733,18 @@ enum NativeSwiftDocumentDecoder {
         guard floatLists[id] == nil else { throw input.malformed("Duplicate float list \(id)") }
         floatLists[id] = try (0..<count).map { _ in try input.word("float list value") }
       case NativeSwiftWireOpcode.dynamicFloatList:  // Zero-filled float list with a dynamic length.
-        let id = try input.int("dynamic float list id")
-        let length = try input.word("dynamic float list length")
+        let id = try input.int(NativeSwiftWireField.dynamicFloatListID)
+        let length = try input.word(NativeSwiftWireField.dynamicFloatListLength)
         guard dynamicFloatLists[id] == nil else {
           throw input.malformed("Duplicate dynamic float list \(id)")
         }
         dynamicFloatLists[id] = ParsedDynamicFloatList(lengthWord: length, updates: [])
       case NativeSwiftWireOpcode.updateDynamicFloatList:
         // Update one dynamic float-list element; invalid indices are ignored at resolve.
-        let id = try input.int("dynamic float list id")
+        let id = try input.int(NativeSwiftWireField.dynamicFloatListID)
         let update = (
-          index: try input.word("dynamic float list index"),
-          value: try input.word("dynamic float list value"))
+          index: try input.word(NativeSwiftWireField.dynamicFloatListIndex),
+          value: try input.word(NativeSwiftWireField.dynamicFloatListValue))
         if dynamicFloatLists[id] != nil {
           // Appended in place: rebuilding the list per update was quadratic in a long update run.
           dynamicFloatLists[id]?.updates.append(update)
@@ -1810,15 +1810,15 @@ enum NativeSwiftDocumentDecoder {
         textOperations.append(.merge(merge))
       case NativeSwiftWireOpcode.textLookupInt:
         let lookup = ParsedTextLookupInt(
-            outputID: try input.int("text lookup output id"),
-            listID: try input.int("text lookup list id"),
+            outputID: try input.int(NativeSwiftWireField.textLookupOutputID),
+            listID: try input.int(NativeSwiftWireField.textLookupListID),
             indexID: try input.int("text lookup index id"))
         textLookups.append(lookup)
         textOperations.append(.lookupInt(lookup))
       case NativeSwiftWireOpcode.textLookup:
         let lookup = ParsedTextLookup(
-            outputID: try input.int("text lookup output id"),
-            listID: try input.int("text lookup list id"),
+            outputID: try input.int(NativeSwiftWireField.textLookupOutputID),
+            listID: try input.int(NativeSwiftWireField.textLookupListID),
             index: try input.word("text lookup index"))
         textFloatLookups.append(lookup)
         textOperations.append(.lookup(lookup))
@@ -2042,14 +2042,14 @@ enum NativeSwiftDocumentDecoder {
           ParsedMatrixVectorMath(
             type: type, outputIDs: outputs, matrixID: matrixID, inputWords: inputs))
       case NativeSwiftWireOpcode.attributeImage:  // Image dimension attribute
-        let outputID = try input.int("image attribute output id")
-        let imageID = try input.int("image attribute image id")
-        let type = try input.signedU16("image attribute type")
-        let count = Int(try input.u16("image attribute argument count"))
+        let outputID = try input.int(NativeSwiftWireField.imageAttributeOutputID)
+        let imageID = try input.int(NativeSwiftWireField.imageAttributeImageID)
+        let type = try input.signedU16(NativeSwiftWireField.imageAttributeType)
+        let count = Int(try input.u16(NativeSwiftWireField.imageAttributeArgumentCount))
         guard count <= maximumProperties else {
           throw input.malformed("Too many image attribute arguments")
         }
-        for _ in 0..<count { _ = try input.int("image attribute argument") }
+        for _ in 0..<count { _ = try input.int(NativeSwiftWireField.imageAttributeArgument) }
         guard let image = images[imageID] else { throw input.malformed("Missing bitmap \(imageID)") }
         guard
           type == NativeSwiftImageAttributeType.width || type == NativeSwiftImageAttributeType.height
@@ -2480,7 +2480,7 @@ enum NativeSwiftDocumentDecoder {
         let node = ParsedNode(kind: .text, componentID: try input.int("text component id"))
         node.componentKind = "TextLayout"
         node.animationID = try input.int("text animation id")
-        let textID = try input.int("text id")
+        let textID = try input.int(NativeSwiftWireField.textID)
         let color = UInt32(bitPattern: Int32(try input.int("text color")))
         let size = try input.word("text size")
         let style = try input.int("text style")
@@ -2925,7 +2925,7 @@ enum NativeSwiftDocumentDecoder {
         // here is outside any call: the reference keeps it as a container whose `apply` does
         // nothing, so nothing in it draws or lays out. Its body is walked (bounded, and counted
         // in the census) and dropped.
-        _ = try input.int("macro block index")
+        _ = try input.int(NativeSwiftWireField.macroBlockIndex)
         _ = try captureMacroBody()
       default:
         throw NativeSwiftCoreError.unsupported(

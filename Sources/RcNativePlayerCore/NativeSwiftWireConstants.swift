@@ -1161,3 +1161,57 @@ enum NativeSwiftImageAttributeType {
   static let width = 0
   static let height = 1
 }
+
+/// The field labels the document decoder names in a malformed-document error: one owner for each
+/// label read at more than one site, so the sites cannot drift apart and an error names the field
+/// the same way wherever it is read. The values are part of the decoder's error text; tests match
+/// them, so they change only together.
+enum NativeSwiftWireField {
+  static let conditionalLeft = "conditional left"
+  static let conditionalRight = "conditional right"
+  static let conditionalType = "conditional type"
+  static let dynamicFloatListID = "dynamic float list id"
+  static let dynamicFloatListIndex = "dynamic float list index"
+  static let dynamicFloatListLength = "dynamic float list length"
+  static let dynamicFloatListValue = "dynamic float list value"
+  static let floatID = "float id"
+  static let floatValue = "float value"
+  static let height = "height"
+  static let imageAttributeArgument = "image attribute argument"
+  static let imageAttributeArgumentCount = "image attribute argument count"
+  static let imageAttributeImageID = "image attribute image id"
+  static let imageAttributeOutputID = "image attribute output id"
+  static let imageAttributeType = "image attribute type"
+  static let integerID = "integer id"
+  static let integerValue = "integer value"
+  static let layoutComputeFloatID = "layout compute float id"
+  static let layoutComputeFloatValue = "layout compute float value"
+  static let macroArgumentIndex = "macro argument index"
+  static let macroBitmapDescriptionID = "macro bitmap description id"
+  static let macroBitmapID = "macro bitmap id"
+  static let macroBlockIndex = "macro block index"
+  static let macroBodyOpcode = "macro body opcode"
+  static let macroDrawToBitmapColor = "macro draw to bitmap color"
+  static let macroDrawToBitmapID = "macro draw to bitmap id"
+  static let macroDrawToBitmapMode = "macro draw to bitmap mode"
+  static let macroDrawingValue = "macro drawing value"
+  static let macroID = "macro id"
+  static let macroPaintWord = "macro paint word"
+  static let macroPaintWordCount = "macro paint word count"
+  static let nestedMacroArgument = "nested macro argument"
+  static let nestedMacroArgumentCount = "nested macro argument count"
+  static let nestedMacroBlockIndex = "nested macro block index"
+  static let nestedMacroCallOperation = "nested macro call operation"
+  static let nestedMacroID = "nested macro id"
+  static let referencedOperationsID = "referenced operations id"
+  static let textID = "text id"
+  static let textLookupListID = "text lookup list id"
+  static let textLookupOutputID = "text lookup output id"
+  static let width = "width"
+
+  /// The `index`th property of a header.
+  static func headerProperty(_ index: Int) -> String { "header property \(index)" }
+
+  /// A text property read as a boolean, named after the operation that carries it (`label`).
+  static func boolean(of label: String) -> String { "\(label) boolean" }
+}
