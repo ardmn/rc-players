@@ -19,9 +19,65 @@ enum NativeCustomComponentSamples {
     }
 }
 
+/// Reconciles a control's local value with the document value it writes back to.
+///
+/// `send(_:to:)` only enqueues a return value; the document snapshot that carries it arrives later.
+/// While edits are in flight, a snapshot can hold one of this control's own older values, and
+/// adopting it would overwrite the newer local edit: on a slow simulator, typing " Lovelace" after
+/// "Ada" left "Ada ace". So the control remembers what it sent and has not yet seen come back. A
+/// snapshot equal to one of those is its own echo and is dropped together with every older one;
+/// any other value was changed elsewhere in the document and is adopted.
+struct DocumentEchoFilter<Value: Equatable> {
+  /// Values sent to the document, oldest first, whose snapshot has not arrived yet.
+  private var inFlight: [Value] = []
+
+  mutating func sent(_ value: Value) {
+    inFlight.append(value)
+  }
+
+  /// The document value to show, or `nil` when the snapshot only echoes this control's own edit.
+  /// Cost: one scan of `inFlight`, which holds the edits of one document round trip (a few values).
+  mutating func adopt(_ documentValue: Value) -> Value? {
+    if let echoed = inFlight.firstIndex(of: documentValue) {
+      inFlight.removeFirst(echoed + 1)
+      return nil
+    }
+    inFlight.removeAll()
+    return documentValue
+  }
+}
+
+/// How the sample's controls deliver a return value to the document.
+///
+/// `--return-latency-ms=<n>` delays every return by `n` milliseconds, keeping their order, so a UI
+/// test can reproduce a document that lags behind fast input the way a loaded CI simulator does.
+struct DocumentReturn {
+  static let latencyArgument = "--return-latency-ms="
+  static let fromLaunchArguments = DocumentReturn(
+    latency: ProcessInfo.processInfo.arguments
+      .first { $0.hasPrefix(latencyArgument) }
+      .flatMap { Int($0.dropFirst(latencyArgument.count)) }
+      .map { .milliseconds($0) })
+
+  let latency: Duration?
+
+  /// Returns whether the value was handed to the document (a delayed send is assumed accepted).
+  @MainActor
+  func send<Value>(_ value: Value, by deliver: @escaping @MainActor (Value) -> Bool) -> Bool {
+    guard let latency else { return deliver(value) }
+    Task { @MainActor in
+      try? await Task.sleep(for: latency)
+      _ = deliver(value)
+    }
+    return true
+  }
+}
+
 private struct NativeEditableText: View {
   @ObservedObject var component: RemoteComposeNativeCustomComponent
   @State private var editing: String
+  @State private var sentEdits = DocumentEchoFilter<String>()
+  private let documentReturn = DocumentReturn.fromLaunchArguments
 
   private static let text = RemoteComposeNativeTextProperty(1)
   private static let textReturn = RemoteComposeNativeTextReturnProperty(2)
@@ -39,10 +95,12 @@ private struct NativeEditableText: View {
       .padding(.horizontal, 8)
       .padding(.vertical, 4)
       .onChange(of: editing) { _, value in
-        _ = component.send(value, to: Self.textReturn)
+        if documentReturn.send(value, by: { component.send($0, to: Self.textReturn) }) {
+          sentEdits.sent(value)
+        }
       }
       .onChange(of: component.text(Self.text)) { _, value in
-        if editing != value { editing = value }
+        if let value = sentEdits.adopt(value), editing != value { editing = value }
       }
   }
 }
@@ -52,6 +110,9 @@ private struct NativeBoundControls: View {
   @ObservedObject var component: RemoteComposeNativeCustomComponent
   @State private var name: String
   @State private var level: Float
+  @State private var sentNames = DocumentEchoFilter<String>()
+  @State private var sentLevels = DocumentEchoFilter<Float>()
+  private let documentReturn = DocumentReturn.fromLaunchArguments
 
   private static let name = RemoteComposeNativeTextProperty(1)
   private static let nameReturn = RemoteComposeNativeTextReturnProperty(2)
@@ -87,16 +148,20 @@ private struct NativeBoundControls: View {
     .padding(12)
     .background(.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     .onChange(of: name) { _, value in
-      _ = component.send(value, to: Self.nameReturn)
+      if documentReturn.send(value, by: { component.send($0, to: Self.nameReturn) }) {
+        sentNames.sent(value)
+      }
     }
     .onChange(of: level) { _, value in
-      _ = component.send(value, to: Self.levelReturn)
+      if documentReturn.send(value, by: { component.send($0, to: Self.levelReturn) }) {
+        sentLevels.sent(value)
+      }
     }
     .onChange(of: component.text(Self.name)) { _, value in
-      if name != value { name = value }
+      if let value = sentNames.adopt(value), name != value { name = value }
     }
     .onChange(of: component.float(Self.level)) { _, value in
-      if level != value { level = value }
+      if let value = sentLevels.adopt(value), level != value { level = value }
     }
   }
 

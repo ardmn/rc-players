@@ -51,6 +51,39 @@ final class NativeAccessibilityUITests: XCTestCase {
     wait(for: [valueChanged], timeout: uiWaitTimeout)
   }
 
+  /// The document applies a return value after the control has moved on. A snapshot echoing an
+  /// older edit must not overwrite the newer one: with the echo adopted, " Lovelace" typed after
+  /// "Ada" ended as "Ada ace" on a loaded runner, and the slider jumped back to an earlier value.
+  func testSwiftControlsKeepNewerEditsWhileTheDocumentLagsBehind() throws {
+    let app = XCUIApplication()
+    app.launchArguments = [
+      "--native-player", "--fixture=Swift controls", "--return-latency-ms=\(returnLatencyMs)",
+    ]
+    app.launch()
+
+    let name = app.textFields["swift-demo-name"]
+    XCTAssertTrue(name.waitForExistence(timeout: uiWaitTimeout), app.debugDescription)
+    name.tap()
+    name.typeText(" Lovelace")
+
+    XCTAssertTrue(
+      app.staticTexts["Ada Lovelace"].waitForExistence(timeout: uiWaitTimeout),
+      "The document lost part of the edit: \(name.value ?? "nil")")
+    XCTAssertEqual(name.value as? String, "Ada Lovelace", "An older echo overwrote the field")
+
+    let level = app.sliders["swift-demo-level"]
+    let levelValue = app.staticTexts["swift-demo-level-value"]
+    level.adjust(toNormalizedSliderPosition: 0.25)
+    // Every value the drag passed through comes back late; the label must settle where the drag
+    // ended (20–30%, with whatever spacing the locale puts before "%"), not on one of those echoes.
+    let settled = expectation(
+      for: NSPredicate(format: "label MATCHES %@", "^(2[0-9]|30)\\D*%$"), evaluatedWith: levelValue)
+    wait(for: [settled], timeout: uiWaitTimeout)
+  }
+
+  /// Long enough that several keystrokes land before the first one's snapshot comes back.
+  private let returnLatencyMs = 400
+
   func testSwiftChartWritesItsSelectionBackToTheDocument() throws {
     let app = XCUIApplication()
     app.launchArguments = ["--native-player", "--fixture=Swift chart"]
