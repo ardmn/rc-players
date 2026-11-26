@@ -120,6 +120,15 @@
       view.configureHostDensity(3)
       try await settled(view)
       #expect(isBoxShown(in: view) == false)
+
+      // The document-change half: once the session took the host's clear, a value the document
+      // changed itself afterwards is newer, and the same seeded clear leaves it.
+      #expect(await view.submit(.integer(Self.visible), for: "shown") == .accepted)
+      #expect(await view.submitClear(for: "shown") == .accepted)
+      #expect(await view.setInteger(Self.visible, for: "shown"))  // as a document action would
+      view.configureHostDensity(4)
+      try await settled(view)
+      #expect(isBoxShown(in: view) == true, "the seeded clear wiped the document's change")
     }
 
     /// Long and float-array values survive a reopen (density change) and a clear after it.
@@ -131,10 +140,15 @@
       #expect(await view.setFloatArray([], for: "series"))
       view.configureHostDensity(2)
       try await settled(view)
+      #expect(
+        await view.writtenNamedValues().map(\.value) == [.floatArray([]), .long(Int64.max)],
+        "the reopened session lost a value")
       #expect(await view.clear("when"))
       #expect(await view.clear("series"))
+      #expect(await view.writtenNamedValues().isEmpty)
       #expect(await view.setLong(Int64.min, for: "when"))
       try await settled(view)
+      #expect(await view.writtenNamedValues().map(\.value) == [.long(Int64.min)])
     }
   }
 #endif

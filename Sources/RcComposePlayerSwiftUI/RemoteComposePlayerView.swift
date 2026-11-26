@@ -486,9 +486,11 @@
         let seed = self.playerController.backend.seedValues(for: owner).filter {
           $0.value != nil || self.nativeHeldNames.contains($0.name)
         }
-        for (name, _) in seed {
+        for (name, value) in seed {
           self.latestNativeUpdates[name] = nil
           self.nativeUpdateTasks.removeValue(forKey: name)?.cancel()
+          // The reopened session takes the value from the seed instead: the player holds it.
+          if value != nil { self.nativeHeldNames.insert(name) }
         }
         return seed
       }
@@ -531,7 +533,11 @@
               let admission = await deliverNamedUpdate(value, for: name, to: { native }) {
                 self?.latestNativeUpdates[name] == token
               }
-              if value == nil, admission == .accepted { self?.nativeHeldNames.remove(name) }
+              // Only while this clear is still the newest update for the name: a write that
+              // started since is held whatever this late answer says.
+              if value == nil, admission == .accepted, self?.latestNativeUpdates[name] == token {
+                self?.nativeHeldNames.remove(name)
+              }
               if self?.latestNativeUpdates[name] == token { self?.nativeUpdateTasks[name] = nil }
             }
           }, for: owner, skippingInitial: initialValues)

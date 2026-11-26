@@ -107,8 +107,9 @@ protocol ControllerBackendProtocol: AnyObject {
     /// The values written so far, by the name the attached document declares them under.
     private var values: [String: ControllerNamedValue] = [:]
     /// The names cleared and not written since, so a reopen a player starts while a clear is still
-    /// on its way starts that name from the document's value (`seedValues(for:)`). A player's host
-    /// leaves out the names it never held a value of (a new document, or a new player).
+    /// on its way starts that name from the document's value (`seedValues(for:)`). Re-keyed by
+    /// `attach` as the values are. A player's host leaves out the names it never held a value of
+    /// (a new document, or a new player).
     private var cleared: Set<String> = []
     /// One handler per attached player view controller, so a controller shared by multiple views
     /// reaches every one of them rather than only the last attached. Each receives every accepted
@@ -163,7 +164,11 @@ protocol ControllerBackendProtocol: AnyObject {
         kept[declared] = value
       }
       values = kept
-      cleared = []
+      // Pending clears are re-keyed as the values are, not dropped: another player sharing the
+      // controller may attach while a player's clear is still on its way to it. A player that
+      // never held the name leaves the clear out of its seed (the host's `nativeHeldNames`).
+      cleared = Set(
+        cleared.compactMap { declarations.declaredName(for: $0) }.filter { kept[$0] == nil })
     }
 
     /// Forgets the attached declarations without a new document to judge the stored values by —

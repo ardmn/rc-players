@@ -81,9 +81,9 @@ import Testing
     #expect(updates.all.map(\.value) == [.integer(4), nil, .integer(4)])
   }
 
-  /// A reopen's seed names a cleared name with no value until a write replaces it; a new
-  /// document forgets the clears, as it starts from its own bytes.
-  @Test func theSeedCarriesAClearUntilAWriteOrANewDocument() {
+  /// A reopen's seed names a cleared name with no value until a write replaces it, or a document
+  /// that does not declare the name is attached.
+  @Test func theSeedCarriesAClearUntilAWriteOrAnUndeclaringDocument() {
     let controller = RemoteComposePlayerController()
     controller.backend.attach(Self.declarations)
     controller.backend.installUpdateHandler { _, _ in }
@@ -100,8 +100,17 @@ import Testing
     #expect(seeded.map(\.name) == ["USER:count", "USER:title"])
     #expect(seeded.map(\.value) == [.integer(5), .text("Ready")])
 
+    // Another attach — a second player sharing the controller — keeps a pending clear, re-keyed
+    // as the values are; one whose document does not declare the name drops it.
     #expect(controller.clear("count"))
     controller.backend.attach(Self.declarations)
+    #expect(controller.backend.seedValues.map(\.name) == ["USER:title", "USER:count"])
+    #expect(controller.backend.seedValues.map(\.value) == [.text("Ready"), nil])
+    var withoutCount: [String: ParsedNamedVariable] = [:]
+    for name in ["USER:title"] {
+      withoutCount[name] = ParsedNamedVariable(id: 1, type: NativeSwiftNamedVariableType.string)
+    }
+    controller.backend.attach(NativeSwiftNamedVariableDeclarations(variables: withoutCount))
     #expect(controller.backend.seedValues.map(\.name) == ["USER:title"])
   }
 
