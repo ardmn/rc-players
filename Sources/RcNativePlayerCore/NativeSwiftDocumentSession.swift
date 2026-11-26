@@ -1513,7 +1513,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
     // O(slots + written ids) per resolution, not O(every integer view).
     for id in integerSlotIDs { projectIntegerSlot(id) }
-    for id in writtenIntegerAndTextIDs where !integerSlotIDs.contains(id) { projectIntegerSlot(id) }
+    for id in writtenIntegerAndTextIDs where !integerSlotIDs.contains(id) {
+      projectIntegerSlot(id)
+    }
     // A copied dynamic colour is encoded as colour expression → channel attributes → colour
     // expression. Resolve the source colours before extracting their channels so the final colour
     // pass can preserve copies such as a selected tint with reduced alpha. Only a channel attribute
