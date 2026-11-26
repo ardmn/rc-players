@@ -162,12 +162,14 @@ internal const val NAMED_VALUE_TEXT_MARK: String = "s"
  * format. Rows are separated by [NAMED_VALUE_ROW_SEPARATOR]; each is [NAMED_VALUE_FIELD_COUNT]
  * [NAMED_VALUE_FIELD_SEPARATOR]-separated fields — the `kind`, the `name` and the `value` as
  * `encodeURIComponent` wrote them, so none can contain a separator, then [NAMED_VALUE_NUMBER_MARK]
- * when `value` was a JSON number. [decodeComponent] undoes the encoding (`decodeURIComponent` in
- * the browser) and may throw on a field that is not percent-encoding.
+ * when `value` was a JSON number or [NAMED_VALUE_TEXT_MARK] when it was not. [decodeComponent]
+ * undoes the encoding (`decodeURIComponent` in the browser) and may throw on a field that is not
+ * percent-encoding.
  *
- * Each row stands alone: one that is malformed, names no variable or does not parse as its kind is
- * dropped and the rest are kept, as docs/design/RC_PLAYER_EMBED.md promises of the elements they
- * come from. When two rows name one variable, the later wins.
+ * Each row stands alone: one that is malformed (another field count or mark, a field that does not
+ * decode), names no variable or does not parse as its kind is dropped and the rest are kept, as
+ * docs/design/RC_PLAYER_EMBED.md promises of the elements they come from. When two rows name one
+ * variable, the later wins.
  */
 internal fun namedValuesFromRows(
   rows: String,
@@ -182,7 +184,13 @@ internal fun namedValuesFromRows(
       val (kind, name, value) =
         runCatching { fields.take(NAMED_VALUE_TEXT_FIELD_COUNT).map(decodeComponent) }.getOrNull()
           ?: return@forEach
-      val isNumber = fields[NAMED_VALUE_TEXT_FIELD_COUNT] == NAMED_VALUE_NUMBER_MARK
+      // The JS writes exactly one of the two marks; a row with any other is malformed.
+      val isNumber =
+        when (fields[NAMED_VALUE_TEXT_FIELD_COUNT]) {
+          NAMED_VALUE_NUMBER_MARK -> true
+          NAMED_VALUE_TEXT_MARK -> false
+          else -> return@forEach
+        }
       val namedValue = parseNamedValue(typeName = kind, value = value, isNumber = isNumber)
       if (name.isNotEmpty() && namedValue != null) put("USER:$name", namedValue)
     }

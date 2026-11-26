@@ -80,6 +80,44 @@ class NamedValueRowsTest {
     )
   }
 
+  @Test
+  fun aNumberOrTextMarkIsRead() {
+    // `color` is the one kind that reads the two differently: a number is ARGB as an integer.
+    assertEquals(mapOf(orange), read(row("color", "WearM3.primary", "4294936576", isNumber = true)))
+    assertEquals(mapOf(orange), read(row("color", "WearM3.primary", "#FFFF8800", isNumber = false)))
+  }
+
+  @Test
+  fun aRowWithAnUnknownOrEmptyMarkIsDroppedOnItsOwn() {
+    val good = row("color", "WearM3.primary", "#FFFF8800")
+    for (mark in listOf("x", "", "N", "ns")) {
+      val bad =
+        listOf("color", "WearM3.primary", "%23FF0000FF", mark)
+          .joinToString(NAMED_VALUE_FIELD_SEPARATOR)
+      assertEquals(emptyMap(), read(bad), "alone: mark '$mark'")
+      assertEquals(mapOf(orange), read(join(bad, good)), "before: mark '$mark'")
+      assertEquals(mapOf(orange), read(join(good, bad)), "after: mark '$mark'")
+    }
+  }
+
+  @Test
+  fun aMixedArrayKeepsEveryRowButTheOneWithABadMark() {
+    val label = row("string", "label", "Ready")
+    val count = row("int", "count", "3", isNumber = true)
+    val badMark =
+      listOf("color", "WearM3.primary", "%23FF0000FF", "x")
+        .joinToString(NAMED_VALUE_FIELD_SEPARATOR)
+    assertEquals(
+      mapOf(
+        "USER:label" to RcNamedValue.Text("Ready"),
+        "USER:count" to RcNamedValue.Integer(3),
+        orange,
+      ),
+      // Last, so a reader that kept it would override the orange with blue.
+      read(join(label, row("color", "WearM3.primary", "#FFFF8800"), count, badMark)),
+    )
+  }
+
   /**
    * The row format, pinned: `scripts/wasm-smoke/smoke.mjs` spells these characters itself in its "a
    * kind that spells another row" case, so a change here must change it too, or that case stops
