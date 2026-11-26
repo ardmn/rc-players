@@ -300,6 +300,14 @@ class RcComposeViewControllerTest {
     assertFalse(controller.setFloatArray("series", floatArrayOf(1f, Float.NaN)))
     assertFalse(controller.setFloatArray("series", floatArrayOf(Float.POSITIVE_INFINITY)))
     assertFalse(controller.setFloatArray("series", floatArrayOf(Float.NEGATIVE_INFINITY)))
+    // Every element is checked, not only the first: one non-finite value anywhere refuses all.
+    val full = FloatArray(RcFloatList.MAX_VALUES) { it.toFloat() }
+    for (index in intArrayOf(0, 1, RcFloatList.MAX_VALUES / 2, RcFloatList.MAX_VALUES - 1)) {
+      for (bad in floatArrayOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+        val values = full.copyOf().also { it[index] = bad }
+        assertFalse(controller.setFloatArray("series", values), "$bad at index $index")
+      }
+    }
     assertFalse(controller.setFloatArray("series", FloatArray(RcFloatList.MAX_VALUES + 1)))
     assertEquals(
       RcNamedValue.FloatArrayValue(listOf(5f, 6f, 7f)),

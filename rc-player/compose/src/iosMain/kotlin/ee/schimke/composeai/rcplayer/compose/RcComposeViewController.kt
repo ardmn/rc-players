@@ -75,7 +75,9 @@ public class RcComposePlayerController {
    * ([RcFloatList.MAX_VALUES]) — the native Swift player refuses the same arrays.
    */
   public fun setFloatArray(name: String, values: FloatArray): Boolean {
-    if (values.size > RcFloatList.MAX_VALUES || values.any { !it.isFinite() }) return false
+    if (values.size > RcFloatList.MAX_VALUES) return false
+    // Every element, as the Swift player's `allSatisfy(\.isFinite)`: one NaN anywhere refuses all.
+    if (!values.all { it.isFinite() }) return false
     return set(name, RcNamedValue.FloatArrayValue(values.toList()))
   }
 

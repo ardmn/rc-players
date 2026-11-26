@@ -127,6 +127,16 @@ import Testing
     #expect(!controller.setFloatArray([1], for: "epoch"))
     #expect(!controller.setFloatArray([1], for: "progress"))
     #expect(!controller.setFloatArray([.nan], for: "series"))
+    // Every element is checked, not only the first, as on the Kotlin controller.
+    let limit = NativeSwiftDocumentDecoder.maximumFloatListValues
+    let full = (0..<limit).map(Float.init)
+    for index in [0, 1, limit / 2, limit - 1] {
+      for bad in [Float.nan, .infinity, -.infinity] {
+        var values = full
+        values[index] = bad
+        #expect(!controller.setFloatArray(values, for: "series"), "\(bad) at index \(index)")
+      }
+    }
     #expect(!controller.setInteger(1, for: "epoch"))
     #expect(!controller.setFloat(1, for: "series"))
     let tooMany = Array(
