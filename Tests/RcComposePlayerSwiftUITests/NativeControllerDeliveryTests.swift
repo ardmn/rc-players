@@ -218,8 +218,7 @@
         Task { @MainActor in
           let value = ControllerNamedValue.integer(
             Int32(index % 2 == 0 ? Self.visible : NativeSwiftVisibility.gone))
-          await value.deliver(
-            for: NativeTestDocuments.shownName, to: { target }, isCurrent: { true })
+          await value.deliver(for: NativeTestDocuments.shownName, to: { target })
           finished += 1
         }
       }

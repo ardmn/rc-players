@@ -187,7 +187,7 @@ import Testing
     let target = RecordingTarget()
     target.answers = [.deferred, .deferred]
     let delivery = Task { @MainActor in
-      await Value.integer(5).deliver(for: "USER:count", to: { target }, isCurrent: { true })
+      await Value.integer(5).deliver(for: "USER:count", to: { target })
     }
     try await Self.until("the delivery waits") { target.inputAvailability.waiterCount == 1 }
     #expect(target.calls == [.integer(5)], "offered again without a signal")
@@ -208,7 +208,7 @@ import Testing
     let target = RecordingTarget()
     target.answers = [.deferred]
     target.onCall = { target.inputAvailability.signal() }
-    await Value.integer(5).deliver(for: "USER:count", to: { target }, isCurrent: { true })
+    await Value.integer(5).deliver(for: "USER:count", to: { target })
     #expect(target.calls == [.integer(5), .integer(5)])
   }
 
@@ -217,18 +217,18 @@ import Testing
   @Test func aRefusedValueIsNotOfferedAgain() async {
     let target = RecordingTarget()
     target.answers = [.refused]
-    await Value.integer(5).deliver(for: "USER:count", to: { target }, isCurrent: { true })
+    await Value.integer(5).deliver(for: "USER:count", to: { target })
     #expect(target.calls == [.integer(5)])
   }
 
-  /// A waiting delivery ends when the player goes away, when its task is cancelled — a newer value
-  /// for the name, or a rebuild — or when a newer value has started.
+  /// A waiting delivery ends when the player goes away or when its task is cancelled — a newer
+  /// value for the name, a reopen taking it in its seed, or a rebuild.
   @Test func aWaitingDeliveryEndsWithThePlayerOrItsTask() async throws {
     var target: RecordingTarget? = RecordingTarget()
     let availability = target!.inputAvailability
     target!.answers = [.deferred]
     let gone = Task { @MainActor in
-      await Value.integer(5).deliver(for: "USER:count", to: { target }, isCurrent: { true })
+      await Value.integer(5).deliver(for: "USER:count", to: { target })
     }
     try await Self.until("the delivery waits") { availability.waiterCount == 1 }
     target = nil
@@ -238,18 +238,26 @@ import Testing
     let cancelled = RecordingTarget()
     cancelled.answers = [.deferred]
     let delivery = Task { @MainActor in
-      await Value.integer(5).deliver(for: "USER:count", to: { cancelled }, isCurrent: { true })
+      await Value.integer(5).deliver(for: "USER:count", to: { cancelled })
     }
     try await Self.until("the delivery waits") { cancelled.inputAvailability.waiterCount == 1 }
     delivery.cancel()
     await delivery.value
     #expect(cancelled.calls == [.integer(5)])
 
+    // Superseded: the player view cancels the delivery's task when a newer value starts, here
+    // while its first offer is being answered.
     let superseded = RecordingTarget()
     superseded.answers = [.deferred]
-    superseded.onCall = { superseded.inputAvailability.signal() }
-    await Value.integer(5).deliver(
-      for: "USER:count", to: { superseded }, isCurrent: { superseded.calls.isEmpty })
+    var supersededDelivery: Task<Void, Never>?
+    superseded.onCall = {
+      supersededDelivery?.cancel()
+      superseded.inputAvailability.signal()
+    }
+    supersededDelivery = Task { @MainActor in
+      await Value.integer(5).deliver(for: "USER:count", to: { superseded })
+    }
+    await supersededDelivery?.value
     #expect(superseded.calls == [.integer(5)])
   }
 
@@ -268,7 +276,7 @@ import Testing
     ]
     for (value, expected) in cases {
       let target = RecordingTarget()
-      await value.deliver(for: "USER:name", to: { target }, isCurrent: { true })
+      await value.deliver(for: "USER:name", to: { target })
       #expect(target.calls == [expected], "\(value)")
     }
   }

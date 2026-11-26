@@ -498,7 +498,7 @@
             self.nativeUpdateTasks.removeValue(forKey: name)?.cancel()
             // The task takes its own weak references rather than sharing the handler's captures.
             self.nativeUpdateTasks[name] = Task { @MainActor [weak self, weak native] in
-              await value.deliver(for: name, to: { native }, isCurrent: { !Task.isCancelled })
+              await value.deliver(for: name, to: { native })
               // Every path that replaces or drops this entry cancels the task first, so an
               // uncancelled one is still the entry for its name.
               if !Task.isCancelled { self?.nativeUpdateTasks[name] = nil }
