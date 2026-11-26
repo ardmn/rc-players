@@ -1,6 +1,6 @@
 #if canImport(UIKit)
   import Foundation
-  import RcNativePlayerCore
+  @_spi(RemoteComposeController) import RcNativePlayerCore
   import Testing
   import RcNativePlayerTestDocuments
   import UIKit
@@ -139,22 +139,128 @@
       #expect(isShown(Self.shownBox, in: player.view) == false)
     }
 
-    /// Pre-existing (see `aControllerSharedByTwoPlayersStillReachesOnlyTheLastOne`): the backend
-    /// holds one update handler, so a clear, like a write, reaches only the last player attached.
-    @Test func aClearOnASharedControllerReachesTheLastPlayer() async throws {
+    /// A controller shared by two players reaches both (one update handler per player), and so
+    /// does its clear.
+    @Test func aClearOnASharedControllerReachesBothPlayers() async throws {
       let controller = RemoteComposePlayerController()
       let a = try await player(controller: controller)
       let b = try await player(controller: controller)
       #expect(controller.setInteger(Self.visible, for: "shown"))
+      try await settle(a)
       try await settle(b)
+      try #require(isShown(Self.shownBox, in: a.view) == true)
       try #require(isShown(Self.shownBox, in: b.view) == true)
 
       #expect(controller.clear("shown"))
       try await settle(a)
       try await settle(b)
 
+      #expect(isShown(Self.shownBox, in: a.view) == false)
       #expect(isShown(Self.shownBox, in: b.view) == false)
-      #expect(isShown(Self.shownBox, in: a.view) == false, "the first player never had the value")
+    }
+
+    // MARK: - The seeded first open and in-place updates
+
+    /// A second player's first open is seeded with the controller's values as they were when it
+    /// was built. A clear made before that player attaches still reaches it once it does.
+    @Test func aClearBeforeASharedPlayersSeededFirstOpenReachesIt() async throws {
+      let controller = RemoteComposePlayerController()
+      let a = try await player(controller: controller)
+      #expect(controller.setInteger(Self.visible, for: "shown"))
+      try await settle(a)
+
+      let host = RemoteComposePlayerViewController(
+        data: Self.document(), controller: controller, resourceResolver: nil)
+      host.loadViewIfNeeded()  // The first open starts, seeded with "shown".
+      #expect(controller.clear("shown"), "the first player keeps the declarations attached")
+      let b = Player(controller: controller, host: host, errors: NativeControllerTestErrors())
+      try await settle(b)
+      try await settle(a)
+
+      #expect(isShown(Self.shownBox, in: b.view) == false, "the seeded value outlived the clear")
+      #expect(isShown(Self.shownBox, in: a.view) == false)
+    }
+
+    /// With no other player attached, a clear before the rebuilt player's declarations are read
+    /// is answered `false`, as a write is then, and the value stays; once attached, it clears.
+    @Test func aClearBeforeARebuiltPlayerAttachesIsRefusedThenWorks() async throws {
+      let player = try await player()
+      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      try await settle(player)
+
+      player.host.update(
+        data: Self.document(size: 300), controller: player.controller, configuration: .init(),
+        resourceResolver: nil, onEvent: { _ in }, onError: { _ in })
+      #expect(!player.controller.clear("shown"))
+      try await settle(player)
+      #expect(isShown(Self.shownBox, in: player.view) == true)
+
+      #expect(player.controller.clear("shown"))
+      try await settle(player)
+      #expect(isShown(Self.shownBox, in: player.view) == false)
+    }
+
+    /// A configuration change the native player applies in place keeps its update handler, so a
+    /// clear afterwards reaches the same player — also one whose session the change reopened.
+    @Test func aClearAfterAnInPlaceConfigurationUpdate() async throws {
+      let player = try await player()
+      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      try await settle(player)
+      let native = player.native
+
+      player.host.update(
+        data: Self.document(), controller: player.controller,
+        configuration: .init(background: .transparent),
+        resourceResolver: nil, onEvent: { _ in }, onError: { _ in })
+      try await settle(player)
+      try #require(player.native === native, "the update was not in place")
+      #expect(player.controller.clear("shown"))
+      try await settle(player)
+      #expect(isShown(Self.shownBox, in: player.view) == false)
+
+      #expect(player.controller.setInteger(Self.visible, for: "shown"))
+      try await settle(player)
+      player.host.update(
+        data: Self.document(), controller: player.controller,
+        configuration: .init(compatibility: .compatible),
+        resourceResolver: nil, onEvent: { _ in }, onError: { _ in })
+      try await settle(player)
+      try #require(player.native === native, "the update was not in place")
+      try #require(isShown(Self.shownBox, in: player.view) == true)
+      #expect(player.controller.clear("shown"))
+      try await settle(player)
+      #expect(isShown(Self.shownBox, in: player.view) == false)
+
+      try await backgroundWithInputQueued(player)
+      activate(player)
+      try await settle(player)
+      #expect(isShown(Self.shownBox, in: player.view) == false, "the cleared value came back")
+    }
+
+    /// A long and a float array the controller holds seed a new player's first open, and are not
+    /// handed to it a second time as writes.
+    @Test func longAndFloatArraySeedANewPlayersFirstOpen() async throws {
+      let controller = RemoteComposePlayerController()
+      let a = try await player(
+        data: NativeTestDocuments.longAndFloatArray(), controller: controller)
+      #expect(controller.setLong(946_684_800_000, for: "when"))
+      #expect(controller.setFloatArray([7, 8], for: "series"))
+      try await settle(a)
+
+      let b = try await player(
+        data: NativeTestDocuments.longAndFloatArray(), controller: controller)
+      #expect(
+        await b.view.writtenNamedValues().map(\.value) == [
+          .floatArray([7, 8]), .long(946_684_800_000),
+        ])
+      var replayed = 0
+      b.view.onInputApplied = { if case .setNamed = $0 { replayed += 1 } }
+      try await settle(b)
+      #expect(replayed == 0)
+
+      #expect(controller.clear("series"))
+      try await settle(b)
+      #expect(await b.view.writtenNamedValues().map(\.value) == [.long(946_684_800_000)])
     }
 
     /// Long and float-array writes reach the session as the controller typed them.

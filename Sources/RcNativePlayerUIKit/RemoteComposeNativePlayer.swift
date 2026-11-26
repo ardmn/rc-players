@@ -705,6 +705,14 @@
     /// reopen the bytes on activation. A test hook, like ``isApplyingInput``.
     var hasOutstandingInput: Bool { openPresentation?.hasOutstandingInput ?? false }
 
+    /// The named values the open session holds from a write (see `writtenNamedValues` on the
+    /// core), empty with no open session. A test hook, like ``isApplyingInput``: it shows what a
+    /// seeded first open started from without a document that draws each type.
+    func writtenNamedValues() async -> [(name: String, value: NativeSwiftNamedValue)] {
+      guard let engine = openPresentation?.engine else { return [] }
+      return await engine.writtenNamedValues()
+    }
+
     /// Called once as each session opens, in the same main-actor turn that installed its first
     /// frame (or showed the error that frame raised), after its left-out values are reported and
     /// before the writes waiting for it are released, so no later frame or input has landed yet.
@@ -873,6 +881,9 @@
             var initialStarting: [NativeStartingValue] = []
             var hostValues = startedFrom.hostValues
             for name in resolvedByName.keys.sorted() {
+              // The host cleared it in a reopen's seed before any session presented: the
+              // document's own value, not the one the first open was handed.
+              if let host = hostValues[name], host.value == nil { continue }
               if let value = resolvedByName[name] {
                 initialStarting.append(NativeStartingValue(name: name, value: value))
                 if hostValues[name] == nil {

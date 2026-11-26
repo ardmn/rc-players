@@ -160,8 +160,9 @@ values is: the stored value is removed and the variable shows the value the docu
 again (a named system variable, or a long with no constant, the player's clock), so writing the old
 value afterwards is a change again. It returns `false` where a setter would for an absent name.
 Clearing a name with no value set changes nothing, nor does a write cleared in the same main-actor
-turn, so a value the document changed itself stands. Metadata actions and text-valued named
-actions also expose a pre-parsed `event.url` convenience property.
+turn, so a value the document changed itself stands. A clear reaches every player sharing the
+controller, a player whose first open was seeded with the cleared value included. Metadata actions
+and text-valued named actions also expose a pre-parsed `event.url` convenience property.
 
 ### Downloadable Google Fonts
 

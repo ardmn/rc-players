@@ -189,7 +189,8 @@ protocol ControllerBackendProtocol: AnyObject {
 
     /// Installs `owner`'s update handler, replaying every value written so far except those in
     /// `skippingInitial` that resolved to the same declared name and value (already applied on the
-    /// player's first open), or removes it with `nil`.
+    /// player's first open), and a clear of each name in `skippingInitial` no longer stored, or
+    /// removes it with `nil`.
     func installUpdateHandler(
       _ handler: ((String, ControllerNamedValue?) -> Void)?,
       for owner: ObjectIdentifier,
@@ -209,6 +210,9 @@ protocol ControllerBackendProtocol: AnyObject {
         if seeded[name] == value { continue }
         handler(name, value)
       }
+      // A value the first open was seeded with that has been cleared since: the player holds it,
+      // so it is handed the clear.
+      for name in seeded.keys.sorted() where values[name] == nil { handler(name, nil) }
     }
 
     /// A snapshot of the values written so far, keyed as currently stored, for comparing against

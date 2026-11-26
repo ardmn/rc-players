@@ -185,5 +185,53 @@
       #expect(errors.count == 1, "the cleared left-out value was offered again: \(errors)")
       #expect(labelText(in: view) == "Idle")
     }
+
+    // MARK: - The seeded first open (`initialNamedValues`)
+
+    /// A clear in the seed of a reopen that supersedes the first open drops the value that open
+    /// was seeded with: the host cleared it before any session presented.
+    @Test func aSeededClearDropsAnInitialValueThatHadNotPresented() async throws {
+      let view = RemoteComposeNativePlayerView(
+        data: NativeTestDocuments.shownBox(), resourceResolver: nil,
+        initialNamedValues: [(name: "shown", value: .integer(Self.visible))])
+      try #require(view.isOpeningDocument)
+      view.namedValueSeed = { [(name: "shown", value: nil)] }
+
+      view.configureHostDensity(2)
+      try await settled(view, "the reopen settles")
+
+      #expect(isBoxShown(in: view) == false, "the cleared initial value was applied")
+    }
+
+    /// Without a clear, the same reopen keeps the initial value (the seeded first open's contract).
+    @Test func aReopenBeforeTheFirstPresentKeepsAnInitialValue() async throws {
+      let view = RemoteComposeNativePlayerView(
+        data: NativeTestDocuments.shownBox(), resourceResolver: nil,
+        initialNamedValues: [(name: "shown", value: .integer(Self.visible))])
+      view.configureHostDensity(2)
+      try await settled(view, "the reopen settles")
+      #expect(isBoxShown(in: view) == true)
+    }
+
+    /// A long and a float array handed to the first open are what its session starts from, and a
+    /// clear of one of them leaves the other.
+    @Test func longAndFloatArrayThroughTheSeededFirstOpen() async throws {
+      let view = RemoteComposeNativePlayerView(
+        data: NativeTestDocuments.longAndFloatArray(), resourceResolver: nil,
+        initialNamedValues: [
+          (name: "when", value: .long(946_684_800_000)),
+          (name: "series", value: .floatArray([7, 8])),
+          (name: "scalar", value: .floatArray([1])),
+        ])
+      try await settled(view, "the document opens")
+      #expect(
+        await view.writtenNamedValues().map(\.value) == [
+          .floatArray([7, 8]), .long(946_684_800_000),
+        ],
+        "a value of the wrong type was applied, or one was dropped")
+
+      #expect(await view.clear("series"))
+      #expect(await view.writtenNamedValues().map(\.value) == [.long(946_684_800_000)])
+    }
   }
 #endif
