@@ -27,6 +27,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// of `integers` is the integer view of a float, which already has its float. Kept apart so a
   /// frame does not walk every float constant's integer view.
   private let integerSlotIDs: Set<Int>
+  /// Each `ImageAttribute` output's size. The reference writes it again on every pass, so every
+  /// resolution puts it back over whatever a write left there.
+  private let imageSizeByID: [Int: Float]
+  /// The ids a float expression computes: their float view is the expression's, which an integer
+  /// write that changes nothing leaves as it was.
+  private let floatExpressionIDs: Set<Int>
   /// Set once a document operation is seen writing `EPOCH_SECOND`'s id itself.
   private var documentClaimsEpochSecond = false
   /// The colours a host has set by name, which a theme switch leaves alone.
@@ -69,6 +75,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     texts = document.texts
     colors = document.colors
     (floats, integers) = Self.seededNumericViews(of: document)
+    var imageSizeByID: [Int: Float] = [:]
+    for case .imageSize(let id, let value) in document.numericConstants {
+      imageSizeByID[id] = value
+    }
+    self.imageSizeByID = imageSizeByID
+    floatExpressionIDs = Set(document.expressions.map(\.id))
     var slotIDs = Set(document.integers.keys)
     slotIDs.formUnion(document.integerExpressionOrder)
     slotIDs.formUnion(document.idLookups.map(\.outputID))
@@ -110,9 +122,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       constantFloatByID[id] = value
       constantIntegerByID[id] = nativeSwiftIntegerView(value)
     }
+    // An id a float expression computes takes its float from the expression; the constant's
+    // integer view would be stale the moment it runs, so none is seeded.
+    let floatExpressionIDs = Set(document.expressions.map(\.id))
     for (id, value) in constantFloatByID {
       floats[id] = value
-      integers[id] = constantIntegerByID[id]
+      if !floatExpressionIDs.contains(id) { integers[id] = constantIntegerByID[id] }
     }
     return (floats, integers)
   }
@@ -173,6 +188,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     colors = other.colors
     integers = other.integers
     integerSlotIDs = other.integerSlotIDs
+    imageSizeByID = other.imageSizeByID
+    floatExpressionIDs = other.floatExpressionIDs
     documentClaimsEpochSecond = other.documentClaimsEpochSecond
     hostSetColors = other.hostSetColors
     writtenIDs = other.writtenIDs
@@ -582,9 +599,18 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   {
     func storeActionInteger(_ id: Int, _ value: Int) {
       writtenIDs.insert(id)
-      storeInteger(id, value)
-      // The id's float view after the write, changed or not: a later action reads it.
-      values[id] = floatOverrides[id] ?? floats[id] ?? Float(value)
+      guard storeInteger(id, value) else {
+        // Unchanged, so Kotlin leaves `floats[id]`: a float expression's value stays; any other
+        // id's float view is its integer, which an earlier action may have moved this frame.
+        if !floatExpressionIDs.contains(id) {
+          values[id] = floatOverrides[id] ?? floats[id] ?? Float(value)
+        }
+        return
+      }
+      // A document float at the id took the integer; an override records it as this action's
+      // write, so a float variable carries it into a reopen as a host's float write would.
+      if let float = floats[id] { floatOverrides[id] = float }
+      values[id] = Float(value)
     }
     func storeActionFloat(_ id: Int, _ value: Float) {
       storeFloat(id, value)
@@ -946,7 +972,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     if let source = node.text {
       // `size > 0` used to be a parse-time guard. It still holds, but a computed size has no value
       // to check until here, so the check moved with it rather than being dropped.
-      let size = try resolvedFloat(source.sizeWord, "text size", values: values, positive: true)
+      let size = try resolvedFloat(
+        source.sizeWord, NativeSwiftWireField.textSize, values: values, positive: true)
       let weight = resolveOptionalFloat(source.weightWord, values: values) ?? 400
       text = NativeSwiftTextSnapshot(
         value: texts[source.textID] ?? "",
@@ -1041,10 +1068,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         })
     }
 
-    let maximumWidth = try resolvedFloat(node.maximumWidthWord, "maximum width", values: values)
-    let maximumHeight = try resolvedFloat(node.maximumHeightWord, "maximum height", values: values)
+    let maximumWidth = try resolvedFloat(
+      node.maximumWidthWord, NativeSwiftWireField.maximumWidth, values: values)
+    let maximumHeight = try resolvedFloat(
+      node.maximumHeightWord, NativeSwiftWireField.maximumHeight, values: values)
     let cornerRadii = try node.cornerRadiusWords.map {
-      try resolvedFloat($0, "corner radius", values: values)
+      try resolvedFloat($0, NativeSwiftWireField.cornerRadius, values: values)
     }
     let cornerRadius = cornerRadii.max() ?? 0
 
@@ -1052,7 +1081,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       node.widthWord, type: stateLayoutDimension(node, isWidth: true), NativeSwiftWireField.width,
       values: values)
     let resolvedHeight = try resolvedDimension(
-      node.heightWord, type: stateLayoutDimension(node, isWidth: false), NativeSwiftWireField.height,
+      node.heightWord, type: stateLayoutDimension(node, isWidth: false),
+      NativeSwiftWireField.height,
       values: values)
 
     return NativeSwiftNodeSnapshot(
@@ -1094,13 +1124,19 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       padding: node.stateIndexID != nil
         ? NativeSwiftInsets()
         : NativeSwiftInsets(
-          left: try resolvedFloat(node.paddingWords.left, "padding left", values: values),
-          top: try resolvedFloat(node.paddingWords.top, "padding top", values: values),
-          right: try resolvedFloat(node.paddingWords.right, "padding right", values: values),
-          bottom: try resolvedFloat(node.paddingWords.bottom, "padding bottom", values: values)),
-      minimumWidth: try resolvedFloat(node.minimumWidthWord, "minimum width", values: values),
+          left: try resolvedFloat(
+            node.paddingWords.left, NativeSwiftWireField.paddingLeft, values: values),
+          top: try resolvedFloat(
+            node.paddingWords.top, NativeSwiftWireField.paddingTop, values: values),
+          right: try resolvedFloat(
+            node.paddingWords.right, NativeSwiftWireField.paddingRight, values: values),
+          bottom: try resolvedFloat(
+            node.paddingWords.bottom, NativeSwiftWireField.paddingBottom, values: values)),
+      minimumWidth: try resolvedFloat(
+        node.minimumWidthWord, NativeSwiftWireField.minimumWidth, values: values),
       maximumWidth: maximumWidth > 1_000_000 ? -1 : maximumWidth,
-      minimumHeight: try resolvedFloat(node.minimumHeightWord, "minimum height", values: values),
+      minimumHeight: try resolvedFloat(
+        node.minimumHeightWord, NativeSwiftWireField.minimumHeight, values: values),
       maximumHeight: maximumHeight > 1_000_000 ? -1 : maximumHeight,
       cornerRadius: cornerRadius,
       clipsToBounds: node.clipsToBounds,
@@ -1131,7 +1167,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       visibility: visibility,
       backgroundARGB: node.backgroundColorID.flatMap { resolvedColors[$0] } ?? node.backgroundARGB,
       borderARGB: node.borderColorID.flatMap { resolvedColors[$0] } ?? node.borderARGB,
-      borderWidth: try resolvedFloat(node.borderWidthWord, "border width", values: values),
+      borderWidth: try resolvedFloat(
+        node.borderWidthWord, NativeSwiftWireField.borderWidth, values: values),
       horizontalPositioning: node.horizontalPositioning,
       verticalPositioning: node.verticalPositioning,
       animationID: node.animationID,
@@ -1149,7 +1186,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       flowMaximumLines: node.flowMaximumLines,
       isCollapsible: node.isCollapsible,
       collapsiblePriority: try node.collapsiblePriorityWord.map {
-        try resolvedFloat($0, "collapsible priority", values: values)
+        try resolvedFloat($0, NativeSwiftWireField.collapsiblePriority, values: values)
       },
       collapsiblePriorityOrientation: node.collapsiblePriorityOrientation,
       scrollDirection: node.scrollDirection,
@@ -1169,11 +1206,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         NativeSwiftMarqueeSnapshot(
           iterations: node.marqueeIterations, animationMode: node.marqueeAnimationMode,
           repeatDelayMillis: try resolvedFloat(
-            node.marqueeRepeatDelayWord, "marquee repeat delay", values: values),
+            node.marqueeRepeatDelayWord, NativeSwiftWireField.marqueeRepeatDelay, values: values),
           initialDelayMillis: try resolvedFloat(
-            node.marqueeInitialDelayWord, "marquee initial delay", values: values),
-          spacing: try resolvedFloat(node.marqueeSpacingWord, "marquee spacing", values: values),
-          velocity: try resolvedFloat($0, "marquee velocity", values: values, positive: true))
+            node.marqueeInitialDelayWord, NativeSwiftWireField.marqueeInitialDelay, values: values),
+          spacing: try resolvedFloat(
+            node.marqueeSpacingWord, NativeSwiftWireField.marqueeSpacing, values: values),
+          velocity: try resolvedFloat(
+            $0, NativeSwiftWireField.marqueeVelocity, values: values, positive: true))
       },
       text: text,
       custom: custom,
@@ -1441,6 +1480,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // expressions that read it, not after them. Whether the document claims the id instead is
     // learned below from what the document itself writes there, not from the slot being empty:
     // after the first frame the slot holds the previous frame's epoch.
+    for (id, size) in imageSizeByID where floats[id] != size || floatOverrides[id] != nil {
+      floats[id] = size
+      floatOverrides.removeValue(forKey: id)
+      integers[id] = nativeSwiftIntegerView(size)
+    }
     let epochSecond = NativeSwiftSystemVariables.epochSecond
     let hostOwnsEpochSecond =
       !documentClaimsEpochSecond && document.integers[epochSecond] == nil
@@ -1680,9 +1724,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         for id in projectedIntegers {
           if let value = integers[id] { result[id] = Float(value) }
         }
-        // An integer expression whose id also has a document float moved that float with it.
+        // An integer expression moved its id's float view with it (a document float, or the
+        // projection once a float override was dropped).
         for id in document.integerExpressionOrder where floatOverrides[id] == nil {
-          if let value = floats[id] { result[id] = value }
+          if let value = floats[id] ?? integers[id].map(Float.init) { result[id] = value }
         }
         try evaluateExpressions()
       }

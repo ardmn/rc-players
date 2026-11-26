@@ -1162,13 +1162,29 @@ enum NativeSwiftImageAttributeType {
   static let height = 1
 }
 
-/// The field labels the document decoder (and the session's resolution) names in an error: one
-/// owner for each label read at more than one site, and for every label of the reads this type was
-/// introduced with (numeric constants, image attributes, LayoutCompute bodies), so the sites
-/// cannot drift apart and an error names the field the same way wherever it is read. Labels read
-/// at one site elsewhere are still literals, to move here as their code is touched. The values are part of the decoder's error text, which hosts
-/// and logs see, so they keep their exact wording.
+/// The field labels the document decoder and the session's resolution name in an error: one owner
+/// for every label read at more than one site, in the decoder or across the decoder and the
+/// session, and for every label of the reads this type was introduced with (numeric constants,
+/// image attributes, LayoutCompute bodies). A label read at a single site elsewhere is still a
+/// literal there, to move here when that code is touched. The values are part of the error text
+/// hosts and logs see, so they keep their exact wording.
 enum NativeSwiftWireField {
+  static let textSize = "text size"
+  static let maximumWidth = "maximum width"
+  static let maximumHeight = "maximum height"
+  static let cornerRadius = "corner radius"
+  static let paddingLeft = "padding left"
+  static let paddingTop = "padding top"
+  static let paddingRight = "padding right"
+  static let paddingBottom = "padding bottom"
+  static let minimumWidth = "minimum width"
+  static let minimumHeight = "minimum height"
+  static let borderWidth = "border width"
+  static let collapsiblePriority = "collapsible priority"
+  static let marqueeRepeatDelay = "marquee repeat delay"
+  static let marqueeInitialDelay = "marquee initial delay"
+  static let marqueeSpacing = "marquee spacing"
+  static let marqueeVelocity = "marquee velocity"
   static let conditionalLeft = "conditional left"
   static let conditionalRight = "conditional right"
   static let conditionalType = "conditional type"
@@ -1225,5 +1241,7 @@ enum NativeSwiftWireField {
 /// The reasons the document decoder gives for a malformed document at more than one site.
 enum NativeSwiftDecodeReason {
   static let floatValueMustBeFinite = "float value must be finite"
-  static let floatExpressionWorkExceeded = "Float expression work exceeds 200000 words"
+  static let floatExpressionWorkExceeded =
+    "Float expression work exceeds \(maximumWords) words"
+  private static let maximumWords = NativeSwiftDocumentDecoder.maximumDecodedExpressionWords
 }

@@ -341,4 +341,136 @@ import Testing
       try NativeSwiftDocumentSession.open(data: document.data)
     }
   }
+
+  // MARK: - Image sizes, carried action writes and the settle pass
+
+  /// An 8x4 bitmap whose width is ImageAttribute output 80, read by float expression 81, named
+  /// "w" (float) so a host can write it.
+  static func imageDocument(clickActions: ((Writer) -> Void)? = nil) -> Data {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataBitmap).int(90).int(NativeSwiftBitmapType.raw8888 << 16 | 8).int(4)
+      .int(128).raw(Data(repeating: 0, count: 128))
+    document.u8(Op.attributeImage).int(80).int(90).u16(NativeSwiftImageAttributeType.width).u16(0)
+    document.namedVariable(id: 80, type: Named.float, name: "w")
+    document.u8(Op.animatedFloat).int(81).int(1).int(Writer.nanReference(80))
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
+    if let clickActions {
+      document.u8(Op.modifierClick)
+      clickActions(document)
+      document.u8(Op.containerEnd)
+    }
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    return document.data
+  }
+
+  /// The reference writes an image size again on every pass, so neither a document action's
+  /// integer write nor a host's float write outlasts the next resolution.
+  @Test func anImageSizeComesBackAfterAWrite() throws {
+    let session = try NativeSwiftDocumentSession.open(
+      data: Self.imageDocument { $0.u8(Op.valueIntegerChangeAction).int(80).int(3) })
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    var values = try session.probeValues(timeSeconds: 0)
+    #expect(values.floats[80] == 8 && values.floats[81] == 8, "\(values.floats[81] as Any)")
+    #expect(session.setFloat(3, for: "w"))
+    values = try session.probeValues(timeSeconds: 0)
+    #expect(values.floats[80] == 8 && values.integers[80] == 8, "\(values.floats[80] as Any)")
+  }
+
+  /// A document action's integer write to a float variable is carried into a reopen, as a host's
+  /// float write is.
+  @Test func anActionIntegerWriteToAFloatVariableIsCarried() throws {
+    let data = NativeSwiftFloatIntegerViewTests.valuesDocument {
+      $0.u8(Op.valueIntegerChangeAction).int(51).int(4)
+    }
+    let session = try NativeSwiftDocumentSession.open(data: data)
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    let carried = session.writtenNamedValues().first { $0.name == "page" }?.value
+    #expect(carried == .float(4), "\(carried as Any)")
+    let values = try session.reopened(over: data).probeValues(timeSeconds: 0)
+    #expect(values.floats[51] == 4 && values.integers[51] == 4)
+  }
+
+  /// An integer write leaves a float expression's value when it changes nothing: the action after
+  /// it reads the float, as Kotlin's no-op `setInteger` leaves `floats[id]`. The first click
+  /// writes 3 to the expression's id; on the second the integer is already 3.
+  @Test func anUnchangedActionIntegerWriteLeavesAFloatExpressionsValue() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(60).int(1).int(Writer.literal(3.7))
+    document.u8(Op.animatedFloat).int(61).int(3).int(Writer.nanReference(60))
+      .int(Writer.literal(1)).int(Self.mul)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
+    document.u8(Op.modifierClick)
+      .u8(Op.valueIntegerChangeAction).int(60).int(3)
+      .u8(Op.valueFloatExpressionChangeAction).int(80).int(61)
+      .u8(Op.containerEnd)
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    #expect(try session.probeValues(timeSeconds: 0.1).floats[80] == 3)
+    _ = try session.click(componentID: 3, timeSeconds: 0.2)
+    let values = try session.probeValues(timeSeconds: 0.2)
+    #expect(values.floats[80] == 3.7, "\(values.floats[80] as Any)")
+  }
+
+
+  /// An integer expression whose float override the settle pass drops shows its integer in the
+  /// same resolution: float expressions reading it do not keep the dropped float for a pass.
+  @Test func theSettlePassReadsAnExpressionWhoseOverrideItDropped() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(45).float(1)
+    document.namedVariable(id: 45, type: Named.float, name: "index")
+    document.u8(Op.idList).int(40).int(3).int(11).int(12).int(13)
+    document.u8(Op.idLookup).int(41).int(40).int(Writer.nanReference(45))
+    document.u8(Op.integerExpression).int(60).int(1).int(1).int(41)
+    document.u8(Op.animatedFloat).int(90).int(1).int(Writer.nanReference(60))
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    _ = try session.probeValues(timeSeconds: 0)
+    #expect(session.setFloat(12.5, forID: 60))
+    #expect(session.setFloat(2, for: "index"))
+    let values = try session.probeValues(timeSeconds: 0)
+    #expect(
+      values.integers[60] == 13 && values.floats[60] == 13 && values.floats[90] == 13,
+      "\(values.floats[90] as Any)")
+  }
+
+  /// An integer variable whose id has a document float: an integer write equal to the document's
+  /// integer view, carried into a reopen, comes back with the document's float rather than the
+  /// integer's, because the carried value names no float and an equal integer changes nothing.
+  @Test func anEqualIntegerOnADocumentFloatKeepsItsFloatAcrossAReopen() throws {
+    let session = try open()
+    #expect(session.setInteger(3, for: "mixed"))
+    #expect(session.setInteger(1, for: "mixed"))
+    let (before, beforeFloat) = try views(session, 80)
+    #expect(before == 1 && beforeFloat == 1)
+    let reopened = try session.reopened(over: Self.document())
+    let (integer, float) = try views(reopened, 80)
+    withKnownIssue("the carried integer names no float view, and an equal integer is a no-op") {
+      #expect(integer == 1 && float == 1, "\(float as Any)")
+    }
+  }
+
+  /// A decode-time condition reads an image size over a later constant at its id, as the
+  /// session (and the reference, which writes the size on every pass) holds it.
+  @Test func aConditionReadsAnImageSizeOverALaterConstant() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataBitmap).int(90).int(NativeSwiftBitmapType.raw8888 << 16 | 8).int(4)
+      .int(128).raw(Data(repeating: 0, count: 128))
+    document.u8(Op.attributeImage).int(80).int(90).u16(NativeSwiftImageAttributeType.width).u16(0)
+    document.u8(Op.dataInt).int(80).int(3)
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.conditionalOperations).u8(NativeSwiftConditionalType.equal)
+      .int(Writer.nanReference(80)).float(3)
+    document.u8(Op.layoutBox).int(5).int(-1).int(1).int(1)
+    document.u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    #expect(try session.probeValues(timeSeconds: 0).floats[80] == 8)
+    #expect(try session.snapshot(timeSeconds: 0).root.node(withComponentID: 5) == nil)
+  }
 }

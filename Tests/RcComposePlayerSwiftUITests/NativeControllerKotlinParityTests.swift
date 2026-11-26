@@ -30,13 +30,12 @@ import Testing
   /// shows.
   private static let documentValue = 7
 
-  /// The id holding `sentinel`, if exactly one does.
+  /// Every declared id holding `sentinel`.
   private static func landedOn(_ session: NativeSwiftDocumentSession, _ sentinel: Int) throws
-    -> Int?
+    -> Set<Int>
   {
     let integers = try session.probeValues(timeSeconds: 0).integers
-    let hits = declaredNames.keys.filter { integers[$0] == sentinel }
-    return hits.count == 1 ? hits[0] : nil
+    return Set(declaredNames.keys.filter { integers[$0] == sentinel })
   }
 
   /// `RcComposeViewControllerTest.appleControllerResolvesNamesAsTheRuntimeDoes`: each name is
@@ -67,19 +66,20 @@ import Testing
       }
       let actual = try Self.landedOn(replayed, sentinel)
 
-      #expect(accepted == (expected != nil), "accepted '\(name)'")
+      #expect(expected.count <= 1, "'\(name)' wrote \(expected)")
+      #expect(accepted == !expected.isEmpty, "accepted '\(name)'")
       #expect(actual == expected, "variable '\(name)' addresses")
       #expect(
-        Set(stored.keys) == Set(expected.map { [Self.declaredNames[$0]!] } ?? []),
+        Set(stored.keys) == Set(expected.compactMap { Self.declaredNames[$0] }),
         "key '\(name)' is stored under")
     }
     // The cases the comparison relies on, spelled out.
     let both = try NativeSwiftDocumentSession.open(data: data, toleratingRootlessData: true)
     _ = both.setInteger(sentinel, for: "both")
-    #expect(try Self.landedOn(both, sentinel) == 60)
+    #expect(try Self.landedOn(both, sentinel) == [60])
     let bare = try NativeSwiftDocumentSession.open(data: data, toleratingRootlessData: true)
     _ = bare.setInteger(sentinel, for: "light.is_on")
-    #expect(try Self.landedOn(bare, sentinel) == 62)
+    #expect(try Self.landedOn(bare, sentinel) == [62])
   }
 
   /// `RcComposeViewControllerTest.appleControllerDrivesIntegerAndBooleanVariablesIntoTheDocument`

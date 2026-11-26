@@ -24,7 +24,8 @@ import Testing
       data: document.data, toleratingRootlessData: true)
     // NaN is left out: the Swift session refuses a non-finite write (a documented difference).
     let cases: [(Float, Int)] = [
-      (1.75, 1), (-2.75, -2), (.leastNonzeroMagnitude, 0),
+      KotlinReference.truncatedFloats[0], KotlinReference.truncatedFloats[1],
+      (.leastNonzeroMagnitude, 0),
       (.greatestFiniteMagnitude, Int(Int32.max)), (-.greatestFiniteMagnitude, Int(Int32.min)),
     ]
     for (value, expected) in cases {
@@ -200,7 +201,7 @@ import Testing
       id: NativeSwiftSystemVariables.year, type: Named.float, name: "cal_year")
     let session = try NativeSwiftDocumentSession.open(
       data: document.data, toleratingRootlessData: true)
-    // The Kotlin test's clock: 2026-08-19.
+    // The Kotlin test's clock: 2026-08-20T16:30:45.250Z.
     let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
     #expect(
       try session.probeValues(timeSeconds: 0, wallClock: clock)

@@ -100,7 +100,7 @@
 
     /// A later value of a name replaces every earlier one, an equal integer included: a value
     /// left out of the last session (it broke a limit) is replaced by the integer the host then
-    /// wrote, and of two later values the newest stands.
+    /// wrote. Two later values of one name are both kept, in order, so the newer is applied last.
     @Test func aLaterValueReplacesEveryEarlierOneOfItsName() {
       typealias Value = NativeStartingValue
       let leftOut = [

@@ -4,6 +4,8 @@ let nativeSwiftMaximumStringBytes = 4_000
 
 enum NativeSwiftDocumentDecoder {
   static let maximumStringBytes = nativeSwiftMaximumStringBytes
+  /// The float-expression words one document may evaluate at decode time.
+  static let maximumDecodedExpressionWords = 200_000
   private static let maximumOperations = 100_000
   private static let maximumProperties = 2_000
   private static let maximumNodes = 20_000
@@ -105,7 +107,8 @@ enum NativeSwiftDocumentDecoder {
           _ = try input.int("header property \(index) low word")
         case NativeSwiftHeaderValueType.string:
           guard length >= 4 else { throw input.malformed("Invalid string header property length") }
-          let value = try input.utf8(NativeSwiftWireField.headerProperty(index), maximum: maximumStringBytes)
+          let value = try input.utf8(
+            NativeSwiftWireField.headerProperty(index), maximum: maximumStringBytes)
           guard value.utf8.count + 4 == length else {
             throw input.malformed("Invalid string header property length")
           }
@@ -130,9 +133,13 @@ enum NativeSwiftDocumentDecoder {
     var integers: [Int: Int] = [:]
     var numericConstants: [ParsedNumericConstant] = []
     /// The integer view of each literal constant's id as the constants so far leave it, so an
-    /// integer constant moves a float constant's value as the reference's load does, and the
-    /// decode-time conditions and loop bounds read what the session will hold.
+    /// integer constant moves a float constant's value as the reference's load does, and a
+    /// decode-time condition or loop bound reads that float. (They read floats only: an id holding
+    /// only an integer, or an expression's output, still reads as the decoder's float map has it.)
     var constantIntegerViewByID: [Int: Int] = [:]
+    /// `ImageAttribute` outputs: the reference writes their size again on every pass, so a
+    /// constant at one of these ids never changes the float the decode-time reads see.
+    var imageSizeIDs: Set<Int> = []
     var integerExpressions: [Int: ParsedIntegerExpression] = [:]
     var integerExpressionOrder: [Int] = []
     var namedVariables: [String: ParsedNamedVariable] = [:]
@@ -577,9 +584,14 @@ enum NativeSwiftDocumentDecoder {
           let word = try input.word(NativeSwiftWireField.layoutComputeFloatValue)
           if NativeSwiftFloatExpression.referenceID(word) == nil {
             let value = Float(bitPattern: word)
-            guard value.isFinite else { throw input.malformed(NativeSwiftDecodeReason.floatValueMustBeFinite) }
-            floats[id] = value
-            constantIntegerViewByID[id] = nativeSwiftIntegerView(value)
+            guard value.isFinite else {
+              throw input.malformed(
+                NativeSwiftDecodeReason.floatValueMustBeFinite)
+            }
+            if !imageSizeIDs.contains(id) {
+              floats[id] = value
+              constantIntegerViewByID[id] = nativeSwiftIntegerView(value)
+            }
             numericConstants.append(.float(id: id, value: value))
           }
           steps.append(.float(id: id, words: [word], offset: opcodeOffset))
@@ -594,12 +606,16 @@ enum NativeSwiftDocumentDecoder {
               reason: "an animated float inside LayoutCompute is not migrated")
           }
           expressionWordCount += valueCount
-          guard expressionWordCount <= 200_000 else {
+          guard expressionWordCount <= maximumDecodedExpressionWords else {
             throw input.malformed(NativeSwiftDecodeReason.floatExpressionWorkExceeded)
           }
           var words: [UInt32] = []
           words.reserveCapacity(valueCount)
-          for _ in 0..<valueCount { words.append(try input.word(NativeSwiftWireField.layoutComputeExpressionWord)) }
+          for _ in 0..<valueCount {
+            words.append(
+              try input.word(
+                NativeSwiftWireField.layoutComputeExpressionWord))
+          }
           steps.append(.float(id: id, words: words, offset: opcodeOffset))
         case NativeSwiftWireOpcode.dynamicFloatList:
           let id = try input.int(NativeSwiftWireField.dynamicFloatListID)
@@ -623,7 +639,8 @@ enum NativeSwiftDocumentDecoder {
 
     func skipMacroCallHeader() throws {
       _ = try input.int(NativeSwiftWireField.nestedMacroID)
-      let argumentCount = try input.count(NativeSwiftWireField.nestedMacroArgumentCount, maximum: maximumProperties)
+      let argumentCount = try input.count(
+        NativeSwiftWireField.nestedMacroArgumentCount, maximum: maximumProperties)
       for _ in 0..<argumentCount { _ = try input.int(NativeSwiftWireField.nestedMacroArgument) }
     }
 
@@ -838,7 +855,8 @@ enum NativeSwiftDocumentDecoder {
           // and are rewritten by this same walk: the reference inflates a block's operations with
           // the enclosing body's remap context, and a MacroArgument later inserts them as they are.
           _ = try reader.int(NativeSwiftWireField.nestedMacroID)
-          let argumentCount = try reader.count(NativeSwiftWireField.nestedMacroArgumentCount, maximum: maximumProperties)
+          let argumentCount = try reader.count(
+            NativeSwiftWireField.nestedMacroArgumentCount, maximum: maximumProperties)
           for _ in 0..<argumentCount {
             let argumentOffset = reader.offset
             let argument = try reader.int(NativeSwiftWireField.nestedMacroArgument)
@@ -1420,7 +1438,10 @@ enum NativeSwiftDocumentDecoder {
         }
       case NativeSwiftWireOpcode.modifierRoundedClipRect:  // Rounded clip rectangle
         let node = try currentNode(stack, input: input)
-        node.cornerRadiusWords = try (0..<4).map { _ in try input.word("corner radius") }
+        node.cornerRadiusWords = try (0..<4).map { _ in
+          try input.word(
+            NativeSwiftWireField.cornerRadius)
+        }
       case NativeSwiftWireOpcode.modifierClick:  // Click modifier encloses its action operations.
         let node = try currentNode(stack, input: input)
         node.isClickable = true
@@ -1534,10 +1555,10 @@ enum NativeSwiftDocumentDecoder {
       case NativeSwiftWireOpcode.modifierPadding:  // Padding
         let node = try currentNode(stack, input: input)
         node.paddingWords = ParsedInsetWords(
-          left: try input.word("padding left"),
-          top: try input.word("padding top"),
-          right: try input.word("padding right"),
-          bottom: try input.word("padding bottom"))
+          left: try input.word(NativeSwiftWireField.paddingLeft),
+          top: try input.word(NativeSwiftWireField.paddingTop),
+          right: try input.word(NativeSwiftWireField.paddingRight),
+          bottom: try input.word(NativeSwiftWireField.paddingBottom))
       case NativeSwiftWireOpcode.modifierHeight:  // Height
         let node = try currentNode(stack, input: input)
         let heightType = try input.dimensionType("height type")
@@ -1568,9 +1589,14 @@ enum NativeSwiftDocumentDecoder {
           }
         } else {
           let value = Float(bitPattern: constantWord)
-          guard value.isFinite else { throw input.malformed(NativeSwiftDecodeReason.floatValueMustBeFinite) }
-          floats[floatID] = value
-          constantIntegerViewByID[floatID] = nativeSwiftIntegerView(value)
+          guard value.isFinite else {
+            throw input.malformed(
+              NativeSwiftDecodeReason.floatValueMustBeFinite)
+          }
+          if !imageSizeIDs.contains(floatID) {
+            floats[floatID] = value
+            constantIntegerViewByID[floatID] = nativeSwiftIntegerView(value)
+          }
           numericConstants.append(.float(id: floatID, value: value))
         }
       case NativeSwiftWireOpcode.dataBitmap:  // Bitmap data
@@ -1610,7 +1636,7 @@ enum NativeSwiftDocumentDecoder {
         let count = valueCount + animationCount
         guard count <= 65_567 else { throw input.malformed("Float expression is too long") }
         expressionWordCount += count
-        guard expressionWordCount <= 200_000 else {
+        guard expressionWordCount <= maximumDecodedExpressionWords else {
           throw input.malformed(NativeSwiftDecodeReason.floatExpressionWorkExceeded)
         }
         var words: [UInt32] = []
@@ -1717,7 +1743,7 @@ enum NativeSwiftDocumentDecoder {
         // replaces it.
         if constantIntegerViewByID[id] != value {
           constantIntegerViewByID[id] = value
-          if floats[id] != nil { floats[id] = Float(value) }
+          if floats[id] != nil, !imageSizeIDs.contains(id) { floats[id] = Float(value) }
         }
       case NativeSwiftWireOpcode.integerExpression:  // Integer expression
         let outputID = try input.int("integer expression output id")
@@ -1756,7 +1782,8 @@ enum NativeSwiftDocumentDecoder {
         let id = try input.int(NativeSwiftWireField.dynamicFloatListID)
         let update = (
           index: try input.word(NativeSwiftWireField.dynamicFloatListIndex),
-          value: try input.word(NativeSwiftWireField.dynamicFloatListValue))
+          value: try input.word(NativeSwiftWireField.dynamicFloatListValue)
+        )
         if dynamicFloatLists[id] != nil {
           // Appended in place: rebuilding the list per update was quadratic in a long update run.
           dynamicFloatLists[id]?.updates.append(update)
@@ -1822,15 +1849,15 @@ enum NativeSwiftDocumentDecoder {
         textOperations.append(.merge(merge))
       case NativeSwiftWireOpcode.textLookupInt:
         let lookup = ParsedTextLookupInt(
-            outputID: try input.int(NativeSwiftWireField.textLookupOutputID),
-            listID: try input.int(NativeSwiftWireField.textLookupListID),
+          outputID: try input.int(NativeSwiftWireField.textLookupOutputID),
+          listID: try input.int(NativeSwiftWireField.textLookupListID),
             indexID: try input.int("text lookup index id"))
         textLookups.append(lookup)
         textOperations.append(.lookupInt(lookup))
       case NativeSwiftWireOpcode.textLookup:
         let lookup = ParsedTextLookup(
-            outputID: try input.int(NativeSwiftWireField.textLookupOutputID),
-            listID: try input.int(NativeSwiftWireField.textLookupListID),
+          outputID: try input.int(NativeSwiftWireField.textLookupOutputID),
+          listID: try input.int(NativeSwiftWireField.textLookupListID),
             index: try input.word("text lookup index"))
         textFloatLookups.append(lookup)
         textOperations.append(.lookup(lookup))
@@ -2072,6 +2099,8 @@ enum NativeSwiftDocumentDecoder {
         let size = Float(
           type == NativeSwiftImageAttributeType.width ? image.width : image.height)
         floats[outputID] = size
+        constantIntegerViewByID[outputID] = nativeSwiftIntegerView(size)
+        imageSizeIDs.insert(outputID)
         numericConstants.append(.imageSize(id: outputID, value: size))
       case NativeSwiftWireOpcode.layoutRoot:  // Root
         let root = ParsedNode(kind: .root, componentID: try input.int("root component id"))
@@ -2402,10 +2431,10 @@ enum NativeSwiftDocumentDecoder {
         let node = try currentNode(stack, input: input)
         node.marqueeIterations = try input.int("marquee iterations")
         node.marqueeAnimationMode = try input.int("marquee animation mode")
-        node.marqueeRepeatDelayWord = try input.word("marquee repeat delay")
-        node.marqueeInitialDelayWord = try input.word("marquee initial delay")
-        node.marqueeSpacingWord = try input.word("marquee spacing")
-        node.marqueeVelocityWord = try input.word("marquee velocity")
+        node.marqueeRepeatDelayWord = try input.word(NativeSwiftWireField.marqueeRepeatDelay)
+        node.marqueeInitialDelayWord = try input.word(NativeSwiftWireField.marqueeInitialDelay)
+        node.marqueeSpacingWord = try input.word(NativeSwiftWireField.marqueeSpacing)
+        node.marqueeVelocityWord = try input.word(NativeSwiftWireField.marqueeVelocity)
         hasMarquee = true
       case NativeSwiftWireOpcode.modifierBorder:  // Border modifier
         // INT flags, INT color id, two reserved ints, then width, corner radius and r/g/b/a as
@@ -2415,7 +2444,7 @@ enum NativeSwiftDocumentDecoder {
         let colorID = try input.int("border color id")
         _ = try input.int("border reserved 1")
         _ = try input.int("border reserved 2")
-        let width = try input.word("border width")
+        let width = try input.word(NativeSwiftWireField.borderWidth)
         _ = try input.word("border corner")
         let usesColorID = flags & 2 != 0
         let red = try input.floatWord(
@@ -2446,7 +2475,7 @@ enum NativeSwiftDocumentDecoder {
         // first. Upstream's own `apply` is empty because it is layout input rather than a drawing
         // instruction — but it is not inert: it decides the order the container hides children in.
         let orientation = try input.int("collapsible priority orientation")
-        let priority = try input.word("collapsible priority")
+        let priority = try input.word(NativeSwiftWireField.collapsiblePriority)
         let node = try currentNode(stack, input: input)
         node.collapsiblePriorityOrientation = orientation
         node.collapsiblePriorityWord = priority
@@ -2494,7 +2523,7 @@ enum NativeSwiftDocumentDecoder {
         node.animationID = try input.int("text animation id")
         let textID = try input.int(NativeSwiftWireField.textID)
         let color = UInt32(bitPattern: Int32(try input.int("text color")))
-        let size = try input.word("text size")
+        let size = try input.word(NativeSwiftWireField.textSize)
         let style = try input.int("text style")
         let weight = try input.word("text weight")
         let familyID = try input.int("text family id")
@@ -2613,12 +2642,12 @@ enum NativeSwiftDocumentDecoder {
         }
       case NativeSwiftWireOpcode.modifierWidthIn:  // Minimum/maximum width
         let node = try currentNode(stack, input: input)
-        node.minimumWidthWord = try input.word("minimum width")
-        node.maximumWidthWord = try input.word("maximum width")
+        node.minimumWidthWord = try input.word(NativeSwiftWireField.minimumWidth)
+        node.maximumWidthWord = try input.word(NativeSwiftWireField.maximumWidth)
       case NativeSwiftWireOpcode.modifierHeightIn:  // Minimum/maximum height
         let node = try currentNode(stack, input: input)
-        node.minimumHeightWord = try input.word("minimum height")
-        node.maximumHeightWord = try input.word("maximum height")
+        node.minimumHeightWord = try input.word(NativeSwiftWireField.minimumHeight)
+        node.maximumHeightWord = try input.word(NativeSwiftWireField.maximumHeight)
       case NativeSwiftWireOpcode.coreText:  // CoreText
         let textID = try input.int("core text id")
         let own = try textProperties("CoreText")

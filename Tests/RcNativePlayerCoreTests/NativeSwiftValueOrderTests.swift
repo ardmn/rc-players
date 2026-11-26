@@ -271,6 +271,8 @@ import Testing
     let values = try NativeSwiftDocumentSession.open(
       data: document.data, toleratingRootlessData: true
     ).probeValues(timeSeconds: 0)
+    // The constant's integer view (2) is not seeded under the expression's float.
+    #expect(values.integers[60] != 2, "\(values.integers[60] as Any)")
     withKnownIssue("a float expression publishes no integer view") {
       #expect(
         values.floats[60] == 7.5 && values.integers[60] == 7 && values.integers[61] == 7,
