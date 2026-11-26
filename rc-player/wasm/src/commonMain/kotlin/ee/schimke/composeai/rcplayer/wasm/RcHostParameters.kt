@@ -206,7 +206,7 @@ private fun namedValueFromRow(
       ?: return null
   if (name.isEmpty()) return null
   return parseNamedValue(typeName = kind, value = value, isNumber = isNumber)?.let {
-    "USER:$name" to it
+    "USER:$name" to it // lint-ok: moved line; the runtime keeps its USER prefix private
   }
 }
 
