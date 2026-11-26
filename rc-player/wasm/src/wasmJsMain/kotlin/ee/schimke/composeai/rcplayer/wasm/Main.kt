@@ -658,7 +658,8 @@ private fun flattenNamedValuesFromLocation(
         if (value === null || typeof value !== 'object') return;
         if (typeof value.kind !== 'string' || typeof value.name !== 'string') return;
         try {
-          // The fourth field says whether `value` was a JSON number; parseNamedValue reads it.
+          // The fourth field says whether `value` was a JSON number; namedValuesFromRows reads it
+          // and drops a row carrying neither mark.
           rows.push([encodeURIComponent(value.kind), encodeURIComponent(value.name),
             encodeURIComponent(String(value.value == null ? '' : value.value)),
             typeof value.value === 'number' ? numberMark : textMark].join(fieldSeparator));

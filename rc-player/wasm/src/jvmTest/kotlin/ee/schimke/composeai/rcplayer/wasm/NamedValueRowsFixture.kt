@@ -13,11 +13,10 @@ internal object NamedValueRowsFixture {
 
   /** One element's row, each text field escaped as `encodeURIComponent`. */
   fun row(kind: String, name: String, value: String, isNumber: Boolean = false) =
-    listOf(
-        encodeUriComponent(kind),
-        encodeUriComponent(name),
-        encodeUriComponent(value),
-        if (isNumber) NAMED_VALUE_NUMBER_MARK else NAMED_VALUE_TEXT_MARK,
-      )
+    markedRow(kind, name, value, if (isNumber) NAMED_VALUE_NUMBER_MARK else NAMED_VALUE_TEXT_MARK)
+
+  /** [row] with [mark] as its last field, which the JS never writes unless it is one of the two. */
+  fun markedRow(kind: String, name: String, value: String, mark: String) =
+    listOf(encodeUriComponent(kind), encodeUriComponent(name), encodeUriComponent(value), mark)
       .joinToString(NAMED_VALUE_FIELD_SEPARATOR)
 }

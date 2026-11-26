@@ -2,6 +2,7 @@ package ee.schimke.composeai.rcplayer.wasm
 
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
 import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.join
+import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.markedRow
 import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.read
 import ee.schimke.composeai.rcplayer.wasm.NamedValueRowsFixture.row
 import kotlin.test.Test
@@ -85,15 +86,15 @@ class NamedValueRowsTest {
     // `color` is the one kind that reads the two differently: a number is ARGB as an integer.
     assertEquals(mapOf(orange), read(row("color", "WearM3.primary", "4294936576", isNumber = true)))
     assertEquals(mapOf(orange), read(row("color", "WearM3.primary", "#FFFF8800", isNumber = false)))
+    // Not swapped: the number read as text is not a colour string, so that row is dropped.
+    assertEquals(emptyMap(), read(row("color", "WearM3.primary", "4294936576", isNumber = false)))
   }
 
   @Test
   fun aRowWithAnUnknownOrEmptyMarkIsDroppedOnItsOwn() {
     val good = row("color", "WearM3.primary", "#FFFF8800")
     for (mark in listOf("x", "", "N", "ns")) {
-      val bad =
-        listOf("color", "WearM3.primary", "%23FF0000FF", mark)
-          .joinToString(NAMED_VALUE_FIELD_SEPARATOR)
+      val bad = markedRow("color", "WearM3.primary", "#FF0000FF", mark)
       assertEquals(emptyMap(), read(bad), "alone: mark '$mark'")
       assertEquals(mapOf(orange), read(join(bad, good)), "before: mark '$mark'")
       assertEquals(mapOf(orange), read(join(good, bad)), "after: mark '$mark'")
@@ -104,9 +105,7 @@ class NamedValueRowsTest {
   fun aMixedArrayKeepsEveryRowButTheOneWithABadMark() {
     val label = row("string", "label", "Ready")
     val count = row("int", "count", "3", isNumber = true)
-    val badMark =
-      listOf("color", "WearM3.primary", "%23FF0000FF", "x")
-        .joinToString(NAMED_VALUE_FIELD_SEPARATOR)
+    val badMark = markedRow("color", "WearM3.primary", "#FF0000FF", "x")
     assertEquals(
       mapOf(
         "USER:label" to RcNamedValue.Text("Ready"),

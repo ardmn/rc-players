@@ -147,7 +147,10 @@ internal const val NAMED_VALUE_FIELD_SEPARATOR: String = "\u0000" // lint-ok: de
 /** A row's encoded text fields: `kind`, `name` and `value`. */
 internal const val NAMED_VALUE_TEXT_FIELD_COUNT: Int = 3
 
-/** A row's fields: the text fields, then the number mark. */
+/**
+ * A row's fields: the text fields, then [NAMED_VALUE_NUMBER_MARK] or [NAMED_VALUE_TEXT_MARK]; a row
+ * with any other mark is dropped.
+ */
 internal const val NAMED_VALUE_FIELD_COUNT: Int = NAMED_VALUE_TEXT_FIELD_COUNT + 1
 
 /** The last field when `value` was a JSON number. */
@@ -180,17 +183,18 @@ internal fun namedValuesFromRows(
     rows.split(NAMED_VALUE_ROW_SEPARATOR).forEach { row ->
       val fields = row.split(NAMED_VALUE_FIELD_SEPARATOR)
       if (fields.size != NAMED_VALUE_FIELD_COUNT) return@forEach
-      // A field [decodeComponent] rejects (a stray `%`) drops this row, not the whole array.
-      val (kind, name, value) =
-        runCatching { fields.take(NAMED_VALUE_TEXT_FIELD_COUNT).map(decodeComponent) }.getOrNull()
-          ?: return@forEach
-      // The JS writes exactly one of the two marks; a row with any other is malformed.
+      // The JS writes exactly one of the two marks; a row with any other is malformed. Checked
+      // before the fields are decoded, so a malformed row costs no decoding.
       val isNumber =
         when (fields[NAMED_VALUE_TEXT_FIELD_COUNT]) {
           NAMED_VALUE_NUMBER_MARK -> true
           NAMED_VALUE_TEXT_MARK -> false
           else -> return@forEach
         }
+      // A field [decodeComponent] rejects (a stray `%`) drops this row, not the whole array.
+      val (kind, name, value) =
+        runCatching { fields.take(NAMED_VALUE_TEXT_FIELD_COUNT).map(decodeComponent) }.getOrNull()
+          ?: return@forEach
       val namedValue = parseNamedValue(typeName = kind, value = value, isNumber = isNumber)
       if (name.isNotEmpty() && namedValue != null) put("USER:$name", namedValue)
     }
