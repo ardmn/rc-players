@@ -241,10 +241,12 @@ container.addSubview(player)
 ```
 
 `RemoteComposeNativePlayerViewController` is a convenience for controller-based hosts and exposes
-`load(_:)`, resource configuration, explicit `renderFrame(at:)`, and asynchronous typed
-`setFloat(_:for:)`, `setString(_:for:)`, `setColor(_:for:)`, and `setInteger(_:for:)` updates. The
-view offers the same operations. `RemoteComposeNativePlayerRepresentable` is only an adapter: its
-renderer is the same UIKit tree. All three entry points accept an `onEvent` callback.
+`load(_:)`, resource configuration, explicit `renderFrame(at:)`, asynchronous typed
+`setFloat(_:for:)`, `setString(_:for:)`, `setColor(_:for:)`, `setInteger(_:for:)`,
+`setLong(_:for:)` and `setFloatArray(_:for:)` updates, and `clear(_:)`, which restores the value
+the document recorded. The view offers the same operations.
+`RemoteComposeNativePlayerRepresentable` is only an adapter: its renderer is the same UIKit tree.
+All three entry points accept an `onEvent` callback.
 
 ```swift
 let player = RemoteComposeNativePlayerView(

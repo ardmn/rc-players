@@ -121,6 +121,9 @@ struct LivePlayer: View {
     playerController.setColor(0xff336699, for: "accent")
     playerController.setInteger(3, for: "unreadCount")
     playerController.setBoolean(true, for: "isOnline")
+    playerController.setLong(1_700_000_000_000, for: "deadline")
+    playerController.setFloatArray([0.2, 0.5, 0.9], for: "series")
+    playerController.clear("status")
   }
 }
 ```
@@ -149,7 +152,14 @@ document change when the new document declares the same variable with the same t
 name it resolves to), and are kept while the fallback is not showing a document. `setInteger` and
 `setBoolean` both target an integer variable: a Remote Compose boolean is an integer holding 1 or 0,
 as AndroidX's `setNamedBooleanOverride` stores it, and an integer outside the 32-bit range is
-refused. Metadata actions and text-valued named actions also expose a pre-parsed `event.url`
+refused. `setLong` takes an instant in epoch milliseconds, which the document's time attributes
+read, and `setFloatArray` replaces the list a float-array variable holds; the native fallback
+refuses a non-finite value or more than 2000 of them, as many as a document's float list holds.
+`clear` is the inverse of the setters, as removing a key from the Kotlin player's named values is:
+the stored value is removed and the variable shows the value the document recorded again (a named
+system variable, the player's clock), so writing the old value afterwards is a change again. It
+returns `false` where a setter would for an absent name; clearing a name with no value set changes
+nothing. Metadata actions and text-valued named actions also expose a pre-parsed `event.url`
 convenience property.
 
 ### Downloadable Google Fonts
