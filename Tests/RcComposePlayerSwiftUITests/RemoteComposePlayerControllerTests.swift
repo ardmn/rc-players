@@ -189,11 +189,11 @@ import Testing
     let delivery = Task { @MainActor in
       await Value.integer(5).deliver(for: "USER:count", to: { target }, isCurrent: { true })
     }
-    try await Self.until("the delivery waits") { target.inputAvailability.waiterCount == 1 }
+    try await waitUntil("the delivery waits") { target.inputAvailability.waiterCount == 1 }
     #expect(target.calls == [.integer(5)], "offered again without a signal")
 
     target.inputAvailability.signal()
-    try await Self.until("the delivery waits again") {
+    try await waitUntil("the delivery waits again") {
       target.calls.count == 2 && target.inputAvailability.waiterCount == 1
     }
     #expect(target.calls == [.integer(5), .integer(5)])
@@ -230,7 +230,7 @@ import Testing
     let gone = Task { @MainActor in
       await Value.integer(5).deliver(for: "USER:count", to: { target }, isCurrent: { true })
     }
-    try await Self.until("the delivery waits") { availability.waiterCount == 1 }
+    try await waitUntil("the delivery waits") { availability.waiterCount == 1 }
     target = nil
     availability.close()
     await gone.value
@@ -240,7 +240,7 @@ import Testing
     let delivery = Task { @MainActor in
       await Value.integer(5).deliver(for: "USER:count", to: { cancelled }, isCurrent: { true })
     }
-    try await Self.until("the delivery waits") { cancelled.inputAvailability.waiterCount == 1 }
+    try await waitUntil("the delivery waits") { cancelled.inputAvailability.waiterCount == 1 }
     delivery.cancel()
     await delivery.value
     #expect(cancelled.calls == [.integer(5)])
@@ -270,18 +270,6 @@ import Testing
       let target = RecordingTarget()
       await value.deliver(for: "USER:name", to: { target }, isCurrent: { true })
       #expect(target.calls == [expected], "\(value)")
-    }
-  }
-
-  /// Returns once `condition` holds, yielding to the tasks it waits on; fails the test after
-  /// `seconds` rather than hanging.
-  private static func until(
-    _ what: String, within seconds: TimeInterval = 30, _ condition: () -> Bool
-  ) async throws {
-    let deadline = Date().addingTimeInterval(seconds)
-    while !condition() {
-      try #require(Date() < deadline, "timed out waiting until \(what)")
-      await Task.yield()
     }
   }
 }

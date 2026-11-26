@@ -6,29 +6,24 @@ import Testing
 
 /// `deliverNamedUpdate` loops until the player answers finally, and the loop must never spin: a
 /// deferred write is offered once per signal, plus once for a signal that arrived during the offer,
-/// and the loop ends on a final answer, cancellation, a gone player or a closed availability. Each
-/// test counts the offers exactly. The target stops deferring after `cap` offers, so a loop that
-/// spins fails the count instead of hanging the run. No test sleeps: each lets the main actor run a
-/// bounded number of turns.
+/// and the loop ends on a final answer, cancellation, a gone player, a closed availability or a
+/// delivery that is no longer current. Each test counts the offers exactly.
+///
+/// The tests assert state, not timing. A delivery is parked when its availability has one waiter:
+/// it is then suspended on a continuation that only `signal()`, `close()` or cancellation resumes,
+/// so while it stays parked its offer count cannot move. No test sleeps or counts turns; each waits
+/// for a state under a deadline. The target refuses after `cap` offers, so a loop that spins fails
+/// at once instead of hanging, and the suite has a time limit besides.
 @MainActor
-@Suite struct NativeDeliveryLoopTests {
-  /// Turns given to the delivery task to reach a state; far more than one offer and wait need.
-  private static let turns = 1_000
-  /// Turns after which a suspended delivery must still not have offered again.
-  private static let idleTurns = 200
-
-  /// Lets the main actor run until `condition` holds; false after `turns` turns.
-  private static func run(turns: Int = turns, until condition: () -> Bool) async -> Bool {
-    for _ in 0..<turns {
-      if condition() { return true }
-      await Task.yield()
+@Suite(.timeLimit(.minutes(1))) struct NativeDeliveryLoopTests {
+  /// Waits until the delivery is parked after exactly `offers` offers; fails at once when the
+  /// target has passed its cap, so a spinning loop fails instead of timing out.
+  private static func parked(_ target: CountingTarget, after offers: Int) async throws {
+    try await waitUntil("parked after \(offers) offers, at \(target.submits)") {
+      target.availability.waiterCount == 1 || target.submits > CountingTarget.cap
     }
-    return condition()
-  }
-
-  /// Lets the main actor run `idleTurns` turns, so a spinning loop would offer again.
-  private static func idle() async {
-    for _ in 0..<idleTurns { await Task.yield() }
+    #expect(target.availability.waiterCount == 1)
+    #expect(target.submits == offers)
   }
 
   private static func deliver(
@@ -40,33 +35,38 @@ import Testing
     }
   }
 
-  /// 1. Without a signal a deferred write is offered exactly once, and the task stays suspended.
+  /// 1. Without a signal a deferred write is offered exactly once and the delivery parks. A signal
+  /// on another player's availability does not wake it; its own signal gives exactly one more offer
+  /// and it parks again.
   @Test(arguments: [ControllerNamedValue.integer(5), nil])
-  func aDeferredWriteIsOfferedOnceWithoutASignal(_ value: ControllerNamedValue?) async {
+  func aDeferredWriteIsOfferedOnceWithoutASignal(_ value: ControllerNamedValue?) async throws {
     let target = CountingTarget(answers: { _ in .deferred })
-    let holder = Holder(target)
-    let delivery = Self.deliver(value, to: holder)
-    #expect(await Self.run { target.availability.waiterCount == 1 }, "the delivery waits")
-    await Self.idle()
-    #expect(target.submits == 1)
-    #expect(target.availability.waiterCount == 1, "still suspended, not spinning")
+    let delivery = Self.deliver(value, to: Holder(target))
+    try await Self.parked(target, after: 1)
+
+    RemoteComposeNativeInputAvailability().signal()
+    try await Self.parked(target, after: 1)
+
+    target.availability.signal()
+    try await waitUntil("the signal wakes the delivery") { target.submits >= 2 }
+    try await Self.parked(target, after: 2)
+
     delivery.cancel()
     #expect(await delivery.value == nil)
-    #expect(target.submits == 1)
+    #expect(target.submits == 2)
+    #expect(target.availability.waiterCount == 0)
   }
 
   /// 2. N signals give exactly N + 1 offers; the loop returns on `.accepted`.
   @Test(arguments: [ControllerNamedValue.integer(5), nil])
-  func eachSignalGivesExactlyOneMoreOffer(_ value: ControllerNamedValue?) async {
+  func eachSignalGivesExactlyOneMoreOffer(_ value: ControllerNamedValue?) async throws {
     let signals = 5
     let target = CountingTarget(answers: { $0 <= signals ? .deferred : .accepted })
-    let holder = Holder(target)
-    let delivery = Self.deliver(value, to: holder)
+    let delivery = Self.deliver(value, to: Holder(target))
     for offered in 1...signals {
-      #expect(await Self.run { target.availability.waiterCount == 1 }, "waits after \(offered)")
-      await Self.idle()
-      #expect(target.submits == offered)
+      try await Self.parked(target, after: offered)
       target.availability.signal()
+      try await waitUntil("signal \(offered) wakes the delivery") { target.submits >= offered + 1 }
     }
     #expect(await delivery.value == .accepted)
     #expect(target.submits == signals + 1)
@@ -75,14 +75,13 @@ import Testing
 
   /// 3. A signal sent while the offer is in flight — after the loop read its mark, before it waits
   /// — is not lost: the write is offered again at once, and then the loop waits.
-  @Test func aSignalDuringTheOfferGivesOneImmediateReOffer() async {
+  @Test func aSignalDuringTheOfferGivesOneImmediateReOffer() async throws {
     let target = CountingTarget(answers: { _ in .deferred })
-    target.onSubmit = { if $0 == 1 { target.availability.signal() } }
-    let holder = Holder(target)
-    let delivery = Self.deliver(.integer(5), to: holder)
-    #expect(await Self.run { target.availability.waiterCount == 1 }, "the delivery waits")
-    await Self.idle()
-    #expect(target.submits == 2, "one re-offer for the in-flight signal, no more")
+    let availability = target.availability
+    target.onSubmit = { if $0 == 1 { availability.signal() } }
+    let delivery = Self.deliver(.integer(5), to: Holder(target))
+    // One re-offer for the in-flight signal, then parked: no more.
+    try await Self.parked(target, after: 2)
     delivery.cancel()
     #expect(await delivery.value == nil)
     #expect(target.submits == 2)
@@ -90,7 +89,7 @@ import Testing
 
   /// 4. A cancelled delivery returns nil with no further offer: before it starts, while it waits,
   /// and while its offer is in flight.
-  @Test func aCancelledDeliveryReturnsNilWithoutAnotherOffer() async {
+  @Test func aCancelledDeliveryReturnsNilWithoutAnotherOffer() async throws {
     let early = CountingTarget(answers: { _ in .deferred })
     let earlyHolder = Holder(early)
     // The task is cancelled before it runs its first job.
@@ -104,10 +103,9 @@ import Testing
 
     let waiting = CountingTarget(answers: { _ in .deferred })
     let delivery = Self.deliver(.integer(5), to: Holder(waiting))
-    #expect(await Self.run { waiting.availability.waiterCount == 1 }, "the delivery waits")
+    try await Self.parked(waiting, after: 1)
     delivery.cancel()
     #expect(await delivery.value == nil)
-    await Self.idle()
     #expect(waiting.submits == 1)
     #expect(waiting.availability.waiterCount == 0)
 
@@ -120,16 +118,17 @@ import Testing
     #expect(inFlight.availability.waiterCount == 0)
   }
 
-  /// 5a. The player's deinit drops the target and closes its availability: the waiting delivery
-  /// returns nil after its one offer.
-  @Test func aDeliveryEndsOnceThePlayerIsGone() async {
+  /// 5a. Once the player is gone (`target()` is nil), the waiting delivery wakes on the next signal
+  /// and returns nil after its one offer. It is woken by a signal, not `close()`, so the gone
+  /// target is what ends the loop; 5b covers the closed availability.
+  @Test func aDeliveryEndsOnceThePlayerIsGone() async throws {
     let target = CountingTarget(answers: { _ in .deferred })
     let availability = target.availability
     let holder = Holder(target)
     let delivery = Self.deliver(.integer(5), to: holder)
-    #expect(await Self.run { availability.waiterCount == 1 }, "the delivery waits")
+    try await Self.parked(target, after: 1)
     holder.target = nil
-    availability.close()
+    availability.signal()
     #expect(await delivery.value == nil)
     #expect(target.submits == 1)
   }
@@ -138,10 +137,10 @@ import Testing
   /// defer, the delivery returns rather than offering again in a hot loop: a closed availability
   /// returns from every wait at once. Closed while the delivery waits, it ends after its one offer;
   /// closed before it starts, it never offers.
-  @Test func aClosedAvailabilityEndsTheDeliveryEvenWhileTheTargetDefers() async {
+  @Test func aClosedAvailabilityEndsTheDeliveryEvenWhileTheTargetDefers() async throws {
     let target = CountingTarget(answers: { _ in .deferred })
     let delivery = Self.deliver(.integer(5), to: Holder(target))
-    #expect(await Self.run { target.availability.waiterCount == 1 }, "the delivery waits")
+    try await Self.parked(target, after: 1)
     target.availability.close()
     #expect(await delivery.value == nil)
     #expect(target.submits == 1, "no offer after close")
@@ -150,10 +149,29 @@ import Testing
     closed.availability.close()
     #expect(await Self.deliver(.integer(5), to: Holder(closed)).value == nil)
     #expect(closed.submits == 0)
+
+    // Closed while the offer is in flight, as the player's deinit could: no wait is left behind.
+    let inFlight = CountingTarget(answers: { _ in .deferred })
+    let inFlightAvailability = inFlight.availability
+    inFlight.onSubmit = { _ in inFlightAvailability.close() }
+    #expect(await Self.deliver(.integer(5), to: Holder(inFlight)).value == nil)
+    #expect(inFlight.submits == 1)
+    #expect(inFlightAvailability.waiterCount == 0)
+  }
+
+  /// 5c. A delivery that is no longer current (a newer value for the name started, or the player
+  /// was rebuilt) returns nil on its next wake without offering again.
+  @Test func aDeliveryThatIsNoLongerCurrentStopsOffering() async throws {
+    let target = CountingTarget(answers: { _ in .deferred })
+    let delivery = Self.deliver(.integer(5), to: Holder(target), isCurrent: { target.submits == 0 })
+    try await Self.parked(target, after: 1)
+    target.availability.signal()
+    #expect(await delivery.value == nil)
+    #expect(target.submits == 1)
   }
 
   /// 6. A refusal returns at once: one offer, and no wait.
-  @Test func aRefusalReturnsAtOnce() async {
+  @Test func aRefusalReturnsAtOnce() async throws {
     let target = CountingTarget(answers: { _ in .refused })
     #expect(await Self.deliver(.integer(5), to: Holder(target)).value == .refused)
     #expect(target.submits == 1)
