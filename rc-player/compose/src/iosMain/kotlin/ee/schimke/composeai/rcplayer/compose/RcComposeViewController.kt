@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.window.ComposeUIViewController
+import ee.schimke.composeai.rcplayer.protocol.RcFloatList
 import ee.schimke.composeai.rcplayer.protocol.RcOperationProfiles
 import ee.schimke.composeai.rcplayer.runtime.RcDocumentCapabilities
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
@@ -70,10 +71,13 @@ public class RcComposePlayerController {
 
   /**
    * Replaces the list a float-array variable holds, returning false when [name] is absent or has a
-   * different type.
+   * different type, when a value is not finite, or when there are more than a float list holds
+   * ([RcFloatList.MAX_VALUES]) — the native Swift player refuses the same arrays.
    */
-  public fun setFloatArray(name: String, values: FloatArray): Boolean =
-    set(name, RcNamedValue.FloatArrayValue(values.toList()))
+  public fun setFloatArray(name: String, values: FloatArray): Boolean {
+    if (values.size > RcFloatList.MAX_VALUES || values.any { !it.isFinite() }) return false
+    return set(name, RcNamedValue.FloatArrayValue(values.toList()))
+  }
 
   /**
    * Stops overriding [name]: the value set for it is removed, and the player restores the value the

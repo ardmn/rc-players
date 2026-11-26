@@ -139,8 +139,9 @@ public final class RemoteComposePlayerController {
     backend.set(.long(value), for: name)
   }
 
-  /// Replaces the list a float-array variable holds. On the native Swift player every value must
-  /// be finite and there may be no more than a document's float list holds (2000).
+  /// Replaces the list a float-array variable holds.
+  /// Every value must be finite, and there may be no more of them than a float list holds
+  /// (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000); other arrays are refused.
   @discardableResult
   public func setFloatArray(_ values: [Float], for name: String) -> Bool {
     backend.set(.floatArray(values), for: name)
@@ -148,8 +149,10 @@ public final class RemoteComposePlayerController {
 
   /// Stops overriding `name`: the value set for it is removed and the variable shows the value
   /// the document recorded again (a named system variable, the player's clock). Returns `false`
-  /// before a document is attached or when it does not declare `name`; clearing a name with no
-  /// value set changes nothing. A later write of the same value as before the clear is applied.
+  /// before a document is attached or when it does not declare `name`. Clearing a name with no
+  /// value set — or one whose write was cleared in the same main-actor turn, before the player
+  /// saw it — changes nothing, so a value the document changed itself stands. A later write of the
+  /// same value as before the clear is applied.
   @discardableResult
   public func clear(_ name: String) -> Bool {
     backend.clear(name)

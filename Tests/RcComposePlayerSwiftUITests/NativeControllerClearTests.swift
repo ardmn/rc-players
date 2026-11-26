@@ -62,6 +62,41 @@
       #expect(isShown(Self.localBox, in: player.view) == true, "the document's own value was reset")
     }
 
+    /// A write and its clear in the same main-actor turn are no change, as the Kotlin player sees
+    /// them: it compares the host's whole map once per pass. The write never reaches the player,
+    /// so neither may the clear — it would reset the document's own change. Nor may a reopen.
+    @Test func aWriteClearedInTheSameTurnLeavesTheDocumentsChange() async throws {
+      let player = try await player()
+      try await setLocally(player, "Document", for: "label")
+
+      #expect(player.controller.setString("Host", for: "label"))
+      #expect(player.controller.clear("label"))
+      try await settle(player)
+      #expect(text(NativeTestDocuments.labelID, in: player.view) == "Document")
+
+      try await backgroundWithInputQueued(player)
+      activate(player)
+      try await settle(player)
+      #expect(
+        text(NativeTestDocuments.labelID, in: player.view) == "Document",
+        "the reopen applied the clear")
+    }
+
+    /// A write the player was handed, then a write and a clear in one turn: the clear is a change
+    /// from what the player holds, as the Kotlin map diff sees it, and is delivered.
+    @Test func aClearInTheSameTurnAsAWriteStillClearsAnEarlierHandedValue() async throws {
+      let player = try await player()
+      #expect(player.controller.setString("Host", for: "label"))
+      try await settle(player)
+      try #require(text(NativeTestDocuments.labelID, in: player.view) == "Host")
+
+      #expect(player.controller.setString("Newer", for: "label"))
+      #expect(player.controller.clear("label"))
+      try await settle(player)
+
+      #expect(text(NativeTestDocuments.labelID, in: player.view) == "Idle")
+    }
+
     /// A clear the session took is not undone by a reopen: the reopened session does not carry the
     /// cleared value, and the seed does not bring it back.
     @Test func aClearedValueStaysClearedAcrossAReopen() async throws {

@@ -1997,7 +1997,9 @@ private object FloatListCodec : RcOperationCodec<RcFloatList> {
   }
 
   override fun encode(output: RcWireWriter, value: RcFloatList) {
-    require(value.values.size <= 2_000) { "DataListFloat exceeds AndroidX's 2,000-entry limit" }
+    require(value.values.size <= RcFloatList.MAX_VALUES) {
+      "DataListFloat exceeds AndroidX's ${RcFloatList.MAX_VALUES}-entry limit"
+    }
     output.writeInt(value.id)
     output.writeInt(value.values.size)
     value.values.forEach(output::writeFloatWord)
@@ -2010,8 +2012,11 @@ private object DynamicFloatListCodec : RcOperationCodec<RcDynamicFloatList> {
   override fun decode(input: RcWireReader): RcDynamicFloatList {
     val id = input.readDeclaredId("id")
     val length = input.readFloatWord("length")
-    if (length.referencedId == null && length.value.toInt() !in 0..2_000) {
-      input.fail("length", "Dynamic float-list length ${length.value.toInt()} is outside 0..2000")
+    if (length.referencedId == null && length.value.toInt() !in 0..RcFloatList.MAX_VALUES) {
+      input.fail(
+        "length",
+        "Dynamic float-list length ${length.value.toInt()} is outside 0..${RcFloatList.MAX_VALUES}",
+      )
     }
     return RcDynamicFloatList(id, length)
   }

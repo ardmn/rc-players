@@ -300,8 +300,8 @@
     /// The task draining this presentation's work, while there is any.
     var pump: Task<Void, Never>?
     /// The starting values it was opened without (each broke a limit). The variable still holds
-    /// the document's value, so the next session is offered them again until a write or a clear
-    /// of the name replaces them.
+    /// the document's value, so the next session is offered them again until this session
+    /// applies a write of the name or a clear of it.
     var leftOut: [NativeStartingValue]
     /// The seeding host's write of each name this session holds or took: `startedFrom`'s, then
     /// each `submit` write it applied — also one it applied after a reopen superseded it, since
@@ -460,20 +460,22 @@
     /// session until a write replaces it, and the session stays open and takes later writes.
     /// (Written into the session, a bad value would stay there and fail every later frame.) Nil,
     /// or empty, adds nothing; a value written while the session opens goes through `submit`.
-    ///
-    /// An entry with no value is the host's clear of the name (`submitClear`): unless the
-    /// sessions already took that very clear, the session starts from the document's own value for
-    /// that name rather than one the session it replaces carried.
     /// `load(_:)` with other bytes clears it and the carried values: the values belong to the
     /// document they were written for.
+    ///
+    /// An entry with no value is the host's clear of the name, as `submitClear` hands one over.
+    /// Unless the sessions over these bytes already took that clear, the reopened session starts
+    /// that name from the document's own value, not from the value carried over from the session
+    /// it replaces.
     @_spi(RemoteComposeController)
     public var namedValueSeed: (() -> [(name: String, value: RemoteComposeNativeNamedValue?)])?
-    /// How many writes the seeding host has handed the player through `submit`, per name, since
-    /// these bytes were loaded — taken or not, deferred or queued. A seed value is the host's
-    /// newest write of its name; the session took that write only if it took the one with this
-    /// count. Writes the host makes and replaces within one main-queue turn never reach `submit`,
-    /// so they count as no change, as the Kotlin player, which diffs the host's values once per
-    /// pass, sees them.
+    /// How many writes the seeding host has handed the player through `submit`, and clears through
+    /// `submitClear`, per name, since these bytes were loaded — taken or not, deferred or queued.
+    /// A seed entry is the host's newest write of its name (a value, or a clear); the session took
+    /// that write only if it took the one with this count. Writes the host makes and replaces
+    /// within one main-queue turn — a write and its clear included — never reach `submit` or
+    /// `submitClear`, so they count as no change, as the Kotlin player, which diffs the host's
+    /// values once per pass, sees them.
     private var hostWriteCounts: [String: UInt64] = [:]
     /// What the next session to open starts from: what the session it replaces held, read once
     /// that session's in-flight input is done, or, while an open is superseded before it
@@ -1186,8 +1188,8 @@
     }
 
     /// Replaces the list a float-array named variable holds, and answers as ``setFloat(_:for:)``
-    /// does. Every value must be finite, and there may be no more than a document's float list
-    /// holds (2000).
+    /// does. Every value must be finite, and there may be no more of them than a float list holds
+    /// (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000).
     @discardableResult
     public func setFloatArray(_ values: [Float], for name: String) async -> Bool {
       await submit(.setNamed(name, value: .floatArray(values)))
@@ -1195,8 +1197,9 @@
 
     /// Restores a named variable to the value the document recorded, discarding the value a host
     /// set — as the Kotlin player's `clearNamedValue` does — and answers as ``setFloat(_:for:)``
-    /// does: `false` for a name the document does not declare as a value a host can write.
-    /// Clearing a variable nobody set changes nothing.
+    /// does: `false` for a name the document does not declare as a value a host can write. Like the
+    /// Kotlin player's, the clear restores the recorded value whoever changed it last — a value the
+    /// document's own action wrote is restored too — and clearing twice changes nothing more.
     @discardableResult
     public func clear(_ name: String) async -> Bool {
       await submit(.clearNamed(name))

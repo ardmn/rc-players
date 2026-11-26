@@ -117,8 +117,126 @@ import Testing
 
     #expect(session.clearNamedValue("count"))
 
-    #expect(try values(session).integers[12] == 3)
+    let restored = try values(session)
+    #expect(restored.integers[12] == 3)
+    #expect(restored.floats[12] == 3, "the float view a float write gave the id is left behind")
     #expect(session.writtenNamedValues().isEmpty)
+  }
+
+  /// A float variable a document action wrote (a click's float action, which publishes the
+  /// integer view too, as `RcPlayerState.storeFloat` does) is the document's again once cleared,
+  /// in both views, as the Kotlin clear writes the recorded float back through `setFloat`.
+  @Test func clearingAFloatAnActionWroteRestoresBothViews() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(22).float(1.5)
+    document.namedVariable(id: 22, type: Kind.float, name: "USER:t")
+    document.u8(200).int(1).u8(202).int(3).int(-1).int(1).int(4)
+    document.u8(59).u8(222).int(22).float(2.7).u8(214).u8(214).u8(214)
+    let fresh = try values(try NativeSwiftDocumentSession.open(data: document.data))
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    let clicked = try values(session)
+    try #require(clicked.floats[22] == 2.7 && clicked.integers[22] == 2)
+
+    #expect(session.clearNamedValue("t"))
+
+    let restored = try values(session)
+    #expect(restored.floats[22] == 1.5)
+    #expect(restored.integers[22] == fresh.integers[22], "the action's integer view stayed")
+    #expect(session.writtenNamedValues().isEmpty)
+  }
+
+  /// `clearNamedValue` restores the document's recorded value even when it was the document's
+  /// own action, not the host, that changed it — `RcPlayerState.clearNamedValue` writes the
+  /// recorded value back whoever wrote last.
+  @Test func clearingRestoresTheRecordedValueOverADocumentActionsWrite() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataInt).int(22).int(3)
+    document.namedVariable(id: 22, type: Kind.int, name: "USER:count")
+    document.u8(200).int(1).u8(202).int(3).int(-1).int(1).int(4)
+    document.u8(59).u8(212).int(22).int(9).u8(214).u8(214).u8(214)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.click(componentID: 3, timeSeconds: 0)
+    try #require(try values(session).integers[22] == 9)
+
+    #expect(session.clearNamedValue("count"))
+
+    #expect(try values(session).integers[22] == 3)
+  }
+
+  /// A data-map entry of the long type is looked up from the long, as the Kotlin player reads
+  /// `longs` (truncated to an integer), so a host's long reaches it and a clear gives it back.
+  @Test func aDataMapLongLookupReadsTheHostsLong() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataLong).int(40).int64(7)
+    document.namedVariable(id: 40, type: Kind.long, name: "USER:n")
+    document.text(id: 41, "k")
+    let key = Array("k".utf8)
+    document.u8(Op.idMap).int(42).int(1).int(key.count).raw(Data(key))
+      .u8(NativeSwiftDataMapType.long).int(40)
+    document.u8(Op.dataMapLookup).int(43).int(42).int(41)
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    #expect(try values(session).integers[43] == 7)
+
+    #expect(session.setLong(123, for: "n"))
+    #expect(try values(session).integers[43] == 123)
+    // Truncated to the integer's 32 bits, as Kotlin's `Long.toInt()`.
+    #expect(session.setLong(0x1_0000_0005, for: "n"))
+    #expect(try values(session).integers[43] == 5)
+
+    #expect(session.clearNamedValue("n"))
+    #expect(try values(session).integers[43] == 7)
+  }
+
+  /// A long the document declares by name only, with no `LongConstant`: a time attribute reads
+  /// the clock (AndroidX `TimeAttribute.paint` with no constant), a host long replaces it, and a
+  /// clear hands it back to the clock rather than to epoch 0.
+  @Test func aLongWithNoConstantClearsBackToTheClock() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.namedVariable(id: 13, type: Kind.long, name: "USER:when")
+    document.u8(Op.attributeTime).int(24).int(13).u16(NativeSwiftTimeAttributeType.year).u16(0)
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    // 2026-05-28T20:26:40Z.
+    let clock = NativeSwiftWallClock(epochMillis: 1_780_000_000_000)
+    func year() throws -> Float? {
+      try session.probeValues(timeSeconds: 0, wallClock: clock).floats[24]
+    }
+    #expect(try year() == 2026)
+    #expect(session.setLong(946_684_800_000, for: "when"))
+    #expect(try year() == 2000)
+
+    #expect(session.clearNamedValue("when"))
+
+    #expect(try year() == 2026)
+  }
+
+  /// `aDocumentDeclaringATypeWithNoHostValueStillConstructs` (:124), for the float array the
+  /// document declares with no list behind it: a float is refused, a float array stands in for
+  /// the missing list, and a clear leaves no list again.
+  @Test func aFloatArrayWithNoBackingList() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.namedVariable(id: 13, type: Kind.floatArray, name: "USER:series")
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    func list() throws -> [Float]? {
+      try session.probeFloatList(id: 13, dynamic: false, timeSeconds: 0)
+    }
+    #expect(try list() == nil)
+    #expect(!session.setFloat(1, for: "series"))
+
+    #expect(session.setFloatArray([1, 2], for: "series"))
+    #expect(try list() == [1, 2])
+
+    #expect(session.clearNamedValue("series"))
+    #expect(try list() == nil)
+    #expect(session.clearNamedValue("series"))
   }
 
   /// A host colour stays the host's under a dark theme (`hostColourSurvivesAThemeSwitch`); once

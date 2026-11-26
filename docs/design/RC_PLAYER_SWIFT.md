@@ -153,14 +153,15 @@ name it resolves to), and are kept while the fallback is not showing a document.
 `setBoolean` both target an integer variable: a Remote Compose boolean is an integer holding 1 or 0,
 as AndroidX's `setNamedBooleanOverride` stores it, and an integer outside the 32-bit range is
 refused. `setLong` takes an instant in epoch milliseconds, which the document's time attributes
-read, and `setFloatArray` replaces the list a float-array variable holds; the native fallback
-refuses a non-finite value or more than 2000 of them, as many as a document's float list holds.
-`clear` is the inverse of the setters, as removing a key from the Kotlin player's named values is:
-the stored value is removed and the variable shows the value the document recorded again (a named
-system variable, the player's clock), so writing the old value afterwards is a change again. It
-returns `false` where a setter would for an absent name; clearing a name with no value set changes
-nothing. Metadata actions and text-valued named actions also expose a pre-parsed `event.url`
-convenience property.
+read, and `setFloatArray` replaces the list a float-array variable holds; both players refuse a
+non-finite value or more values than a float list holds (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`,
+2000). `clear` is the inverse of the setters, as removing a key from the Kotlin player's named
+values is: the stored value is removed and the variable shows the value the document recorded
+again (a named system variable, or a long with no constant, the player's clock), so writing the old
+value afterwards is a change again. It returns `false` where a setter would for an absent name.
+Clearing a name with no value set changes nothing, nor does a write cleared in the same main-actor
+turn, so a value the document changed itself stands. Metadata actions and text-valued named
+actions also expose a pre-parsed `event.url` convenience property.
 
 ### Downloadable Google Fonts
 

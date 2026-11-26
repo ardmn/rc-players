@@ -5199,6 +5199,10 @@ private fun Modifier.applyLayoutComputes(
           parentHeight.toFloat(),
         ),
       )
+    // A host's float array over the bounds list is what comes back, whatever its length. One that
+    // cannot say where or how big the component is leaves it as measured, as the native Swift
+    // player does (`NativeSwiftLayoutComputeSnapshot.evaluate` answers nil for it).
+    if (values.size < 4 || (0 until 4).any { !values[it].isFinite() }) return@forEach
     when (block.operation.type) {
       RcLayoutCompute.MEASURE -> {
         width = constraints.constrainWidth(values[2].roundToInt().coerceAtLeast(0))

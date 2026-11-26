@@ -429,6 +429,14 @@ public data class RcIdList(val id: Int, val ids: List<Int>) : RcOperation {
 
 public data class RcFloatList(val id: Int, val values: List<RcFloatWord>) : RcOperation {
   override val opcode: Int = RcOpcodes.FLOAT_LIST
+
+  public companion object {
+    /**
+     * The most values a float list may hold — a `DataListFloat`, a `DynamicFloatList`'s length, and
+     * a host's float array: AndroidX `DataListFloat.MAX_FLOAT_ARRAY`.
+     */
+    public const val MAX_VALUES: Int = 2_000
+  }
 }
 
 /** A zero-initialized mutable float list whose length may reference a runtime float. */

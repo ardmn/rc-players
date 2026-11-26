@@ -296,6 +296,19 @@ class RcComposeViewControllerTest {
       controller.values["USER:series"],
     )
 
+    // The arrays the native Swift player refuses are refused here too, before any copy.
+    assertFalse(controller.setFloatArray("series", floatArrayOf(1f, Float.NaN)))
+    assertFalse(controller.setFloatArray("series", floatArrayOf(Float.POSITIVE_INFINITY)))
+    assertFalse(controller.setFloatArray("series", floatArrayOf(Float.NEGATIVE_INFINITY)))
+    assertFalse(controller.setFloatArray("series", FloatArray(RcFloatList.MAX_VALUES + 1)))
+    assertEquals(
+      RcNamedValue.FloatArrayValue(listOf(5f, 6f, 7f)),
+      controller.values["USER:series"],
+      "a refused array replaced the stored one",
+    )
+    assertTrue(controller.setFloatArray("series", FloatArray(RcFloatList.MAX_VALUES)))
+    assertTrue(controller.setFloatArray("series", floatArrayOf(5f, 6f, 7f)))
+
     val state = RcPlayerState(document, namedValues = controller.values)
     assertEquals(1_700_000_000_000L, state.long(52))
     assertEquals(listOf(5f, 6f, 7f), state.floatValues(51)?.toList())

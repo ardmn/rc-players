@@ -343,6 +343,13 @@
     /// rebuilt, so a delivery waiting for the player does not outlive its value. Internal, not
     /// private, so a test can tell when every delivery has finished.
     private(set) var nativeUpdateTasks: [String: Task<Void, Never>] = [:]
+    /// The names the native player may hold a value of the controller's for: a delivery of a value
+    /// started offering it, and no clear of the name has been accepted since. A clear of any other
+    /// name is no change — its write was replaced within the same main-actor turn and never
+    /// reached the player, as the Kotlin player, which diffs the controller's values once per
+    /// pass, never sees it — so it is neither delivered nor seeded into a reopen, where it would
+    /// reset a value the document changed itself.
+    private var nativeHeldNames: Set<String> = []
     /// Reads the current document's declarations off the main thread; replaced on every rebuild.
     private var declarationTask: Task<Void, Never>?
 
@@ -440,6 +447,7 @@
       latestNativeUpdates.removeAll()
       for task in nativeUpdateTasks.values { task.cancel() }
       nativeUpdateTasks.removeAll()
+      nativeHeldNames.removeAll()
       declarationTask?.cancel()
       declarationTask = nil
       // Writes are refused until the new document's declarations are read below (unless another
@@ -475,7 +483,9 @@
       // that write is dropped rather than applied a second time.
       native.playerView.namedValueSeed = { [weak self, weak native] in
         guard let self, let native, self.nativeController === native else { return [] }
-        let seed = self.playerController.backend.seedValues(for: owner)
+        let seed = self.playerController.backend.seedValues(for: owner).filter {
+          $0.value != nil || self.nativeHeldNames.contains($0.name)
+        }
         for (name, _) in seed {
           self.latestNativeUpdates[name] = nil
           self.nativeUpdateTasks.removeValue(forKey: name)?.cancel()
@@ -497,15 +507,31 @@
         self.declarationTask = nil
         guard let declarations else { return }
         self.playerController.backend.attach(declarations)
+        // The player's first open was seeded with the controller's values (`initialSeed`), so it
+        // holds them: a clear of one of them is a change to deliver.
+        for name in initialValues.keys {
+          if let declared = declarations.declaredName(for: name) {
+            self.nativeHeldNames.insert(declared)
+          }
+        }
         self.playerController.backend.installUpdateHandler(
           { [weak self, weak native] name, value in
             guard let self else { return }
             let token = self.beginNativeUpdate(for: name)
+            guard value != nil || self.nativeHeldNames.contains(name) else {
+              // The write this clears never reached the player: no change (see `nativeHeldNames`).
+              self.latestNativeUpdates[name] = nil
+              return
+            }
             // The task takes its own weak references rather than sharing the handler's captures.
             self.nativeUpdateTasks[name] = Task { @MainActor [weak self, weak native] in
-              await deliverNamedUpdate(value, for: name, to: { native }) {
+              if value != nil, self?.latestNativeUpdates[name] == token, !Task.isCancelled {
+                self?.nativeHeldNames.insert(name)
+              }
+              let admission = await deliverNamedUpdate(value, for: name, to: { native }) {
                 self?.latestNativeUpdates[name] == token
               }
+              if value == nil, admission == .accepted { self?.nativeHeldNames.remove(name) }
               if self?.latestNativeUpdates[name] == token { self?.nativeUpdateTasks[name] = nil }
             }
           }, for: owner, skippingInitial: initialValues)

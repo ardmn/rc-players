@@ -247,6 +247,9 @@ private constructor(
   private val paths = RcObservedValues<RcPathData>(noteMapRead)
   private val variableNames = mutableMapOf<String, RcNamedVariable>()
   private val documentNamedValues = mutableMapOf<String, RcNamedValue>()
+
+  /** The ids the document itself gave a long (a `LongConstant`), before any host override. */
+  private var documentLongIds: Set<Int> = emptySet()
   private val matrices = mutableMapOf<Int, RcMatrixConstant>()
   private val computedMatrices = mutableMapOf<Int, FloatArray>()
   private val idLists = mutableMapOf<Int, RcIdList>()
@@ -669,6 +672,7 @@ private constructor(
         documentNamedValues[name] = readNamedValue(name)
       }
     }
+    documentLongIds = longs.keys.toSet()
     namedValues.forEach { (name, value) -> setNamedValue(name, value) }
     soundRuntime.prepare(document.operations)
     particleRuntime =
@@ -1128,8 +1132,8 @@ private constructor(
       }
       is RcDynamicFloatList -> {
         val length = resolve(operation.length).toInt()
-        require(length in 0..2_000) {
-          "Dynamic float-list length $length is outside AndroidX's 0..2000 range"
+        require(length in 0..RcFloatList.MAX_VALUES) {
+          "Dynamic float-list length $length is outside AndroidX's 0..${RcFloatList.MAX_VALUES} range"
         }
         val existing = dynamicFloatLists[operation.id]
         if (existing == null || existing.size != length) {
@@ -2305,6 +2309,19 @@ private constructor(
       // naming this id) land again; the remembered value stands until the next one does.
       colorOverrides.remove(variable.id)
       (documentNamedValues[name] as? RcNamedValue.Color)?.let { colors[variable.id] = it.argb }
+      return
+    }
+    if (variable.type == RcNamedVariable.LONG_TYPE) {
+      // A long with no `LongConstant` behind it holds nothing: a time attribute reading it falls
+      // back to the clock, as AndroidX `TimeAttribute.paint` does with no constant at the id. So
+      // the document's value to go back to is that absence, not the `0L` `readNamedValue`
+      // reports for it.
+      val recorded = documentNamedValues[name] as? RcNamedValue.LongValue
+      if (variable.id in documentLongIds && recorded != null) {
+        longs[variable.id] = recorded.value
+      } else {
+        longs.remove(variable.id)
+      }
       return
     }
     val numeric =

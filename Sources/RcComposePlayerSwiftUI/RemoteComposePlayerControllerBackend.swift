@@ -137,7 +137,9 @@ protocol ControllerBackendProtocol: AnyObject {
 
     /// Removes the stored value and hands the player the clear, as removing a key from the Kotlin
     /// player's named values clears it (`clearNamedValue`). A name with no stored value has
-    /// nothing of the host's to clear, as on the Kotlin player, and nothing is handed over.
+    /// nothing of the host's to clear, as on the Kotlin player, and nothing is handed over. The
+    /// player's host drops a clear whose write it never delivered (a write and its clear in one
+    /// main-actor turn), as the Kotlin player's once-per-pass diff never sees either.
     func clear(_ name: String) -> Bool {
       guard let declared = declarations.declaredName(for: name) else { return false }
       guard values.removeValue(forKey: declared) != nil else { return true }
@@ -302,18 +304,20 @@ protocol ControllerBackendProtocol: AnyObject {
 
   /// Delivers a write — or, for nil, a clear — to the native player, as
   /// ``ControllerNamedValue/deliver(for:to:isCurrent:)`` describes: offered again each time the
-  /// player signals until the session it reaches answers finally.
+  /// player signals until the session it reaches answers finally. Returns that answer, or nil when
+  /// it stopped first.
   @MainActor
+  @discardableResult
   func deliverNamedUpdate<Target: NativeNamedValueTarget>(
     _ value: ControllerNamedValue?, for name: String, to target: () -> Target?,
     isCurrent: () -> Bool
-  ) async {
+  ) async -> RemoteComposeNativeInputAdmission? {
     while true {
       let availability: RemoteComposeNativeInputAvailability
       let mark: UInt64
       // The strong reference lives only for the offer, not across the wait below.
       do {
-        guard !Task.isCancelled, let target = target(), isCurrent() else { return }
+        guard !Task.isCancelled, let target = target(), isCurrent() else { return nil }
         availability = target.inputAvailability
         mark = availability.mark
         let admission =
@@ -323,7 +327,7 @@ protocol ControllerBackendProtocol: AnyObject {
             await target.submitClear(for: name)
           }
         switch admission {
-        case .accepted, .refused: return
+        case .accepted, .refused: return admission
         case .deferred: break
         }
       }

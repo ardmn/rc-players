@@ -279,7 +279,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       case NativeSwiftDataMapType.string:
         if let value = texts[entry.valueID] { texts[lookup.outputID] = value }
       case NativeSwiftDataMapType.int, NativeSwiftDataMapType.long, NativeSwiftDataMapType.boolean:
-        integers[lookup.outputID] = integers[entry.valueID] ?? 0
+        integers[lookup.outputID] = dataMapInteger(type: entry.type, valueID: entry.valueID)
       case NativeSwiftDataMapType.float:
         values[lookup.outputID] = values[entry.valueID] ?? floats[entry.valueID] ?? 0
       default:
@@ -642,7 +642,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       case NativeSwiftDataMapType.string:
         if let value = texts[entry.valueID] { texts[lookup.outputID] = value }
       case NativeSwiftDataMapType.int, NativeSwiftDataMapType.long, NativeSwiftDataMapType.boolean:
-        integers[lookup.outputID] = integers[entry.valueID] ?? 0
+        integers[lookup.outputID] = dataMapInteger(type: entry.type, valueID: entry.valueID)
       case NativeSwiftDataMapType.float:
         values[lookup.outputID] = values[entry.valueID] ?? floats[entry.valueID] ?? 0
       default:
@@ -695,7 +695,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
     guard let list = document.dynamicFloatLists[id] else { return nil }
     let length = nativeSwiftClampedInt(NativeSwiftFloatExpression.resolve(list.lengthWord, values: values))
-    guard (0...2_000).contains(length) else { return nil }
+    guard (0...NativeSwiftDocumentDecoder.maximumFloatListValues).contains(length) else {
+      return nil
+    }
     var result = Array(repeating: Float(0), count: length)
     for update in list.updates {
       let index = nativeSwiftClampedInt(NativeSwiftFloatExpression.resolve(update.index, values: values))
@@ -877,7 +879,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     let id = variable.id
     switch variable.type {
     case NativeSwiftNamedVariableType.float:
+      // Both views: a document action's float write published the integer view too, which the
+      // Kotlin clear rewrites from the recorded float.
       floatOverrides[id] = nil
+      integers[id] = document.integers[id]
+      writtenIDs.remove(id)
     case NativeSwiftNamedVariableType.int:
       // Both views: a float write to the same id is the integer's override too.
       integers[id] = document.integers[id]
@@ -1368,6 +1374,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         mask: expression.mask, tokens: expression.tokens, values: integers,
         offset: expression.offset)
     }
+  }
+
+  /// A data-map entry's integer value: a long entry reads the long (a host's included), truncated
+  /// to 32 bits as the Kotlin player's `Long.toInt()` is; the others read the integer.
+  private func dataMapInteger(type: Int, valueID: Int) -> Int {
+    guard type == NativeSwiftDataMapType.long else { return integers[valueID] ?? 0 }
+    return Int(Int32(truncatingIfNeeded: long(valueID) ?? 0))
   }
 
   /// The long at `id`: a host's, over the document's `LongConstant`.
