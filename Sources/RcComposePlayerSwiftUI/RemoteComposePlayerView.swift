@@ -334,14 +334,11 @@
     private var downloadableFontResolver: (any RemoteComposeDownloadableFontResolving)?
     private var resourceResolver: (any RemoteComposeNativeResourceResolving)?
     private var nativeController: RemoteComposeNativePlayerViewController?
-    /// The latest native value update for each name, as a token from `nextNativeUpdateToken`. A
-    /// delivery gives up once a newer update for its name has started, so a stale value cannot
-    /// land last.
-    private var latestNativeUpdates: [String: Int] = [:]
-    private var nextNativeUpdateToken = 0
-    /// The delivery of each name's latest value, cancelled when a newer one starts or the player is
-    /// rebuilt, so a delivery waiting for the player does not outlive its value. Internal, not
-    /// private, so a test can tell when every delivery has finished.
+    /// The delivery of each name's latest value, cancelled when a newer one starts, a reopen takes
+    /// the value in its seed, or the player is rebuilt, so a delivery waiting for the player does
+    /// not outlive its value and a stale value cannot land last: a delivery is current exactly
+    /// while its task is not cancelled. Internal, not private, so a test can tell when every
+    /// delivery has finished.
     private(set) var nativeUpdateTasks: [String: Task<Void, Never>] = [:]
     /// Reads the current document's declarations off the main thread; replaced on every rebuild.
     private var declarationTask: Task<Void, Never>?
@@ -437,7 +434,6 @@
       let owner = ObjectIdentifier(self)
       let initialValues = playerController.backend.storedValues
       let initialSeed = playerController.backend.initialSeedValues
-      latestNativeUpdates.removeAll()
       for task in nativeUpdateTasks.values { task.cancel() }
       nativeUpdateTasks.removeAll()
       declarationTask?.cancel()
@@ -477,7 +473,6 @@
         guard let self, let native, self.nativeController === native else { return [] }
         let seed = self.playerController.backend.seedValues(for: owner)
         for (name, _) in seed {
-          self.latestNativeUpdates[name] = nil
           self.nativeUpdateTasks.removeValue(forKey: name)?.cancel()
         }
         return seed
@@ -500,13 +495,13 @@
         self.playerController.backend.installUpdateHandler(
           { [weak self, weak native] name, value in
             guard let self else { return }
-            let token = self.beginNativeUpdate(for: name)
+            self.nativeUpdateTasks.removeValue(forKey: name)?.cancel()
             // The task takes its own weak references rather than sharing the handler's captures.
             self.nativeUpdateTasks[name] = Task { @MainActor [weak self, weak native] in
-              await value.deliver(for: name, to: { native }) {
-                self?.latestNativeUpdates[name] == token
-              }
-              if self?.latestNativeUpdates[name] == token { self?.nativeUpdateTasks[name] = nil }
+              await value.deliver(for: name, to: { native }, isCurrent: { !Task.isCancelled })
+              // Every path that replaces or drops this entry cancels the task first, so an
+              // uncancelled one is still the entry for its name.
+              if !Task.isCancelled { self?.nativeUpdateTasks[name] = nil }
             }
           }, for: owner, skippingInitial: initialValues)
       }
@@ -522,14 +517,6 @@
         return nil
       }
       return try? NativeSwiftNamedVariableDeclarations.declared(in: data)
-    }
-
-    private func beginNativeUpdate(for name: String) -> Int {
-      let token = nextNativeUpdateToken
-      nextNativeUpdateToken += 1
-      latestNativeUpdates[name] = token
-      nativeUpdateTasks.removeValue(forKey: name)?.cancel()
-      return token
     }
 
     private func removeInstalledNativeController() {
