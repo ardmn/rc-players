@@ -14,8 +14,6 @@ import kotlin.test.assertEquals
  * a browser and is covered by `scripts/wasm-smoke`'s `named-values-elements` case.
  */
 class NamedValueRowsTest {
-  private val fieldSeparator = NAMED_VALUE_FIELD_SEPARATOR
-  private val rowSeparator = NAMED_VALUE_ROW_SEPARATOR
   private val orange = "USER:WearM3.primary" to RcNamedValue.Color(0xFFFF8800.toInt())
 
   @Test
@@ -46,8 +44,8 @@ class NamedValueRowsTest {
     for (bad in
       listOf(
         "",
-        listOf("color", "x").joinToString(fieldSeparator),
-        listOf("a", "b", "c", "d", "e").joinToString(fieldSeparator),
+        listOf("color", "x").joinToString(NAMED_VALUE_FIELD_SEPARATOR),
+        listOf("a", "b", "c", "d", "e").joinToString(NAMED_VALUE_FIELD_SEPARATOR),
         row("nope", "x", "1"),
       )) {
       assertEquals(mapOf(orange), read(join(bad, good)), "before: $bad")
@@ -61,7 +59,9 @@ class NamedValueRowsTest {
     // with blue. Escaped, it is one row whose kind is not a kind, dropped beside the good one.
     val forged =
       row(
-        "x${fieldSeparator}a${fieldSeparator}b${fieldSeparator}s${rowSeparator}color",
+        listOf("x", "a", "b", NAMED_VALUE_TEXT_MARK).joinToString(NAMED_VALUE_FIELD_SEPARATOR) +
+          NAMED_VALUE_ROW_SEPARATOR +
+          "color",
         "WearM3.primary",
         "#FF0000FF",
       )
@@ -70,7 +70,7 @@ class NamedValueRowsTest {
     assertEquals(mapOf(orange), read(join(forged, good)))
     assertEquals(
       emptyMap(),
-      read(row("color$fieldSeparator$rowSeparator", "WearM3.primary", "#FF0000FF")),
+      read(row("color$NAMED_VALUE_FIELD_SEPARATOR$NAMED_VALUE_ROW_SEPARATOR", "WearM3.primary", "#FF0000FF")),
     )
   }
 

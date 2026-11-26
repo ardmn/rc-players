@@ -48,8 +48,14 @@ internal object RcEmbeddedLayerFixture {
   const val HOST_PROBE = "hostProbe"
   const val EMBEDDED_PROBE = "embeddedProbe"
   const val OWN_PROBE = "ownProbe"
+  /** The text holding a document's probe name, and the one holding the URL it embeds. */
+  const val PROBE_TEXT_ID = 50
+  const val URL_TEXT_ID = 51
+  /** The alpha the documents' graphics layers default to. */
+  const val HALF_LAYER_ALPHA = 0.5f
 
-  val end = RcNoArg(RcOpcodes.CONTAINER_END)
+  /** Closes the innermost open container. */
+  val containerEnd = RcNoArg(RcOpcodes.CONTAINER_END)
 
   fun literal(value: Float) = RcFloatWord.literal(value)
 
@@ -72,7 +78,7 @@ internal object RcEmbeddedLayerFixture {
       shapeType = RcBackgroundModifier.SHAPE_RECTANGLE,
     )
 
-  fun layer(strategy: Int, alpha: Float = 0.5f, blur: Float = 0f) =
+  fun layer(strategy: Int, alpha: Float = HALF_LAYER_ALPHA, blur: Float = 0f) =
     RcGraphicsLayerModifier(
       buildList {
         add(RcGraphicsLayerAttribute.FloatValue(RcGraphicsLayerModifier.ALPHA, literal(alpha)))
@@ -100,34 +106,49 @@ internal object RcEmbeddedLayerFixture {
     RcHeader(RcVersion(1, 1, 0), legacyWidth = width, legacyHeight = HEIGHT, modern = false)
 
   /**
+   * The operations of a document whose root is one [width]x[HEIGHT] box (with [layer] unless null)
+   * holding [content], with every container closed: the box's content and the box, then the root's
+   * content and the root.
+   */
+  fun MutableList<RcOperation>.rootBox(
+    width: Int,
+    layer: RcGraphicsLayerModifier? = null,
+    content: MutableList<RcOperation>.() -> Unit,
+  ) {
+    add(RcRootLayout(1))
+    add(RcLayoutContent(2))
+    add(RcBoxLayout(3, 30, 1, 1))
+    if (layer != null) add(layer)
+    addAll(size(width, HEIGHT))
+    add(RcLayoutContent(4))
+    content()
+    repeat(4) { add(containerEnd) }
+  }
+
+  /**
    * A [WIDTH]x[HEIGHT] box (with a graphics layer of [strategy] unless null) stacking a
    * [PROBE_WIDTH] custom component ([HOST_PROBE]) and an [EMBEDDED_WIDTH] embedded document
    * ([url]).
    */
   fun host(
     strategy: Int?,
-    alpha: Float = 0.5f,
+    alpha: Float = HALF_LAYER_ALPHA,
     blur: Float = 0f,
     url: String = URL_NESTED,
   ): RcDocument =
     RcDocument(
       header(WIDTH),
       buildList<RcOperation> {
-        add(RcTextData(50, HOST_PROBE))
-        add(RcTextData(51, url))
-        add(RcRootLayout(1))
-        add(RcLayoutContent(2))
-        add(RcBoxLayout(3, 30, 1, 1))
-        if (strategy != null) add(layer(strategy, alpha, blur))
-        addAll(size(WIDTH, HEIGHT))
-        add(RcLayoutContent(4))
-        add(RcCustomLayout(10, 0, 50, emptyList()))
-        addAll(size(PROBE_WIDTH, HEIGHT))
-        add(end)
-        add(RcDocLayout(20, -1, 51))
-        addAll(size(EMBEDDED_WIDTH, HEIGHT))
-        add(end)
-        repeat(4) { add(end) }
+        add(RcTextData(PROBE_TEXT_ID, HOST_PROBE))
+        add(RcTextData(URL_TEXT_ID, url))
+        rootBox(WIDTH, strategy?.let { layer(it, alpha, blur) }) {
+          add(RcCustomLayout(10, 0, PROBE_TEXT_ID, emptyList()))
+          addAll(size(PROBE_WIDTH, HEIGHT))
+          add(containerEnd)
+          add(RcDocLayout(20, -1, URL_TEXT_ID))
+          addAll(size(EMBEDDED_WIDTH, HEIGHT))
+          add(containerEnd)
+        }
       },
     )
 
@@ -149,11 +170,57 @@ internal object RcEmbeddedLayerFixture {
     if (probeTextId != null) {
       add(RcCustomLayout(id + 2, 0, probeTextId, emptyList()))
       addAll(size(PROBE_WIDTH, HEIGHT))
-      add(end)
+      add(containerEnd)
     }
-    add(end)
-    add(end)
+    add(containerEnd)
+    add(containerEnd)
   }
+
+  /**
+   * The child an embedded document moves by `offset` from 0..[PROBE_WIDTH] to [PROBE_WIDTH]..
+   * [EMBEDDED_WIDTH], holding the probe named by [PROBE_TEXT_ID]; red when [painted].
+   */
+  fun MutableList<RcOperation>.offsetChild(painted: Boolean) =
+    child(20, PROBE_WIDTH.toFloat(), PROBE_TEXT_ID, if (painted) background(1f, 0f) else null)
+
+  /** The blue child an embedded document leaves at 0..[PROBE_WIDTH]. */
+  fun MutableList<RcOperation>.stillChild() =
+    child(10, offsetX = null, probeTextId = null, background(0f, 1f))
+
+  /**
+   * A [width]x[HEIGHT] document with a half-alpha `ModulateAlpha` layer and an offset child holding
+   * [OWN_PROBE]; when [painted], the offset child is red and a blue still child sits beside it.
+   */
+  fun ownLayerEmbedded(painted: Boolean, width: Int = EMBEDDED_WIDTH): ByteArray =
+    encode(
+      width,
+      buildList {
+        add(RcTextData(PROBE_TEXT_ID, OWN_PROBE))
+        rootBox(EMBEDDED_WIDTH, layer(MODULATE_ALPHA)) {
+          if (painted) stillChild()
+          offsetChild(painted)
+        }
+      },
+    )
+
+  /**
+   * An [EMBEDDED_WIDTH]x[HEIGHT] document embedding [URL_OWN], and an offset child holding
+   * [EMBEDDED_PROBE], red when [painted].
+   */
+  fun nestedEmbedded(painted: Boolean): ByteArray =
+    encode(
+      EMBEDDED_WIDTH,
+      buildList {
+        add(RcTextData(PROBE_TEXT_ID, EMBEDDED_PROBE))
+        add(RcTextData(URL_TEXT_ID, URL_OWN))
+        rootBox(EMBEDDED_WIDTH) {
+          add(RcDocLayout(40, -1, URL_TEXT_ID))
+          addAll(size(EMBEDDED_WIDTH, HEIGHT))
+          add(containerEnd)
+          offsetChild(painted)
+        }
+      },
+    )
 
   fun encode(width: Int, operations: List<RcOperation>) =
     RcDocumentCodec.encode(RcDocument(header(width), operations))
@@ -163,11 +230,12 @@ internal object RcEmbeddedLayerFixture {
     var layer: RcModulateAlphaLayer? = null
     var remembers = 0
     var forgets = 0
-    val present
+    /** Remembered and not yet forgotten: the subtrees that hold this probe now. */
+    val liveRemembers
       get() = remembers - forgets
   }
 
-  private class Remembered(private val probe: Probe) : RememberObserver {
+  private class RememberCounter(private val probe: Probe) : RememberObserver {
     override fun onRemembered() {
       probe.remembers++
     }
@@ -187,7 +255,7 @@ internal object RcEmbeddedLayerFixture {
     name to
       { _, modifier ->
         probe.layer = LocalRcModulateAlphaLayer.current
-        remember { Remembered(probe) }
+        remember { RememberCounter(probe) }
         Box(modifier)
       }
 }

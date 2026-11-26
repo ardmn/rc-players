@@ -8,29 +8,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.Density
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.AUTO
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.EMBEDDED_PROBE
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.EMBEDDED_WIDTH
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.HEIGHT
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.HOST_PROBE
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.MODULATE_ALPHA
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.OFFSCREEN
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.OWN_PROBE
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.Probe
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.URL_NESTED
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.URL_OWN
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.child
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.encode
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.end
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.host
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.layer
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.probeEntry
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.size
-import ee.schimke.composeai.rcplayer.protocol.RcBoxLayout
-import ee.schimke.composeai.rcplayer.protocol.RcDocLayout
-import ee.schimke.composeai.rcplayer.protocol.RcLayoutContent
-import ee.schimke.composeai.rcplayer.protocol.RcRootLayout
-import ee.schimke.composeai.rcplayer.protocol.RcTextData
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule
@@ -39,6 +16,21 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.AUTO
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.EMBEDDED_PROBE
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.HOST_PROBE
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.MODULATE_ALPHA
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.OFFSCREEN
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.OWN_PROBE
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.Probe
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.URL_NESTED
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.URL_OWN
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.child
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.host
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.layer
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.probeEntry
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.ownLayerEmbedded
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.nestedEmbedded
 
 /**
  * Android's side of `RcEmbeddedModulateAlphaLayerTest`. AndroidX's child layers get a
@@ -66,7 +58,10 @@ class RcAndroidEmbeddedModulateAlphaLayerTest {
         probeEntry(EMBEDDED_PROBE, embedded),
         probeEntry(OWN_PROBE, embeddedOwn),
       )
-    val documents = mapOf(URL_OWN to ownLayerEmbedded(), URL_NESTED to nestedEmbedded())
+    val documents = mapOf(
+        URL_OWN to ownLayerEmbedded(painted = false),
+        URL_NESTED to nestedEmbedded(painted = false),
+      )
     val embeddedDocuments = RcEmbeddedDocuments(maxDepth = 3, resolver = { documents[it] })
     var document by mutableStateOf(host(strategy = MODULATE_ALPHA))
     composeRule.mainClock.autoAdvance = false
@@ -105,44 +100,5 @@ class RcAndroidEmbeddedModulateAlphaLayerTest {
         assertEquals("$name: $probeName never disposed", 0, probe.forgets)
       }
     }
-  }
-
-  private companion object {
-    /** A 40x20 document with a half-alpha `ModulateAlpha` layer and an offset [OWN_PROBE]. */
-    fun ownLayerEmbedded(): ByteArray =
-      encode(
-        EMBEDDED_WIDTH,
-        buildList {
-          add(RcTextData(50, OWN_PROBE))
-          add(RcRootLayout(1))
-          add(RcLayoutContent(2))
-          add(RcBoxLayout(3, 30, 1, 1))
-          add(layer(MODULATE_ALPHA))
-          addAll(size(EMBEDDED_WIDTH, HEIGHT))
-          add(RcLayoutContent(4))
-          child(20, offsetX = 20f, probeTextId = 50)
-          repeat(4) { add(end) }
-        },
-      )
-
-    /** A 40x20 document embedding [URL_OWN], and an offset [EMBEDDED_PROBE]. */
-    fun nestedEmbedded(): ByteArray =
-      encode(
-        EMBEDDED_WIDTH,
-        buildList {
-          add(RcTextData(50, EMBEDDED_PROBE))
-          add(RcTextData(51, URL_OWN))
-          add(RcRootLayout(1))
-          add(RcLayoutContent(2))
-          add(RcBoxLayout(3, 30, 1, 1))
-          addAll(size(EMBEDDED_WIDTH, HEIGHT))
-          add(RcLayoutContent(4))
-          add(RcDocLayout(40, -1, 51))
-          addAll(size(EMBEDDED_WIDTH, HEIGHT))
-          add(end)
-          child(20, offsetX = 20f, probeTextId = 50)
-          repeat(4) { add(end) }
-        },
-      )
   }
 }

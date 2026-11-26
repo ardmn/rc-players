@@ -15,23 +15,21 @@ import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.HOST_PROBE
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.MODULATE_ALPHA
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.OFFSCREEN
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.OWN_PROBE
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.PROBE_TEXT_ID
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.Probe
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.URL_NESTED
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.URL_OWN
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.WIDTH
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.background
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.child
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.encode
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.end
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.host
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.layer
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.nestedEmbedded
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.offsetChild
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.ownLayerEmbedded
 import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.probeEntry
-import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.size
-import ee.schimke.composeai.rcplayer.protocol.RcBoxLayout
-import ee.schimke.composeai.rcplayer.protocol.RcDocLayout
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.rootBox
+import ee.schimke.composeai.rcplayer.compose.RcEmbeddedLayerFixture.stillChild
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
-import ee.schimke.composeai.rcplayer.protocol.RcLayoutContent
-import ee.schimke.composeai.rcplayer.protocol.RcRootLayout
 import ee.schimke.composeai.rcplayer.protocol.RcTextData
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -205,7 +203,7 @@ class RcEmbeddedModulateAlphaLayerTest {
         val own = assertNotNull(probes.embeddedOwn.layer, "$url: its own layer")
         assertNull(own.enclosing, "$url: its own layer encloses no host layer")
         assertTrue(own.childLayersMissAlpha, "$url: its own layer is bound at half alpha")
-        assertEquals(1, probes.embeddedOwn.present, "$url: one embedded subtree is present")
+        assertEquals(1, probes.embeddedOwn.liveRemembers, "$url: one embedded subtree is present")
       }
     }
   }
@@ -342,56 +340,11 @@ class RcEmbeddedModulateAlphaLayerTest {
       encode(
         EMBEDDED_WIDTH,
         buildList {
-          add(RcTextData(50, EMBEDDED_PROBE))
-          add(RcRootLayout(1))
-          add(RcLayoutContent(2))
-          add(RcBoxLayout(3, 30, 1, 1))
-          addAll(size(EMBEDDED_WIDTH, HEIGHT))
-          add(RcLayoutContent(4))
-          if (withStill) child(10, offsetX = null, probeTextId = null, background(0f, 1f))
-          child(20, offsetX = 20f, probeTextId = 50, background(1f, 0f))
-          repeat(4) { add(end) }
-        },
-      )
-
-    /**
-     * A [width]x20 document with a half-alpha `ModulateAlpha` layer: a blue still child at 0..20,
-     * and a red child moved by `offset` to 20..40 holding [OWN_PROBE].
-     */
-    fun ownLayerEmbedded(width: Int): ByteArray =
-      encode(
-        width,
-        buildList {
-          add(RcTextData(50, OWN_PROBE))
-          add(RcRootLayout(1))
-          add(RcLayoutContent(2))
-          add(RcBoxLayout(3, 30, 1, 1))
-          add(layer(MODULATE_ALPHA))
-          addAll(size(EMBEDDED_WIDTH, HEIGHT))
-          add(RcLayoutContent(4))
-          child(10, offsetX = null, probeTextId = null, background(0f, 1f))
-          child(20, offsetX = 20f, probeTextId = 50, background(1f, 0f))
-          repeat(4) { add(end) }
-        },
-      )
-
-    /** A 40x20 document embedding [URL_OWN], and an offset child holding [EMBEDDED_PROBE]. */
-    fun nestedEmbedded(): ByteArray =
-      encode(
-        EMBEDDED_WIDTH,
-        buildList {
-          add(RcTextData(50, EMBEDDED_PROBE))
-          add(RcTextData(51, URL_OWN))
-          add(RcRootLayout(1))
-          add(RcLayoutContent(2))
-          add(RcBoxLayout(3, 30, 1, 1))
-          addAll(size(EMBEDDED_WIDTH, HEIGHT))
-          add(RcLayoutContent(4))
-          add(RcDocLayout(40, -1, 51))
-          addAll(size(EMBEDDED_WIDTH, HEIGHT))
-          add(end)
-          child(20, offsetX = 20f, probeTextId = 50, background(1f, 0f))
-          repeat(4) { add(end) }
+          add(RcTextData(PROBE_TEXT_ID, EMBEDDED_PROBE))
+          rootBox(EMBEDDED_WIDTH) {
+            if (withStill) stillChild()
+            offsetChild(painted = true)
+          }
         },
       )
 
@@ -399,9 +352,9 @@ class RcEmbeddedModulateAlphaLayerTest {
       mapOf(
         URL_PLAIN to plainEmbedded(withStill = false),
         URL_PLAIN_WITH_STILL to plainEmbedded(withStill = true),
-        URL_OWN to ownLayerEmbedded(EMBEDDED_WIDTH),
-        URL_OWN_WIDER to ownLayerEmbedded(EMBEDDED_WIDTH + 1),
-        URL_NESTED to nestedEmbedded(),
+        URL_OWN to ownLayerEmbedded(painted = true),
+        URL_OWN_WIDER to ownLayerEmbedded(painted = true, width = EMBEDDED_WIDTH + 1),
+        URL_NESTED to nestedEmbedded(painted = true),
       )
   }
 }
