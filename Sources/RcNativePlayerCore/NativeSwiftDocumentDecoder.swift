@@ -7,7 +7,9 @@ enum NativeSwiftDocumentDecoder {
   private static let maximumOperations = 100_000
   private static let maximumProperties = 2_000
   /// The most values a float list may hold — a document's `DataListFloat`, a `DynamicFloatList`'s
-  /// length, and a host's float array: AndroidX `DataListFloat.MAX_FLOAT_ARRAY`.
+  /// length, and a host's float array: AndroidX `DataListFloat.MAX_FLOAT_ARRAY`. The Kotlin player
+  /// declares it as `RcFloatList.MAX_VALUES`; this core links no Kotlin, so it keeps its own copy,
+  /// and `NativeSwiftFloatListLimitParityTests` fails when the two drift.
   static let maximumFloatListValues = 2_000
   private static let maximumNodes = 20_000
   private static let maximumNestingDepth = 256
