@@ -1164,8 +1164,8 @@ enum NativeSwiftImageAttributeType {
 
 /// The field labels the document decoder names in a malformed-document error: one owner for each
 /// label read at more than one site, so the sites cannot drift apart and an error names the field
-/// the same way wherever it is read. The values are part of the decoder's error text; tests match
-/// them, so they change only together.
+/// the same way wherever it is read. The values are part of the decoder's error text, which hosts
+/// and logs see, so they keep their exact wording.
 enum NativeSwiftWireField {
   static let conditionalLeft = "conditional left"
   static let conditionalRight = "conditional right"

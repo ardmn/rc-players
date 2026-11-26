@@ -69,12 +69,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     texts = document.texts
     colors = document.colors
     (floats, integers) = Self.seededNumericViews(of: document)
-    var slots = Set(document.integers.keys)
-    slots.formUnion(document.integerExpressionOrder)
-    slots.formUnion(document.idLookups.map(\.outputID))
-    slots.formUnion(document.dataMapLookups.map(\.outputID))
-    slots.insert(NativeSwiftSystemVariables.epochSecond)
-    integerSlotIDs = slots
+    var slotIDs = Set(document.integers.keys)
+    slotIDs.formUnion(document.integerExpressionOrder)
+    slotIDs.formUnion(document.idLookups.map(\.outputID))
+    slotIDs.formUnion(document.dataMapLookups.map(\.outputID))
+    slotIDs.insert(NativeSwiftSystemVariables.epochSecond)
+    integerSlotIDs = slotIDs
   }
 
   /// The document's own floats and integers, each float also its integer view.
@@ -87,27 +87,27 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   {
     var floats = document.floats
     var integers = document.integers
-    var seededFloats: [Int: Float] = [:]
-    var seededIntegers: [Int: Int] = [:]
+    var constantFloatByID: [Int: Float] = [:]
+    var constantIntegerByID: [Int: Int] = [:]
     for constant in document.numericConstants {
       switch constant {
       case .float(let id, let value):
-        seededFloats[id] = value
-        seededIntegers[id] = integerView(of: value)
+        constantFloatByID[id] = value
+        constantIntegerByID[id] = integerView(of: value)
       case .integer(let id, let value):
-        guard seededIntegers[id] != value else { continue }
-        seededIntegers[id] = value
+        guard constantIntegerByID[id] != value else { continue }
+        constantIntegerByID[id] = value
         // An id only ever declared an integer keeps no float of its own: its float view is the
         // projection of the integer, which follows later integer writes.
-        if seededFloats[id] != nil { seededFloats[id] = Float(value) }
+        if constantFloatByID[id] != nil { constantFloatByID[id] = Float(value) }
       }
     }
-    for (id, value) in document.floats where seededFloats[id] == nil {
+    for (id, value) in document.floats where constantFloatByID[id] == nil {
       integers[id] = integerView(of: value)
     }
-    for (id, value) in seededFloats {
+    for (id, value) in constantFloatByID {
       floats[id] = value
-      integers[id] = seededIntegers[id]
+      integers[id] = constantIntegerByID[id]
     }
     return (floats, integers)
   }
@@ -1453,15 +1453,16 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // RemoteInt.toRemoteFloat(). Expose integer slots to the float evaluator without overriding a
     // real float that deliberately shares an id.
     var projectedIntegers: Set<Int> = []
-    func project(_ id: Int) {
+    func projectIntegerSlot(_ id: Int) {
       // The player's own epoch is published after the document's producers have had their say.
       guard result[id] == nil, let value = integers[id], !(hostOwnsEpochSecond && id == epochSecond)
       else { return }
       result[id] = Float(value)
       projectedIntegers.insert(id)
     }
-    for id in integerSlotIDs { project(id) }
-    for id in writtenIDs where !integerSlotIDs.contains(id) { project(id) }
+    // O(slots + written ids) per resolution, not O(every integer view).
+    for id in integerSlotIDs { projectIntegerSlot(id) }
+    for id in writtenIDs where !integerSlotIDs.contains(id) { projectIntegerSlot(id) }
     // A copied dynamic colour is encoded as colour expression → channel attributes → colour
     // expression. Resolve the source colours before extracting their channels so the final colour
     // pass can preserve copies such as a selected tint with reduced alpha. Only a channel attribute

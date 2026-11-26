@@ -228,23 +228,23 @@
     ///
     /// Linear in both lists: the last earlier value of each name is looked up in a dictionary.
     static func merging(_ values: [Self], with later: [Self]) -> [Self] {
-      var lastEarlier: [String: NativeSwiftNamedValue] = [:]
-      lastEarlier.reserveCapacity(values.count)
-      for entry in values { lastEarlier[entry.name] = entry.value }
-      var replaced: Set<String> = []
-      var unchanged: Set<String> = []
+      var lastEarlierValueByName: [String: NativeSwiftNamedValue] = [:]
+      lastEarlierValueByName.reserveCapacity(values.count)
+      for entry in values { lastEarlierValueByName[entry.name] = entry.value }
+      var replacedNames: Set<String> = []
+      var unchangedNames: Set<String> = []
       for entry in later {
         if case .integer(let value, nil) = entry.value,
-          case .integer(value, _)? = lastEarlier[entry.name]
+          case .integer(value, _)? = lastEarlierValueByName[entry.name]
         {
-          unchanged.insert(entry.name)
+          unchangedNames.insert(entry.name)
         } else {
-          replaced.insert(entry.name)
+          replacedNames.insert(entry.name)
         }
       }
-      replaced.subtract(unchanged)
-      return values.filter { !replaced.contains($0.name) }
-        + later.filter { !unchanged.contains($0.name) }
+      replacedNames.subtract(unchangedNames)
+      return values.filter { !replacedNames.contains($0.name) }
+        + later.filter { !unchangedNames.contains($0.name) }
     }
   }
 
