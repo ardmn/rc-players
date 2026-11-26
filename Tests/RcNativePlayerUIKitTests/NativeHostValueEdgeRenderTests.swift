@@ -1,0 +1,228 @@
+#if canImport(UIKit)
+  import Foundation
+  import Testing
+  import RcNativePlayerTestDocuments
+  import UIKit
+
+  @_spi(Conformance) @_spi(RemoteComposeController) @testable import RcNativePlayerCore
+  @_spi(RemoteComposeController) @testable import RcNativePlayerUIKit
+
+  /// Every value a host may write reaches the UIKit player, and the frame renders: NaN, the
+  /// infinities and 1e9 into each float consumer, and a 100 KB string into each text consumer.
+  /// The documents are the Kotlin `RcHostValueEdgeRenderTest`'s (`Fixtures/host-value-edges` of
+  /// the core tests), which the Compose player renders at its full width with the same values;
+  /// that test's bar, a frame that renders, is the bar here too, and every component's frame must
+  /// be finite. Documents that abuse the frame budget themselves are still refused.
+  @MainActor @Suite(.serialized, .timeLimit(.minutes(10))) struct NativeHostValueEdgeRenderTests {
+    static let floats: [Float] = [.nan, .infinity, -.infinity, 1e9, -0.0]
+    static let texts = [
+      String(repeating: "x", count: 100_000), String(repeating: "word ", count: 20_000),
+      String(repeating: "\u{1F600}", count: 25_000),
+    ]
+
+    @Test(arguments: try UIKitHostValueEdgeFixtures.cases(kind: "float"))
+    func everyFloatConsumerRendersNonFiniteAndHugeHostValues(_ name: String) async throws {
+      for value in Self.floats {
+        try await UIKitHostValueEdgeFixtures.render(
+          name, .float(value), for: UIKitHostValueEdgeFixtures.floatName, "\(name) with \(value)")
+      }
+    }
+
+    @Test(arguments: try UIKitHostValueEdgeFixtures.cases(kind: "text"))
+    func everyTextConsumerRendersAHundredKilobyteHostString(_ name: String) async throws {
+      for text in Self.texts {
+        try await UIKitHostValueEdgeFixtures.render(
+          name, .text(text), for: UIKitHostValueEdgeFixtures.textName,
+          "\(name) with \(text.utf8.count) bytes")
+      }
+    }
+
+    /// A host's 1e9 width is clamped to the parent, as AndroidX's measure clamps an exact size to
+    /// the maximum constraint (`BaseModernMeasurePolicy.measure`, `LegacyMeasurePolicy.measure`),
+    /// and a NaN offset reads 0, as Java's `(int)` reads it where the Kotlin player rounds one.
+    @Test func aHugeWidthFillsTheParentAndANaNOffsetReadsZero() async throws {
+      let width = try await UIKitHostValueEdgeFixtures.render(
+        "width", .float(1e9), for: UIKitHostValueEdgeFixtures.floatName, "width 1e9")
+      #expect(width.canvasFrame?.width == UIKitHostValueEdgeFixtures.size.width)
+      let offset = try await UIKitHostValueEdgeFixtures.render(
+        "offset", .float(.nan), for: UIKitHostValueEdgeFixtures.floatName, "offset NaN")
+      let plain = try await UIKitHostValueEdgeFixtures.render(
+        "offset", .float(0), for: UIKitHostValueEdgeFixtures.floatName, "offset 0")
+      #expect(offset.canvasFrame != nil && offset.canvasFrame == plain.canvasFrame)
+    }
+
+    // MARK: - Hostile documents are still refused
+
+    /// One 4000-byte document string (AndroidX `Limits.MAX_STRING_SIZE`) shown by 40 texts is
+    /// over the 128 KiB of text one frame may show: the document is refused, not laid out.
+    @Test func aDocumentRepeatingItsTextPastTheBudgetIsRefused() async throws {
+      typealias Op = NativeSwiftWireOpcode
+      let wire = NativeTestWire()
+      wire.header(width: 100, height: 100)
+      wire.u8(Op.dataText).int(700).utf8(String(repeating: "x", count: 4_000))
+      wire.u8(Op.layoutRoot).int(1)
+      for index in 0..<40 { wire.text(id: 3000 + index, reading: 700) }
+      wire.u8(Op.containerEnd)
+      let error = try await UIKitHostValueEdgeFixtures.refusal(of: wire.data)
+      #expect(error.contains("UTF-8 bytes; the limit is \(128 * 1024)"), "\(error)")
+    }
+
+    /// A document of more nodes than the budget is refused (the core's decoder, sharing the
+    /// player's 20,000, refuses it first), whatever its values.
+    @Test func aDocumentOverTheNodeBudgetIsRefused() async throws {
+      let count = RemoteComposeNativeExecutionLimits.default.maximumNodeCount
+      let wire = NativeTestWire()
+      wire.header(width: 100, height: 100)
+      wire.u8(NativeSwiftWireOpcode.layoutRoot).int(1)
+      // A box and its content are two nodes.
+      for index in 0...(count / 2) { wire.box(id: 10 + index, size: 1, content: 50_000 + index) }
+      wire.u8(NativeSwiftWireOpcode.containerEnd)
+      let error = try await UIKitHostValueEdgeFixtures.refusal(of: wire.data)
+      #expect(error.contains("Node count exceeds \(count)"), "\(error)")
+    }
+
+    // MARK: - The normalisation itself
+
+    @Test func layoutFloatsReadNaNAsZeroAndStayWithinTheCoordinateLimit() {
+      let limits = RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10)
+      #expect(limits.layoutCoordinate(.nan) == 0)
+      #expect(limits.layoutCoordinate(.infinity) == 10)
+      #expect(limits.layoutCoordinate(-.infinity) == -10)
+      #expect(limits.layoutCoordinate(-3) == -3)
+      #expect(limits.layoutCoordinate(1e9) == 10)
+    }
+
+    @Test func anExactSizeStaysWithinTheCanvasLimitAndAFillKeepsItsNaN() {
+      let limits = RemoteComposeNativeExecutionLimits(
+        maximumCanvasDimension: 100, maximumCoordinateMagnitude: 10)
+      let exact = NativeSwiftDimensionType.exact
+      #expect(limits.layoutDimension(1e9, type: exact) == 100)
+      #expect(limits.layoutDimension(-.infinity, type: exact) == -100)
+      #expect(limits.layoutDimension(.nan, type: NativeSwiftDimensionType.exactDp) == 0)
+      #expect(limits.layoutDimension(50, type: exact) == 50)
+      #expect(limits.layoutDimension(.nan, type: NativeSwiftDimensionType.fill).isNaN)
+      #expect(limits.layoutDimension(1e9, type: NativeSwiftDimensionType.weight) == 10)
+    }
+
+    @Test func aNonFiniteDrawIsDroppedAndAHugeOneClamped() {
+      let limits = RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10)
+      func rect(_ values: [Float], strokeWidth: Float = 1, path: [Float] = [])
+        -> NativeSwiftDrawCommandSnapshot
+      {
+        NativeSwiftDrawCommandSnapshot(
+          kind: NativeSwiftDrawKind.rect, values: values, colorARGB: 0xff00_00ff, alpha: 1,
+          strokeWidth: strokeWidth, isStroke: false, strokeCap: .butt, strokeJoin: .miter,
+          blendMode: .sourceOver,
+          path: path.isEmpty
+            ? []
+            : [NativeSwiftPathElementSnapshot(kind: NativeSwiftPathCommand.move, values: path)],
+          pathWinding: .nonZero, image: nil, textureImageID: nil, textureTileModeX: 0,
+          textureTileModeY: 0, shaderMatrix: nil, filterQuality: nil,
+          usesComponentGeometry: false, gradient: nil, text: nil, textSize: 14, textFlags: 0,
+          unsetValueIndices: [], offscreenTarget: nil)
+      }
+      #expect(limits.isDrawable(rect([0, 0, 5, 5])))
+      #expect(!limits.isDrawable(rect([0, .nan, 5, 5])))
+      #expect(!limits.isDrawable(rect([0, 0, .infinity, 5])))
+      #expect(!limits.isDrawable(rect([0, 0, 5, 5], strokeWidth: .nan)))
+      #expect(!limits.isDrawable(rect([0, 0, 5, 5], path: [-.infinity, 0])))
+      let clamped = NativeDrawCommand(rect([-1e9, 0, 1e9, 5], path: [1e9, -1e9]), limits: limits)
+      #expect(clamped.values == [-10, 0, 10, 5])
+      #expect(clamped.path.first?.values == [10, -10])
+    }
+  }
+
+  /// The core tests' `Fixtures/host-value-edges`, read from the source tree so the documents stay
+  /// the one copy the Kotlin test checks.
+  @MainActor enum UIKitHostValueEdgeFixtures {
+    /// `RcHostValueEdgeRenderTest.FLOAT_NAME` and `TEXT_NAME`, `WIDTH` and `HEIGHT`.
+    static let floatName = "USER:v"
+    static let textName = "USER:s"
+    static let size = CGSize(width: 100, height: 60)
+    /// The fixtures' canvas component.
+    static let canvasID = 3
+    /// The fixture the native Swift player cannot open at all: a background colour channel read
+    /// from a float is not decoded (opcode 55), a gap of the core that predates host values.
+    nonisolated static let notDecoded: Set<String> = ["background-alpha"]
+
+    nonisolated static var directory: URL {
+      URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("RcNativePlayerCoreTests/Fixtures/host-value-edges")
+    }
+
+    nonisolated static func cases(kind: String) throws -> [String] {
+      let index = try String(
+        contentsOf: directory.appendingPathComponent("index.tsv"), encoding: .utf8)
+      let rows = index.split(separator: "\n").map { $0.split(separator: "\t").map(String.init) }
+      return rows.filter { $0.count == 2 && $0[1] == kind && !notDecoded.contains($0[0]) }
+        .map { $0[0] }
+    }
+
+    struct Rendered {
+      let canvasFrame: CGRect?
+    }
+
+    /// Opens `name` in a player view, writes `value`, and requires the write accepted, nothing
+    /// reported, the document shown rather than the error label, every component frame finite,
+    /// and a few frames drawn.
+    @discardableResult
+    static func render(
+      _ name: String, _ value: RemoteComposeNativeNamedValue, for variable: String,
+      _ label: String
+    ) async throws -> Rendered {
+      var errors: [RemoteComposeNativePlayerError] = []
+      let view = RemoteComposeNativePlayerView(
+        data: try Data(contentsOf: directory.appendingPathComponent("\(name).rc")),
+        resourceResolver: nil, onError: { errors.append($0) })
+      view.frame = CGRect(origin: .zero, size: size)
+      try await waitUntil("\(label) opens", within: 60) {
+        !view.isOpeningDocument && !view.isBusy
+      }
+      #expect(errors.isEmpty, "\(label) before the write: \(errors)")
+      #expect(await view.submit(value, for: variable) == .accepted, "\(label)")
+      try await waitUntil("\(label) settles", within: 60) { !view.isBusy }
+      for _ in 0..<4 {
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(size: size).image {
+          view.layer.render(in: $0.cgContext)
+        }
+        #expect(image.size == size, "\(label)")
+      }
+      #expect(errors.isEmpty, "\(label): \(errors)")
+      #expect(!showsTheErrorLabel(view), "\(label) shows the error label")
+      var pending: [UIView] = [view]
+      var canvasFrame: CGRect?
+      while let next = pending.popLast() {
+        if let component = next as? NativeComponentView {
+          let frame = component.frame
+          let isFinite = [frame.minX, frame.minY, frame.width, frame.height].allSatisfy {
+            $0.isFinite
+          }
+          #expect(isFinite, "\(label): a component at \(frame)")
+          if canvasFrame == nil { canvasFrame = component.descendant(withID: canvasID)?.frame }
+        }
+        pending.append(contentsOf: next.subviews)
+      }
+      return Rendered(canvasFrame: canvasFrame)
+    }
+
+    /// The error the player reports for `data`, which it must refuse rather than show.
+    static func refusal(of data: Data) async throws -> String {
+      var errors: [RemoteComposeNativePlayerError] = []
+      let view = RemoteComposeNativePlayerView(
+        data: data, resourceResolver: nil, onError: { errors.append($0) })
+      view.frame = CGRect(origin: .zero, size: CGSize(width: 100, height: 100))
+      try await waitUntil("the refusal", within: 120) {
+        !view.isOpeningDocument && !view.isBusy && !errors.isEmpty
+      }
+      #expect(showsTheErrorLabel(view), "the refused document is not reported on screen")
+      return errors.map { String(describing: $0) }.joined(separator: "; ")
+    }
+
+    /// Whether the player shows its own error label, not a label inside the document.
+    static func showsTheErrorLabel(_ view: RemoteComposeNativePlayerView) -> Bool {
+      view.subviews.contains { ($0 as? UILabel)?.isHidden == false }
+    }
+  }
+#endif
