@@ -21,7 +21,7 @@
       for _ in 0..<50 {
         Task { @MainActor in _ = await player.view.submit(.integer(1), for: "missing") }
       }
-      try await until("input is outstanding") { player.view.hasOutstandingInput }
+      try await waitUntil("input is outstanding") { player.view.hasOutstandingInput }
     }
 
     // MARK: - Equal writes in every order

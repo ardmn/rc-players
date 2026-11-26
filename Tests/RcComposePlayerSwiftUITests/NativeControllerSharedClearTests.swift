@@ -206,7 +206,7 @@
       for round in 0..<20 {
         #expect(player.controller.clear("shown"))
         // Let the clear's task start and offer the clear to the player.
-        try await until("the clear is in flight (round \(round))") {
+        try await waitUntil("the clear is in flight (round \(round))") {
           player.view.isBusy || player.host.nativeUpdateTasks["shown"] == nil
         }
         #expect(player.controller.setInteger(Self.visible, for: "shown"))

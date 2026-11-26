@@ -124,7 +124,7 @@
 
     /// The player has opened, attached the controller, and has nothing left to apply or deliver.
     func settle(_ player: Player, _ what: String = "the player settles") async throws {
-      try await until(
+      try await waitUntil(
         "\(what): names \(player.controller.names), opening \(player.view.isOpeningDocument), "
           + "busy \(player.view.isBusy), deliveries \(player.host.nativeUpdateTasks.keys.sorted()), "
           + "errors \(player.errors.all)"
@@ -132,12 +132,6 @@
         !player.controller.names.isEmpty && !player.view.isOpeningDocument
           && !player.view.isBusy && player.host.nativeUpdateTasks.isEmpty
       }
-    }
-
-    func until(
-      _ what: @autoclosure () -> String, within seconds: TimeInterval = 30, _ condition: () -> Bool
-    ) async throws {
-      try await waitUntil(what(), within: seconds, condition)
     }
 
     /// The document component with `id`, or nil when it is not on screen.
@@ -198,7 +192,7 @@
       for _ in 0..<50 {
         Task { @MainActor in _ = await player.view.submit(.integer(1), for: "missing") }
       }
-      try await until("input is outstanding") { player.view.hasOutstandingInput }
+      try await waitUntil("input is outstanding") { player.view.hasOutstandingInput }
       background(player)
       try #require(player.view.isOpeningDocument, "the bytes are reopened on activation")
     }
