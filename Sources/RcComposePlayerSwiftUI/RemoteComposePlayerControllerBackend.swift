@@ -230,8 +230,9 @@ protocol ControllerBackendProtocol: AnyObject {
       }
       // A value the first open was seeded with that has been cleared since: the player holds it,
       // so it is handed the clear.
-      // lint-ok: O(n log n) once per install
-      for name in seeded.keys.sorted() where valuesByName[name] == nil { handler(name, nil) }
+      for name in seeded.keys.sorted() where valuesByName[name] == nil {  // lint-ok: once per install
+        handler(name, nil)
+      }
     }
 
     /// A snapshot of the values written so far, keyed as currently stored, for comparing against
@@ -241,8 +242,8 @@ protocol ControllerBackendProtocol: AnyObject {
     /// Every value stored so far, sorted by key, for seeding a brand-new player's first open
     /// before its declarations finish loading on the main actor.
     var initialSeedValues: [(name: String, value: RemoteComposeNativeNamedValue)] {
-      // lint-ok: O(n log n) once per player open
-      valuesByName.sorted { $0.key < $1.key }.map { (name: $0.key, value: $0.value.nativeValue) }
+      valuesByName.sorted { $0.key < $1.key }  // lint-ok: O(n log n) once per player open
+        .map { (name: $0.key, value: $0.value.nativeValue) }
     }
 
     /// The values written so far, by the name the player's document declares them under, which
@@ -274,12 +275,12 @@ protocol ControllerBackendProtocol: AnyObject {
     private var reopenSeed: [(name: String, value: RemoteComposeNativeNamedValue?)] {
       var seed: [(name: String, value: RemoteComposeNativeNamedValue?)] = []
       seed.reserveCapacity(valuesByName.count + pendingClearedNames.count)
-      // lint-ok: O(n log n) once per reopen
-      for (name, value) in valuesByName.sorted(by: { $0.key < $1.key }) {
+      for (name, value) in valuesByName.sorted(by: { $0.key < $1.key }) {  // lint-ok: per reopen
         seed.append((name: name, value: value.nativeValue))
       }
-      // lint-ok: O(c log c) once per reopen
-      for name in pendingClearedNames.sorted() { seed.append((name: name, value: nil)) }
+      for name in pendingClearedNames.sorted() {  // lint-ok: O(c log c) once per reopen
+        seed.append((name: name, value: nil))
+      }
       return seed
     }
   }

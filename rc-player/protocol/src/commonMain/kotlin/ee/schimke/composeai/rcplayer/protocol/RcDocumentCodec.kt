@@ -2010,7 +2010,7 @@ private object DynamicFloatListCodec : RcOperationCodec<RcDynamicFloatList> {
   override val spec = RcOperationSpec(RcOpcodes.DYNAMIC_FLOAT_LIST, "DataDynamicListFloat")
 
   /** The wire field a read and its failure name. */
-  private const val LENGTH_FIELD = "length"
+  private const val LENGTH_FIELD = "length" // lint-ok: this codec's own field label
 
   override fun decode(input: RcWireReader): RcDynamicFloatList {
     val id = input.readDeclaredId("id")

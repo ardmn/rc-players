@@ -21,7 +21,8 @@ import Testing
       "USER:progress": NativeSwiftNamedVariableType.float,
     ]
     var variables: [String: ParsedNamedVariable] = [:]
-    for (index, entry) in types.sorted(by: { $0.key < $1.key }).enumerated() {
+    // Sorted so each name gets the same id on every run.
+    for (index, entry) in types.sorted(by: { $0.key < $1.key }).enumerated() {  // lint-ok: fixture
       variables[entry.key] = ParsedNamedVariable(id: index + 1, type: entry.value)
     }
     return NativeSwiftNamedVariableDeclarations(variables: variables)

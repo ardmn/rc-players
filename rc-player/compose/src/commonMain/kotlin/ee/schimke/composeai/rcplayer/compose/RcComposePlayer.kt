@@ -5175,6 +5175,9 @@ internal fun androidXSemanticsRole(role: Int): Role? =
     else -> null
   }
 
+/** The leading values of a layout compute's result the player reads: x, y, width, height. */
+private const val LAYOUT_BOUNDS_SIZE = 4
+
 private fun Modifier.applyLayoutComputes(
   modifiers: RcLayoutModifiers,
   state: RcPlayerState,
@@ -5202,7 +5205,12 @@ private fun Modifier.applyLayoutComputes(
     // A host's float array over the bounds list is what comes back, whatever its length. One that
     // cannot say where or how big the component is leaves it as measured, as the native Swift
     // player does (`NativeSwiftLayoutComputeSnapshot.evaluate` answers nil for it).
-    if (values.size < 4 || (0 until 4).any { !values[it].isFinite() }) return@forEach
+    if (
+      values.size < LAYOUT_BOUNDS_SIZE ||
+        (0 until LAYOUT_BOUNDS_SIZE).any { !values[it].isFinite() }
+    ) {
+      return@forEach
+    }
     when (block.operation.type) {
       RcLayoutCompute.MEASURE -> {
         width = constraints.constrainWidth(values[2].roundToInt().coerceAtLeast(0))
