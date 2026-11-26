@@ -2009,12 +2009,15 @@ private object FloatListCodec : RcOperationCodec<RcFloatList> {
 private object DynamicFloatListCodec : RcOperationCodec<RcDynamicFloatList> {
   override val spec = RcOperationSpec(RcOpcodes.DYNAMIC_FLOAT_LIST, "DataDynamicListFloat")
 
+  /** The wire field a read and its failure name. */
+  private const val LENGTH_FIELD = "length"
+
   override fun decode(input: RcWireReader): RcDynamicFloatList {
     val id = input.readDeclaredId("id")
-    val length = input.readFloatWord("length")
+    val length = input.readFloatWord(LENGTH_FIELD)
     if (length.referencedId == null && length.value.toInt() !in 0..RcFloatList.MAX_VALUES) {
       input.fail(
-        "length",
+        LENGTH_FIELD,
         "Dynamic float-list length ${length.value.toInt()} is outside 0..${RcFloatList.MAX_VALUES}",
       )
     }
