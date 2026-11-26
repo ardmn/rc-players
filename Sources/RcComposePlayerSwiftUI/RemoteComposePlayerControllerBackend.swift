@@ -88,6 +88,9 @@ protocol ControllerBackendProtocol: AnyObject {
 
     func clear(_ name: String) -> Bool { kotlinController.clear(name: name) }
 
+    /// The Kotlin/Native export gives `KotlinFloatArray` only `init(size:)`, `init(size:init:)`
+    /// (which boxes every index and value) and `set(index:value:)` — no `[Float]` bridge — so the
+    /// array is filled in place.
     private func kotlinFloats(_ values: [Float]) -> KotlinFloatArray {
       let array = KotlinFloatArray(size: Int32(values.count))
       for (index, value) in values.enumerated() { array.set(index: Int32(index), value: value) }
@@ -102,15 +105,18 @@ protocol ControllerBackendProtocol: AnyObject {
   /// held, and from the values held here (`seedValues`) that that session had not taken.
   @MainActor
   final class NativeControllerBackend: ControllerBackendProtocol {
-    /// The attached document's declarations; none until a native player has loaded a document.
-    private var declarations = NativeSwiftNamedVariableDeclarations.none
-    /// The values written so far, by the name the attached document declares them under.
-    private var values: [String: ControllerNamedValue] = [:]
-    /// The names cleared and not written since, so a reopen a player starts while a clear is still
-    /// on its way starts that name from the document's value (`seedValues(for:)`). Re-keyed by
-    /// `attach` as the values are. A player's host leaves out the names it never held a value of
-    /// (a new document, or a new player).
-    private var cleared: Set<String> = []
+    /// The declarations of the document a native player is showing, which every write and clear
+    /// is checked against; `.none` (every write refused) until `attach` and after `detach`.
+    private var attachedDeclarations = NativeSwiftNamedVariableDeclarations.none
+    /// The latest value the host wrote to each name, keyed by the name the attached document
+    /// declares it under; a clear removes the name. What a new or reopened player is seeded with.
+    private var valuesByName: [String: ControllerNamedValue] = [:]
+    /// Names the host cleared and has not written since. A session a player reopens while such a
+    /// clear is still on its way is seeded with "no value" for each (`seedValues(for:)`), so it
+    /// starts the name from the document's value. Re-keyed by `attach` as `valuesByName` is. A
+    /// player's host leaves out the names it never held a value of (a new document, or a new
+    /// player).
+    private var pendingClearedNames: Set<String> = []
     /// One handler per attached player view controller, so a controller shared by multiple views
     /// reaches every one of them rather than only the last attached. Each receives every accepted
     /// write, or nil for a clear.
@@ -120,18 +126,18 @@ protocol ControllerBackendProtocol: AnyObject {
 
     init() {}
 
-    var names: [String] { declarations.names }
+    var names: [String] { attachedDeclarations.names }
 
     func set(_ value: ControllerNamedValue, for name: String) -> Bool {
-      guard let declared = declarations.declaredName(for: name),
-        declarations.accepts(value, for: declared)
+      guard let declared = attachedDeclarations.declaredName(for: name),
+        attachedDeclarations.accepts(value, for: declared)
       else { return false }
       // A write equal to the last one is no change, as the Kotlin player diffs the host's values
       // against the ones it last applied (`applyHostValues`): a document action that changed the
       // variable since keeps its value.
-      guard values[declared] != value else { return true }
-      values[declared] = value
-      cleared.remove(declared)
+      guard valuesByName[declared] != value else { return true }
+      valuesByName[declared] = value
+      pendingClearedNames.remove(declared)
       for handler in updateHandlers.values { handler(declared, value) }
       return true
     }
@@ -142,9 +148,9 @@ protocol ControllerBackendProtocol: AnyObject {
     /// player's host drops a clear whose write it never delivered (a write and its clear in one
     /// main-actor turn), as the Kotlin player's once-per-pass diff never sees either.
     func clear(_ name: String) -> Bool {
-      guard let declared = declarations.declaredName(for: name) else { return false }
-      guard values.removeValue(forKey: declared) != nil else { return true }
-      cleared.insert(declared)
+      guard let declared = attachedDeclarations.declaredName(for: name) else { return false }
+      guard valuesByName.removeValue(forKey: declared) != nil else { return true }
+      pendingClearedNames.insert(declared)
       for handler in updateHandlers.values { handler(declared, nil) }
       return true
     }
@@ -155,34 +161,37 @@ protocol ControllerBackendProtocol: AnyObject {
     /// rest are re-applied when the player installs its update handler. Re-keying keeps the two
     /// backends in step: checking the old key let a bare name reach a different variable.
     func attach(_ declarations: NativeSwiftNamedVariableDeclarations) {
-      self.declarations = declarations
+      attachedDeclarations = declarations
       var kept: [String: ControllerNamedValue] = [:]
-      for name in values.keys.sorted() {
-        guard let value = values[name], let declared = declarations.declaredName(for: name),
+      // Sorted so that when two stored names resolve to one declared name, the same one wins on
+      // every run (Swift randomises Dictionary order per process).
+      for name in valuesByName.keys.sorted() {  // lint-ok: O(n log n) once per attach
+        guard let value = valuesByName[name], let declared = declarations.declaredName(for: name),
           declarations.accepts(value, for: declared)
         else { continue }
         kept[declared] = value
       }
-      values = kept
+      valuesByName = kept
       // Pending clears are re-keyed as the values are, not dropped: another player sharing the
       // controller may attach while a player's clear is still on its way to it. A player that
       // never held the name leaves the clear out of its seed (the host's `nativeHeldNames`).
-      cleared = Set(
-        cleared.compactMap { declarations.declaredName(for: $0) }.filter { kept[$0] == nil })
+      pendingClearedNames = Set(
+        pendingClearedNames.lazy.compactMap { declarations.declaredName(for: $0) }
+          .filter { kept[$0] == nil })  // lint-ok: O(1) dictionary lookup per pending clear
     }
 
     /// Forgets the attached declarations without a new document to judge the stored values by —
     /// the player is not showing one (a refused theme) or its document could not be read. Writes
     /// are refused until the next `attach`, and the values written so far are kept for it.
     func detach() {
-      declarations = .none
+      attachedDeclarations = .none
     }
 
     /// Detaches `owner`'s update handler, clearing declarations only when no other view remains
     /// attached to this controller.
     func detach(for owner: ObjectIdentifier) {
       updateHandlers[owner] = nil
-      if updateHandlers.isEmpty { declarations = .none }
+      if updateHandlers.isEmpty { attachedDeclarations = .none }
     }
 
     /// Installs a single update handler (used by tests), replaying every value written so far, or
@@ -196,6 +205,9 @@ protocol ControllerBackendProtocol: AnyObject {
     /// `skippingInitial` that resolved to the same declared name and value (already applied on the
     /// player's first open), and a clear of each name in `skippingInitial` no longer stored, or
     /// removes it with `nil`.
+    ///
+    /// The replay runs in name order. Names are distinct, so the order changes no result; it only
+    /// makes the replay the same on every run, which Dictionary order (random per process) is not.
     func installUpdateHandler(
       _ handler: ((String, ControllerNamedValue?) -> Void)?,
       for owner: ObjectIdentifier,
@@ -204,32 +216,33 @@ protocol ControllerBackendProtocol: AnyObject {
       updateHandlers[owner] = handler
       guard let handler else { return }
       var seeded: [String: ControllerNamedValue] = [:]
-      for name in initial.keys.sorted() {
-        guard let value = initial[name], let declared = declarations.declaredName(for: name),
-          declarations.accepts(value, for: declared)
+      for name in initial.keys.sorted() {  // lint-ok: O(n log n) once per install
+        guard let value = initial[name],
+          let declared = attachedDeclarations.declaredName(for: name),
+          attachedDeclarations.accepts(value, for: declared)
         else { continue }
         seeded[declared] = value
       }
-      for name in values.keys.sorted() {
-        guard let value = values[name] else { continue }
+      for name in valuesByName.keys.sorted() {  // lint-ok: O(n log n) once per install
+        guard let value = valuesByName[name] else { continue }
         if seeded[name] == value { continue }
         handler(name, value)
       }
       // A value the first open was seeded with that has been cleared since: the player holds it,
       // so it is handed the clear.
-      for name in seeded.keys.sorted() where values[name] == nil { handler(name, nil) }
+      // lint-ok: O(n log n) once per install
+      for name in seeded.keys.sorted() where valuesByName[name] == nil { handler(name, nil) }
     }
 
     /// A snapshot of the values written so far, keyed as currently stored, for comparing against
     /// post-attach values once a new player's declarations finish loading.
-    var storedValues: [String: ControllerNamedValue] { values }
+    var storedValues: [String: ControllerNamedValue] { valuesByName }
 
     /// Every value stored so far, sorted by key, for seeding a brand-new player's first open
     /// before its declarations finish loading on the main actor.
     var initialSeedValues: [(name: String, value: RemoteComposeNativeNamedValue)] {
-      values.keys.sorted().compactMap { name in
-        values[name].map { (name: name, value: $0.nativeValue) }
-      }
+      // lint-ok: O(n log n) once per player open
+      valuesByName.sorted { $0.key < $1.key }.map { (name: $0.key, value: $0.value.nativeValue) }
     }
 
     /// The values written so far, by the name the player's document declares them under, which
@@ -256,10 +269,18 @@ protocol ControllerBackendProtocol: AnyObject {
       return reopenSeed
     }
 
-    /// Every stored value, then every cleared name with no value.
+    /// Every stored value, then every pending cleared name with no value, each part in name order
+    /// (for a reproducible seed; the names are distinct, so the order changes no result).
     private var reopenSeed: [(name: String, value: RemoteComposeNativeNamedValue?)] {
-      initialSeedValues.map { (name: $0.name, value: $0.value) }
-        + cleared.sorted().map { (name: $0, value: nil) }
+      var seed: [(name: String, value: RemoteComposeNativeNamedValue?)] = []
+      seed.reserveCapacity(valuesByName.count + pendingClearedNames.count)
+      // lint-ok: O(n log n) once per reopen
+      for (name, value) in valuesByName.sorted(by: { $0.key < $1.key }) {
+        seed.append((name: name, value: value.nativeValue))
+      }
+      // lint-ok: O(c log c) once per reopen
+      for name in pendingClearedNames.sorted() { seed.append((name: name, value: nil)) }
+      return seed
     }
   }
 

@@ -484,7 +484,7 @@
       native.playerView.namedValueSeed = { [weak self, weak native] in
         guard let self, let native, self.nativeController === native else { return [] }
         let seed = self.playerController.backend.seedValues(for: owner).filter {
-          $0.value != nil || self.nativeHeldNames.contains($0.name)
+          $0.value != nil || self.nativeHeldNames.contains($0.name)  // lint-ok: Set, O(1)
         }
         for (name, value) in seed {
           self.latestNativeUpdates[name] = nil
@@ -520,7 +520,7 @@
           { [weak self, weak native] name, value in
             guard let self else { return }
             let token = self.beginNativeUpdate(for: name)
-            guard value != nil || self.nativeHeldNames.contains(name) else {
+            guard value != nil || self.nativeHeldNames.contains(name) else {  // lint-ok: Set
               // The write this clears never reached the player: no change (see `nativeHeldNames`).
               self.latestNativeUpdates[name] = nil
               return

@@ -844,19 +844,20 @@
       let startingValues = Task {
         let carried = await carried?.value ?? .none
         var seeded: [NativeStartingValue] = []
-        var cleared: Set<String> = []
+        var clearedNames: Set<String> = []
         var hostValues = carried.hostValues
         for (name, write) in seed where carried.hostValues[name] != write {
           if let value = write.value {
             seeded.append(NativeStartingValue(name: name, value: value))
           } else {
-            cleared.insert(name)
+            clearedNames.insert(name)
           }
           hostValues[name] = write
         }
         return NativeCarriedValues(
           values: NativeStartingValue.merging(
-            carried.values.filter { !cleared.contains($0.name) }, with: seeded),
+            carried.values.filter { !clearedNames.contains($0.name) },  // lint-ok: Set, O(n)
+            with: seeded),
           hostValues: hostValues)
       }
       carriedNamedValues = startingValues
@@ -1414,11 +1415,11 @@
       let name: String
       let value: NativeSwiftNamedValue?
       switch pending.input {
-      case .setNamed(let written, let writtenValue):
-        name = written
+      case .setNamed(let writtenName, let writtenValue):
+        name = writtenName
         value = writtenValue.coreValue
-      case .clearNamed(let cleared):
-        name = cleared
+      case .clearNamed(let clearedName):
+        name = clearedName
         value = nil
       default:
         return
