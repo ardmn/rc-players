@@ -5707,7 +5707,18 @@ private fun rcChildWeight(type: Int?, value: RcFloatWord?, state: RcPlayerState)
  * rounding NaN threw, as in AndroidX's embedded player (androidx-main `300a543b2`).
  */
 internal fun rcFontWeight(resolved: Float): Int =
-  if (resolved.isNaN()) 400 else resolved.javaRoundToInt().coerceIn(1, 1000)
+  if (resolved.isNaN()) RC_NORMAL_TEXT_WEIGHT else resolved.javaRoundToInt().coerceIn(1, 1000)
+
+/**
+ * [rcFontWeight] unrounded, for the native snapshot: `coerceIn` keeps a NaN, which then reached the
+ * native renderer as the weight. The Swift player's `NativeSwiftTextSnapshot.normalWeight` is its
+ * twin.
+ */
+internal fun rcTextWeight(resolved: Float): Float =
+  if (resolved.isNaN()) RC_NORMAL_TEXT_WEIGHT.toFloat() else resolved.coerceIn(1f, 1000f)
+
+/** The weight a text whose weight does not resolve to a number takes: CSS and Android's normal. */
+internal const val RC_NORMAL_TEXT_WEIGHT: Int = 400
 
 private fun Float.finiteOr(default: Float): Float = if (isFinite()) this else default
 

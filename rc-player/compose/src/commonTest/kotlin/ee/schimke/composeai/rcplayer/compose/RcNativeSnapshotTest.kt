@@ -290,29 +290,29 @@ class RcNativeSnapshotTest {
     assertTrue(click.snapshot.diagnostics.none { it.opcode == RcOpcodes.MODIFIER_CLICK })
   }
 
+  /**
+   * A write the snapshot refuses leaves the value as it was. The refusal is a `CoreText`
+   * line-height multiplier of -1; a text size of -1, the refusal this test used, is now the 12 px a
+   * host's negative size is everywhere else.
+   */
   @Test
   fun retainedSessionRollsBackNamedValueAfterInvalidSnapshot() {
-    val fontSize = RcFloatWord(0x7fc00000 or 20)
+    val lineHeight = RcFloatWord(0x7fc00000 or 20)
     val document =
       RcDocument(
         RcHeader(RcVersion(1, 0, 0), legacyWidth = 100, legacyHeight = 40, modern = false),
         listOf(
-          RcFloatConstant(20, RcFloatWord.literal(12f)),
-          RcNamedVariable(20, RcNamedVariable.FLOAT_TYPE, "USER:size"),
+          RcFloatConstant(20, RcFloatWord.literal(1f)),
+          RcNamedVariable(20, RcNamedVariable.FLOAT_TYPE, "USER:lineHeight"),
           RcTextData(30, "Title"),
           RcRootLayout(-2),
-          RcTextLayout(
-            -3,
-            0,
+          RcCoreText(
             30,
-            0xff000000.toInt(),
-            fontSize,
-            0,
-            RcFloatWord.literal(400f),
-            0,
-            1,
-            1,
-            1,
+            listOf(
+              RcTextStyleProperty.IntValue(1, -3),
+              RcTextStyleProperty.FloatValue(5, RcFloatWord.literal(12f)),
+              RcTextStyleProperty.FloatValue(14, lineHeight),
+            ),
           ),
           RcNoArg(RcOpcodes.CONTAINER_END),
           RcNoArg(RcOpcodes.CONTAINER_END),
@@ -322,8 +322,8 @@ class RcNativeSnapshotTest {
     fun commands(node: RcNativeNodeSnapshot): List<RcNativeDrawCommand> =
       node.commands + node.children.flatMap(::commands)
 
-    assertFailsWith<IllegalArgumentException> { session.setFloat("size", -1f) }
-    assertEquals(12f, commands(session.snapshot().root).single().textSize)
+    assertFailsWith<IllegalArgumentException> { session.setFloat("lineHeight", -1f) }
+    assertEquals(12f, commands(session.snapshot().root).single { it.text != null }.textSize)
   }
 
   @Test
