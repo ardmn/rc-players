@@ -136,6 +136,29 @@ class RcMesh2DGeneratorTest {
     assertNear(floatArrayOf(1f, 0f, 0f, 1f, 50f, 25f), rotation)
   }
 
+  /**
+   * A NaN `u` on a mesh sampled by its nearest vertex picks the first one, as AndroidX's
+   * `Math.round(Math.max(0f, Math.min(1f, NaN)) * (n - 1))` is 0 (Mesh2DGenerator.java:1260); here
+   * `roundToInt` threw.
+   */
+  @Test
+  fun aNaNPositionSamplesTheFirstVertexOfANearestVertexMesh() {
+    // One row: too few for the grid's bilinear sample, so the nearest vertex is taken.
+    val row =
+      RcMesh2DGeometry(
+        layout = 0,
+        uCount = 3,
+        vCount = 1,
+        positions = floatArrayOf(10f, 20f, 50f, 20f, 90f, 20f),
+        uv = FloatArray(6),
+        colors = IntArray(0),
+        indices = IntArray(0),
+      )
+    val origin = row.frameMatrix(Float.NaN, 0f, RcMatrixFromMesh2D.FLAG_ORIGIN)!!
+    assertEquals(10f, origin[4])
+    assertEquals(20f, origin[5])
+  }
+
   private fun assertNear(expected: FloatArray, actual: FloatArray) {
     assertEquals(expected.size, actual.size)
     assertTrue(

@@ -36,6 +36,16 @@ class RcTouchExpressionRuntimeTest {
     assertEquals(48f, absolute.stopTarget(55f, 0f, 100f, ::resolve))
   }
 
+  /**
+   * A NaN value — a host's, or one an expression divided out — snaps to the first notch: AndroidX's
+   * `(int) (0.5f + NaN)` is 0 (TouchExpression.java:291), where `roundToInt` threw.
+   */
+  @Test
+  fun aNaNValueSnapsToTheFirstNotch() {
+    val even = RcTouchExpressionRuntime(touch(RcTouchExpression.STOP_NOTCHES_EVEN, listOf(4f)))
+    assertEquals(0f, even.stopTarget(Float.NaN, 0f, 100f, ::resolve))
+  }
+
   @Test
   fun aTouchEffectFiresAsTheValueCrossesANotchAsAndroidXDoes() {
     // Kobento's `convert` writes touchEffects = 3: AndroidX's KEYBOARD_TAP haptic.

@@ -335,6 +335,7 @@ import ee.schimke.composeai.rcplayer.runtime.RcScrollBlock
 import ee.schimke.composeai.rcplayer.runtime.RcTouchActionBlock
 import ee.schimke.composeai.rcplayer.runtime.RcTouchActionType
 import ee.schimke.composeai.rcplayer.runtime.RcTouchExpressionRuntime
+import ee.schimke.composeai.rcplayer.runtime.javaRoundToInt
 import ee.schimke.composeai.rcplayer.trace.RcTraceCategory
 import ee.schimke.composeai.rcplayer.trace.rcTrace
 import kotlin.coroutines.EmptyCoroutineContext
@@ -342,7 +343,6 @@ import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -3322,7 +3322,34 @@ internal fun rcTextFontSizePixels(
   resolved: Float,
   density: Float,
   densityBehavior: Int,
-): Float = if (word.isNaNEncoded) resolved else rcDpTypedPixels(resolved, density, densityBehavior)
+): Float =
+  rcTextSizePixels(
+    if (word.isNaNEncoded) resolved else rcDpTypedPixels(resolved, density, densityBehavior),
+  )
+
+/**
+ * A text size, in pixels, as AndroidX's players hand it to Android's `Paint.setTextSize`, made safe
+ * for Skia's text layout here, which throws on a NaN size (skiko `TextStyle.setFontSize`'s
+ * `check(!size.isNaN())`) and on the NaN metrics an infinite size gives (`setBaselineShift`).
+ *
+ * Any float may arrive: the size may be a host's value. Android ignores a NaN or negative size
+ * (frameworks/base `libs/hwui/jni/Paint.cpp:1001`, `if (textSize >= 0)`), and the paint keeps the
+ * size it had, [previous]: a canvas paint's last size, or for a text component the size a fresh
+ * paint holds, Skia's 12 px default (`SkFont`'s `kDefault_Size`). A size past
+ * [RC_MAX_TEXT_SIZE_PX], an infinity included, Android takes as it is, and draws no glyph a screen
+ * shows; here it is that cap, so the same value always lays out the same.
+ */
+internal fun rcTextSizePixels(size: Float, previous: Float = RC_DEFAULT_TEXT_SIZE_PX): Float =
+  if (size >= 0f) size.coerceAtMost(RC_MAX_TEXT_SIZE_PX) else previous
+
+/** The text size a fresh Android `Paint` holds: Skia's `SkFont` default. */
+internal const val RC_DEFAULT_TEXT_SIZE_PX: Float = 12f
+
+/**
+ * The largest text size the players lay out: a glyph a million pixels tall is past any screen, and
+ * far inside the range Skia's text metrics stay finite in.
+ */
+internal const val RC_MAX_TEXT_SIZE_PX: Float = 1_000_000f
 
 private fun RcPlayerState.textFontSizePixels(word: RcFloatWord, density: Density): Float =
   rcTextFontSizePixels(word, resolve(word), density.density, document.header.densityBehavior)
@@ -3909,13 +3936,6 @@ private fun rcPaddingEndPixels(first: Float, second: Float): Int =
 
 internal fun rcCombinedPaddingPixels(first: Float, second: Float): Int =
   (first.coerceAtLeast(0f) + second.coerceAtLeast(0f)).javaRoundToInt()
-
-/**
- * Java's `Math.round`, which AndroidX's players round with: NaN — a host's value, or an expression
- * that divides zero by zero — is 0, where `roundToInt` throws; the infinities saturate, as they do
- * there.
- */
-private fun Float.javaRoundToInt(): Int = if (isNaN()) 0 else roundToInt()
 
 /** Publishes the pointer position to the document, as AndroidX does on every touch event. */
 private data class RcTouchPositionElement(
@@ -8291,8 +8311,11 @@ private fun applyPaint(
     when (command and 0xffff) {
       1 ->
         state.textSize =
-          values.resolve(
-            ee.schimke.composeai.rcplayer.protocol.RcFloatWord(operation.words[index++]),
+          rcTextSizePixels(
+            values.resolve(
+              ee.schimke.composeai.rcplayer.protocol.RcFloatWord(operation.words[index++]),
+            ),
+            previous = state.textSize,
           )
       4 -> state.color = operation.words[index++] // PaintBundle.COLOR
       5 ->
@@ -9276,30 +9299,42 @@ private class RcFlatEngine(
     }
   }
 
+  // A NaN exact size (a host's value, 0 / 0) is no size, as `Modifier.width(NaN.dp)`, Compose's
+  // `Dp.Unspecified`, is on the per-component path ([applyWidth]): the component wraps its content,
+  // and a later size modifier stays ignored there too.
   private fun Constraints.withWidth(width: RcWidthModifier): Constraints =
-    when (width.type) {
-      RcDimensionType.EXACT -> fixWidth(px(state.resolve(width.value)).javaRoundToInt())
-      RcDimensionType.EXACT_DP ->
-        fixWidth((state.resolve(width.value) * scope.density).javaRoundToInt())
-      RcDimensionType.FILL,
-      RcDimensionType.FILL_PARENT_MAX_WIDTH ->
-        if (hasBoundedWidth) fixWidth((maxWidth * state.fillFraction(width.value)).javaRoundToInt())
-        else this
-      else -> this
-    }
+    if (isNoSize(width.type, width.value)) this
+    else
+      when (width.type) {
+        RcDimensionType.EXACT -> fixWidth(px(state.resolve(width.value)).javaRoundToInt())
+        RcDimensionType.EXACT_DP ->
+          fixWidth((state.resolve(width.value) * scope.density).javaRoundToInt())
+        RcDimensionType.FILL,
+        RcDimensionType.FILL_PARENT_MAX_WIDTH ->
+          if (hasBoundedWidth)
+            fixWidth((maxWidth * state.fillFraction(width.value)).javaRoundToInt())
+          else this
+        else -> this
+      }
 
   private fun Constraints.withHeight(height: RcHeightModifier): Constraints =
-    when (height.type) {
-      RcDimensionType.EXACT -> fixHeight(px(state.resolve(height.value)).javaRoundToInt())
-      RcDimensionType.EXACT_DP ->
-        fixHeight((state.resolve(height.value) * scope.density).javaRoundToInt())
-      RcDimensionType.FILL,
-      RcDimensionType.FILL_PARENT_MAX_HEIGHT ->
-        if (hasBoundedHeight)
-          fixHeight((maxHeight * state.fillFraction(height.value)).javaRoundToInt())
-        else this
-      else -> this
-    }
+    if (isNoSize(height.type, height.value)) this
+    else
+      when (height.type) {
+        RcDimensionType.EXACT -> fixHeight(px(state.resolve(height.value)).javaRoundToInt())
+        RcDimensionType.EXACT_DP ->
+          fixHeight((state.resolve(height.value) * scope.density).javaRoundToInt())
+        RcDimensionType.FILL,
+        RcDimensionType.FILL_PARENT_MAX_HEIGHT ->
+          if (hasBoundedHeight)
+            fixHeight((maxHeight * state.fillFraction(height.value)).javaRoundToInt())
+          else this
+        else -> this
+      }
+
+  private fun isNoSize(type: Int, value: RcFloatWord): Boolean =
+    (type == RcDimensionType.EXACT || type == RcDimensionType.EXACT_DP) &&
+      state.resolve(value).isNaN()
 
   private fun Constraints.fixWidth(width: Int): Constraints {
     val w = constrainWidth(width.coerceAtLeast(0))

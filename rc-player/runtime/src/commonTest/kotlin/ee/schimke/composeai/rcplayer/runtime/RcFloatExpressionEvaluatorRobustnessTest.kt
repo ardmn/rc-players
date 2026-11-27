@@ -3,6 +3,8 @@ package ee.schimke.composeai.rcplayer.runtime
 import ee.schimke.composeai.rcplayer.protocol.RcFloatWord
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 
 /** Malformed expressions degrade to 0 instead of throwing out of the draw pass. */
 class RcFloatExpressionEvaluatorRobustnessTest {
@@ -50,6 +52,20 @@ class RcFloatExpressionEvaluatorRobustnessTest {
     }
     assertEquals(3f, evaluator.evaluate(listOf(list, word(1f), op(76))))
     assertEquals(0f, evaluator.evaluate(listOf(list, word(Float.POSITIVE_INFINITY), op(76))))
+  }
+
+  /**
+   * Only the sum's own limit reads 0: any other failure — here one in the caller's resolver — still
+   * reaches the caller, rather than turning into a silent 0.
+   */
+  @Test
+  fun aFailureOutsideTheSumsLimitIsNotSwallowed() {
+    val failure = IllegalArgumentException("resolver")
+    val thrown =
+      assertFailsWith<IllegalArgumentException> {
+        evaluator.evaluate(listOf(RcFloatWord(0x7fc00000 or 12), word(1f), op(1))) { throw failure }
+      }
+    assertSame(failure, thrown)
   }
 
   /** `A_LERP` reads AndroidX's `array[array.length - 1]`: out of bounds on an empty list, 0. */

@@ -8,10 +8,12 @@ import ee.schimke.composeai.rcplayer.protocol.RcCanvasLayout
 import ee.schimke.composeai.rcplayer.protocol.RcColorConstant
 import ee.schimke.composeai.rcplayer.protocol.RcColorExpression
 import ee.schimke.composeai.rcplayer.protocol.RcConditionalOperations
+import ee.schimke.composeai.rcplayer.protocol.RcCoreText
 import ee.schimke.composeai.rcplayer.protocol.RcDimensionType
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
 import ee.schimke.composeai.rcplayer.protocol.RcDocumentCodec
 import ee.schimke.composeai.rcplayer.protocol.RcDraw4
+import ee.schimke.composeai.rcplayer.protocol.RcDrawTextAnchored
 import ee.schimke.composeai.rcplayer.protocol.RcDynamicFloatList
 import ee.schimke.composeai.rcplayer.protocol.RcFloatConstant
 import ee.schimke.composeai.rcplayer.protocol.RcFloatExpression
@@ -21,6 +23,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcGraphicsLayerModifier
 import ee.schimke.composeai.rcplayer.protocol.RcHeader
 import ee.schimke.composeai.rcplayer.protocol.RcHeightModifier
 import ee.schimke.composeai.rcplayer.protocol.RcLayoutContent
+import ee.schimke.composeai.rcplayer.protocol.RcLoopOperation
 import ee.schimke.composeai.rcplayer.protocol.RcNamedVariable
 import ee.schimke.composeai.rcplayer.protocol.RcNoArg
 import ee.schimke.composeai.rcplayer.protocol.RcOffsetModifier
@@ -35,6 +38,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcTextFromFloat
 import ee.schimke.composeai.rcplayer.protocol.RcTextLayout
 import ee.schimke.composeai.rcplayer.protocol.RcTextLength
 import ee.schimke.composeai.rcplayer.protocol.RcTextMerge
+import ee.schimke.composeai.rcplayer.protocol.RcTextStyleProperty
 import ee.schimke.composeai.rcplayer.protocol.RcVersion
 import ee.schimke.composeai.rcplayer.protocol.RcVisibilityModifier
 import ee.schimke.composeai.rcplayer.protocol.RcWidthInModifier
@@ -73,6 +77,23 @@ class RcHostValueEdgeRenderTest {
       FLOAT_NAME
     }
 
+  /**
+   * The consumers the Swift fixtures do not hold yet: a text's font size, as layout text and as a
+   * canvas paint's, and a loop nest whose bounds are the host's. Each takes every edge float, past
+   * the ones above to the huge and the negative, without crashing or hanging the frame.
+   */
+  @Test(timeout = 120_000)
+  fun everyFontSizeAndLoopTakesNonFiniteHugeAndNegativeHostValues() =
+    assertRenders(
+      playerOnlyCases.flatMap { case ->
+        (EDGE_FLOATS + HUGE_AND_NEGATIVE_FLOATS).map { value ->
+          Triple(case, "$value", RcNamedValue.FloatValue(value))
+        }
+      },
+    ) {
+      FLOAT_NAME
+    }
+
   @Test(timeout = 120_000)
   fun everyTextConsumerTakesAStringFarOverADocumentString() =
     assertRenders(
@@ -83,16 +104,25 @@ class RcHostValueEdgeRenderTest {
       TEXT_NAME
     }
 
-  /** Renders every case with its value, and fails with every one that threw, not only the first. */
+  /**
+   * Renders every case with its value, and fails with every one that threw or took longer than
+   * [MAX_RENDER_MILLIS] for its frames, not only the first.
+   */
   private fun assertRenders(
     runs: List<Triple<Case, String, RcNamedValue>>,
     name: () -> String,
   ) {
     val failures = runs.mapNotNull { (case, label, value) ->
+      val start = System.nanoTime()
       runCatching { render(case.document, mapOf(name() to value)) }
         .fold(
           onSuccess = { bitmap ->
-            "${case.name} with $label drew ${bitmap.width} wide".takeIf { bitmap.width != WIDTH }
+            val millis = (System.nanoTime() - start) / 1_000_000
+            when {
+              bitmap.width != WIDTH -> "${case.name} with $label drew ${bitmap.width} wide"
+              millis > MAX_RENDER_MILLIS -> "${case.name} with $label took $millis ms"
+              else -> null
+            }
           },
           onFailure = { error ->
             val at = error.stackTrace.firstOrNull { "rcplayer" in it.className }
@@ -154,7 +184,12 @@ class RcHostValueEdgeRenderTest {
     )
 
   /** A text component showing [textId], after [data]. */
-  private fun text(name: String, textId: Int, data: List<RcOperation> = emptyList()) =
+  private fun text(
+    name: String,
+    textId: Int,
+    data: List<RcOperation> = emptyList(),
+    fontSize: RcFloatWord = literal(12f),
+  ) =
     Case(
       name,
       document(
@@ -168,7 +203,7 @@ class RcHostValueEdgeRenderTest {
               animationId = 50,
               textId = textId,
               color = INK,
-              fontSize = literal(12f),
+              fontSize = fontSize,
               fontStyle = 0,
               fontWeight = literal(400f),
               fontFamilyId = -1,
@@ -244,6 +279,39 @@ class RcHostValueEdgeRenderTest {
       text("text-from-float", FORMATTED, listOf(RcTextFromFloat(FORMATTED, HOST, 2, 2, 0))),
     )
 
+  /** Rendered here only: the Swift fixtures above do not include them yet. */
+  private val playerOnlyCases: List<Case> =
+    listOf(
+      text("text-size", HOST_TEXT_ID, fontSize = HOST),
+      Case("core-text-size", coreTextDocument(fontSize = HOST)),
+      canvas(
+        "paint-text-size",
+        draws =
+          listOf(
+            RcPaintData(listOf(PAINT_TEXT_SIZE, HOST.bits)),
+            RcDrawTextAnchored(
+              HOST_TEXT_ID,
+              literal(10f),
+              literal(30f),
+              literal(0f),
+              literal(0f),
+              0,
+            ),
+          ),
+      ),
+      canvas(
+        "nested-loop",
+        draws =
+          listOf(
+            RcLoopOperation(0, literal(0f), literal(1f), HOST),
+            RcLoopOperation(0, literal(0f), literal(1f), HOST),
+            rect(literal(0f), literal(0f), literal(1f), literal(1f)),
+            END,
+            END,
+          ),
+      ),
+    )
+
   private val textCases: List<Case> =
     listOf(
       text("long-text", HOST_TEXT_ID),
@@ -253,6 +321,28 @@ class RcHostValueEdgeRenderTest {
         listOf(RcWidthModifier(RcDimensionType.EXACT, reference(LENGTH))),
         data = listOf(RcTextLength(LENGTH, HOST_TEXT_ID)),
       ),
+    )
+
+  /** A `CoreText` showing the host's text at [fontSize], in a box. */
+  private fun coreTextDocument(fontSize: RcFloatWord): RcDocument =
+    document(
+      listOf(
+        RcRootLayout(1),
+        RcLayoutContent(2),
+        RcBoxLayout(3, 30, 1, 1),
+        RcLayoutContent(4),
+        RcCoreText(
+          textId = HOST_TEXT_ID,
+          properties =
+            listOf(
+              RcTextStyleProperty.IntValue(1, 5),
+              RcTextStyleProperty.IntValue(2, 50),
+              RcTextStyleProperty.IntValue(3, INK),
+              RcTextStyleProperty.FloatValue(5, fontSize),
+            ),
+        ),
+        END,
+      ) + List(4) { END },
     )
 
   /** A row of a 30px box and a box weighted by the host's float. */
@@ -327,6 +417,12 @@ class RcHostValueEdgeRenderTest {
     private const val FRAMES = 4
     private const val FRAME_NANOS = 16_000_000L
 
+    /**
+     * A case's frames, composition included, in a fraction of this: a loop nest the host can run
+     * forever is cut to 10 000 passes in all, a few milliseconds of rects.
+     */
+    private const val MAX_RENDER_MILLIS = 3_000L
+
     private const val HOST_ID = 100
     private const val HOST_TEXT_ID = 101
     private const val ANIMATED = 110
@@ -337,6 +433,9 @@ class RcHostValueEdgeRenderTest {
     private const val FORMATTED = 140
     private const val LENGTH = 141
     private const val MERGED = 142
+
+    /** AndroidX `PaintBundle.TEXT_SIZE`: the paint's text size is the float that follows. */
+    private const val PAINT_TEXT_SIZE = 1
 
     /** AndroidX `PaintBundle.COLOR_ID`: the paint's colour is the colour variable that follows. */
     private const val PAINT_COLOR_ID = 19
@@ -350,6 +449,9 @@ class RcHostValueEdgeRenderTest {
 
     private val EDGE_FLOATS =
       floatArrayOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, -0f, 3e9f)
+
+    /** Past the values the Swift fixtures are rendered with. */
+    private val HUGE_AND_NEGATIVE_FLOATS = floatArrayOf(1e30f, -1e30f, -5f, Float.MAX_VALUE)
 
     private val LONG_TEXTS = listOf("x".repeat(4_001), "word ".repeat(20_000), "😀".repeat(50_000))
 

@@ -10,7 +10,6 @@ import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
@@ -124,7 +123,7 @@ public class RcMesh2DGeometry(
         bilinear(i0, j0, i1, j1, tu, tv, 1),
       )
     }
-    val nearest = (u.coerceIn(0f, 1f) * (count - 1)).roundToInt().coerceIn(0, count - 1)
+    val nearest = (u.coerceIn(0f, 1f) * (count - 1)).javaRoundToInt().coerceIn(0, count - 1)
     return floatArrayOf(verts[nearest * 2], verts[nearest * 2 + 1])
   }
 
