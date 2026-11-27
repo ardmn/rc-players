@@ -3,7 +3,7 @@
 The dial from the Kotlin player's `RcTextOnCircleRenderTest` evidence strip. It is a grey stroked
 circle with "REMOTE COMPOSE" in blue on a `DrawTextOnCircle`, with alignment CENTER and placement
 OUTSIDE, pinned at -90°, radius 80 plus warp 10. The document is built byte for byte by
-`NativeTestDocuments.textOnCircle(dial:)`.
+`NativeTestDocuments.textOnCircle(.labelledDial)`.
 
 | Host | Before | After |
 | --- | --- | --- |
