@@ -44,13 +44,16 @@
       return wire.data
     }
 
-    /// One Kotlin frame is one pass: I60 = 1, F70 = 2 (the reference test above). The capture
-    /// paints that frame, so it reports those values, at the first instant and at a later one.
+    /// One Kotlin frame is one pass: I60 = 1, F70 = 2
+    /// (`RcValueOrderReferenceTest.aCycleThroughBothViewsAdvancesOncePerPass`). The capture paints
+    /// that frame, so it reports those values; each capture opens its own session, at the instant
+    /// 0 or another.
     @Test(arguments: [0.0, 0.5])
     func aCaptureReportsTheValuesOfTheFrameItPainted(timeSeconds: TimeInterval) throws {
       let data = Self.liveCycleDocument()
       let session = try NativeSwiftDocumentSession.open(data: data)
-      #expect(try session.snapshot(timeSeconds: 0).needsContinuousFrames)
+      // A static document reuses its snapshot, and the capture would resolve once either way.
+      try #require(try session.snapshot(timeSeconds: 0).needsContinuousFrames)
       let frame = try NativeAppKitWindowController.renderFrame(
         data: data, timeSeconds: timeSeconds,
         values: NativeMacValueRequest(
@@ -58,8 +61,8 @@
       let floats = frame.values?["floats"] as? [String: Double]
       let integers = frame.values?["integers"] as? [String: Int]
       let seen = [
-        integers?[String(Self.cycleIntegerID)] ?? -1,
-        Int(floats?[String(Self.cycleFloatID)] ?? -1),
+        Double(integers?[String(Self.cycleIntegerID)] ?? -1),
+        floats?[String(Self.cycleFloatID)] ?? -1,
       ]
       #expect(seen == [1, 2], "Kotlin I60 = 1, F70 = 2; Swift \(seen)")
     }
