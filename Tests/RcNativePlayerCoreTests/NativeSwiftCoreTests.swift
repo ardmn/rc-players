@@ -99,8 +99,9 @@ import Testing
     #expect(
       updatedDataOnlyValues.floats[99] == 24,
       "a float slot update did not survive resolution")
-    #expect(
-      !dataOnly.setFloat(.nan, forID: 99), "a non-finite float slot update was accepted")
+    // As AndroidX loads a touch position unchecked (CoreDocument.java:2076).
+    #expect(dataOnly.setFloat(.nan, forID: 99), "a non-finite float slot update was refused")
+    #expect(try dataOnly.probeValues(timeSeconds: 0).floats[99]?.isNaN == true)
   }
 
   @Test func dataMapsParticlesAndAnimationDescriptors() throws {

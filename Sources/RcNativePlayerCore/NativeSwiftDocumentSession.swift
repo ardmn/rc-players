@@ -566,8 +566,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     var events: [NativeSwiftEvent] = []
     for handler in document.eventHandlers where handler.type == type && handler.filter == metadata {
       try resolveIntegerExpressions()
-      // The reference's `overrideFloat`, which publishes both numeric views as `storeFloat` does.
-      for (id, value) in zip(handler.dataIDs, data) where id != 0 && value.isFinite {
+      // The reference's `overrideFloat`, which publishes both numeric views as `storeFloat` does,
+      // for any float the host sent (EventHandlerModifierOperation.java:112).
+      for (id, value) in zip(handler.dataIDs, data) where id != 0 {
         staticSnapshotCache = nil
         storeFloat(id, value)
       }
@@ -657,8 +658,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       case .integerValue(let targetID, let value):
         storeActionInteger(targetID, value)
       case .floatValue(let targetID, let value):
-        let resolved = NativeSwiftFloatExpression.resolve(value, values: values)
-        if resolved.isFinite { storeActionFloat(targetID, resolved) }
+        // Any float, as AndroidX's `overrideFloat` (ValueFloatChangeActionOperation.java:85) and
+        // Kotlin's `RcValueFloatChangeAction` write it.
+        storeActionFloat(targetID, NativeSwiftFloatExpression.resolve(value, values: values))
       case .textValue(let targetID, let textID):
         if let text = texts[textID] {
           texts[targetID] = text
@@ -910,12 +912,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   }
 
   /// Writes one float slot by id, for a gesture that moves a document's own value — a scroll's
-  /// offset is addressed by id rather than by name.
+  /// offset is addressed by id rather than by name. Any float is written, as AndroidX's
+  /// `touchDrag` loads a touch position (CoreDocument.java:2076) and a host's write by name is.
   @discardableResult
   public func setFloat(_ value: Float, forID id: Int) -> Bool {
     stateLock.lock()
     defer { stateLock.unlock() }
-    guard value.isFinite else { return false }
     storeFloat(id, value)
     staticSnapshotCache = nil
     return true
@@ -1501,7 +1503,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// written over a zero keeps the sign already there, as Kotlin's `storeFloat` keeps it; NaN is
   /// never equal to itself and is always written.
   private func storeFloat(_ id: Int, _ value: Float) {
-    let previous = floatOverrides[id] ?? floats[id] ?? 0
+    // The float view the id shows, which after an integer write with no document float is the
+    // integer's projection, as Kotlin's `setInteger` stores it in `floats`.
+    let previous = floatOverrides[id] ?? floats[id] ?? integers[id].map(Float.init) ?? 0
     floatOverrides[id] = value == previous ? previous : value
     integers[id] = nativeSwiftIntegerView(value)
   }
