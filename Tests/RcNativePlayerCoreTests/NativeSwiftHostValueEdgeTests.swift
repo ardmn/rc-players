@@ -200,13 +200,14 @@ import Testing
     #expect(!(try session.snapshot(timeSeconds: time)).needsContinuousFrames)
   }
 
-  /// The Kotlin player runs AndroidX's loop, `for (i = from; i < until; i += step)`
-  /// (`LoopOperation.java:125`), and stops a loop that would not end after 10 000 passes
-  /// (`RcPlayerState.forEachLoopValue`): `RcPlayerStateTest.loopOperationHonorsTheIterationCap`'s
-  /// cases. This player unrolls the loop when it opens the document, with the same cap. It reads
-  /// the bounds then, from literals and document constants, which cannot be NaN, so Kotlin's NaN
-  /// cases have no counterpart here.
-  @Test func aLoopStopsAtKotlinsCap() throws {
+  /// AndroidX runs `for (i = from; i < until; i += step)` (`LoopOperation.java:125`) and counts
+  /// each pass and each operation of its body, failing the frame past 20 000 in one paint
+  /// (`RemoteContext.incrementOpCount`); here a loop stops at that budget instead
+  /// (`maximumLoopOperationsPerFrame`), so a one-operation body runs 10 000 passes:
+  /// `RcPlayerStateTest.loopOperationHonorsTheIterationCap`'s cases. This player unrolls the loop
+  /// when it opens the document, reading the bounds from literals and document constants, which
+  /// cannot be NaN, so Kotlin's NaN cases have no counterpart here.
+  @Test func aLoopStopsAtTheFramesOperationBudget() throws {
     let cases: [(from: Float, until: Float, step: Float, passes: Int)] = [
       (0, 1, 0.000_01, 10_000), (0, .infinity, 1, 10_000), (0, 1, 0, 10_000),
       (1e9, 2e9, 1, 10_000), (-.infinity, 0, 1, 10_000), (.infinity, .infinity, 1, 0),
@@ -225,6 +226,40 @@ import Testing
         .commands
       #expect(commands.count == passes + 1, "\(label): \(commands.count - 1) passes")
     }
+  }
+
+  /// The budget is the frame's, every loop's passes and body operations together, charged in the
+  /// order AndroidX runs them: a pass and each operation directly in its body.
+  @Test func everyLoopInTheFrameSharesOneOperationBudget() throws {
+    typealias Op = NativeSwiftWireOpcode
+    func rects(_ count: Int, _ document: Writer) {
+      for _ in 0..<count { document.u8(Op.drawRect).float(0).float(0).float(1).float(1) }
+    }
+    func drawn(_ build: (Writer) -> Void) throws -> Int {
+      let document = Writer()
+      document.header(width: 100, height: 100)
+      build(document)
+      return try NativeSwiftDocumentSession.open(data: document.data).snapshot().root.commands
+        .count
+    }
+    let budget = NativeSwiftDocumentDecoder.maximumLoopOperationsPerFrame
+    #expect(budget == 20_000)
+    // Three operations a pass: 4 each.
+    let threeEach = try drawn { document in
+      document.u8(Op.loopStart).int(0).float(0).float(1).float(.infinity)
+      rects(3, document)
+      document.u8(Op.containerEnd)
+    }
+    #expect(threeEach == budget / 4 * 3)
+    // Two loops of 15 000 passes: the first takes the whole budget.
+    let twoLoops = try drawn { document in
+      for _ in 0..<2 {
+        document.u8(Op.loopStart).int(0).float(0).float(1).float(15_000)
+        rects(1, document)
+        document.u8(Op.containerEnd)
+      }
+    }
+    #expect(twoLoops == budget / 2)
   }
 
   /// After the loop its index holds the last value it took, as the Kotlin player's `setFloat` of
