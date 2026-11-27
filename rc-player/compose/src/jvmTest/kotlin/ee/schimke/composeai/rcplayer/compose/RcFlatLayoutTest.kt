@@ -28,6 +28,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcCoreText
 import ee.schimke.composeai.rcplayer.protocol.RcDimensionType
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
 import ee.schimke.composeai.rcplayer.protocol.RcFloatConstant
+import ee.schimke.composeai.rcplayer.protocol.RcFloatExpression
 import ee.schimke.composeai.rcplayer.protocol.RcFloatWord
 import ee.schimke.composeai.rcplayer.protocol.RcGraphicsLayerAttribute
 import ee.schimke.composeai.rcplayer.protocol.RcGraphicsLayerModifier
@@ -49,6 +50,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcVersion
 import ee.schimke.composeai.rcplayer.protocol.RcVisibilityModifier
 import ee.schimke.composeai.rcplayer.protocol.RcWidthModifier
 import ee.schimke.composeai.rcplayer.protocol.RcZIndexModifier
+import ee.schimke.composeai.rcplayer.runtime.RcFloatExpressionEvaluator
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
 import java.io.File
 import kotlin.test.Test
@@ -106,6 +108,43 @@ class RcFlatLayoutTest {
       waitForIdle()
       onNodeWithText("Subtitle").assertExists()
     }
+
+  /**
+   * An exact size that is NaN (a host's value, or 0 / 0) is no size, as Compose's `width(NaN.dp)`
+   * on the per-component path is: the box wraps its content, and the box below it moves down to
+   * make room. The flat layout took it as 0, and drew the next box over the first.
+   */
+  @Test
+  fun aNaNExactSizeWrapsAsOnThePerComponentPath() {
+    val nan = RcFloatWord(0x7fc00000 or NOT_A_NUMBER)
+    for (type in listOf(RcDimensionType.EXACT, RcDimensionType.EXACT_DP)) {
+      val wrapping =
+        listOf(
+          RcBoxLayout(10, -1, 1, 1),
+          RcWidthModifier(type, nan),
+          RcHeightModifier(type, nan),
+          RcLayoutContent(11),
+        ) + box(20, 1f, 30f, 20f) + listOf(end, end)
+      val document =
+        document(
+          RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)),
+          listOf(wrapping, box(30, 0f, 30f, 20f)),
+          listOf(
+            RcFloatExpression(
+              NOT_A_NUMBER,
+              listOf(
+                RcFloatWord.literal(0f),
+                RcFloatWord.literal(0f),
+                RcFloatExpressionEvaluator.operatorWord(RcFloatExpressionEvaluator.OFFSET + 4),
+              ),
+              null,
+            ),
+          ),
+        )
+      assertTrue(10 in RcPreparedDocument(document).plainComponents, "the box is not flattened")
+      assertSameBothWays(document, width = 100, height = 60)
+    }
+  }
 
   @Test
   fun aRowLeavesRoomForItsGapsWhenItMeasures() {
@@ -888,5 +927,6 @@ class RcFlatLayoutTest {
     const val TEXT = 43
     const val FRAME_NANOS = 16_000_000L
     const val ALPHA = 44
+    const val NOT_A_NUMBER = 45
   }
 }

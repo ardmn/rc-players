@@ -9299,30 +9299,42 @@ private class RcFlatEngine(
     }
   }
 
+  // A NaN exact size (a host's value, 0 / 0) is no size, as `Modifier.width(NaN.dp)`, Compose's
+  // `Dp.Unspecified`, is on the per-component path ([applyWidth]): the component wraps its content,
+  // and a later size modifier stays ignored there too.
   private fun Constraints.withWidth(width: RcWidthModifier): Constraints =
-    when (width.type) {
-      RcDimensionType.EXACT -> fixWidth(px(state.resolve(width.value)).javaRoundToInt())
-      RcDimensionType.EXACT_DP ->
-        fixWidth((state.resolve(width.value) * scope.density).javaRoundToInt())
-      RcDimensionType.FILL,
-      RcDimensionType.FILL_PARENT_MAX_WIDTH ->
-        if (hasBoundedWidth) fixWidth((maxWidth * state.fillFraction(width.value)).javaRoundToInt())
-        else this
-      else -> this
-    }
+    if (isNoSize(width.type, width.value)) this
+    else
+      when (width.type) {
+        RcDimensionType.EXACT -> fixWidth(px(state.resolve(width.value)).javaRoundToInt())
+        RcDimensionType.EXACT_DP ->
+          fixWidth((state.resolve(width.value) * scope.density).javaRoundToInt())
+        RcDimensionType.FILL,
+        RcDimensionType.FILL_PARENT_MAX_WIDTH ->
+          if (hasBoundedWidth)
+            fixWidth((maxWidth * state.fillFraction(width.value)).javaRoundToInt())
+          else this
+        else -> this
+      }
 
   private fun Constraints.withHeight(height: RcHeightModifier): Constraints =
-    when (height.type) {
-      RcDimensionType.EXACT -> fixHeight(px(state.resolve(height.value)).javaRoundToInt())
-      RcDimensionType.EXACT_DP ->
-        fixHeight((state.resolve(height.value) * scope.density).javaRoundToInt())
-      RcDimensionType.FILL,
-      RcDimensionType.FILL_PARENT_MAX_HEIGHT ->
-        if (hasBoundedHeight)
-          fixHeight((maxHeight * state.fillFraction(height.value)).javaRoundToInt())
-        else this
-      else -> this
-    }
+    if (isNoSize(height.type, height.value)) this
+    else
+      when (height.type) {
+        RcDimensionType.EXACT -> fixHeight(px(state.resolve(height.value)).javaRoundToInt())
+        RcDimensionType.EXACT_DP ->
+          fixHeight((state.resolve(height.value) * scope.density).javaRoundToInt())
+        RcDimensionType.FILL,
+        RcDimensionType.FILL_PARENT_MAX_HEIGHT ->
+          if (hasBoundedHeight)
+            fixHeight((maxHeight * state.fillFraction(height.value)).javaRoundToInt())
+          else this
+        else -> this
+      }
+
+  private fun isNoSize(type: Int, value: RcFloatWord): Boolean =
+    (type == RcDimensionType.EXACT || type == RcDimensionType.EXACT_DP) &&
+      state.resolve(value).isNaN()
 
   private fun Constraints.fixWidth(width: Int): Constraints {
     val w = constrainWidth(width.coerceAtLeast(0))
