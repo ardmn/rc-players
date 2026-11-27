@@ -52,6 +52,16 @@ var products: [Product] = [
   .library(name: "RcPlayerAppleFonts", targets: ["RcPlayerAppleFonts"]),
   .library(name: "RcComposePlayerSwiftUI", targets: ["RcComposePlayerSwiftUI"]),
   .library(name: "RcNativePlayerCore", targets: ["RcNativePlayerCore"]),
+  // Authoring `.rc` documents from Swift, in SwiftUI's shape: views, modifiers and stacks. Pure
+  // Swift with no player dependency, so it builds on every platform, Linux included.
+  .library(name: "RcCreation", targets: ["RcCreation"]),
+  // Apple's counterparts of AndroidX's remote-foundation and remote-material3, on RcCreation:
+  // system colours, symbols, icons and images; then HIG controls and WidgetKit-style widgets.
+  .library(name: "RcCreationFoundation", targets: ["RcCreationFoundation"]),
+  .library(name: "RcCreationAppleUI", targets: ["RcCreationAppleUI"]),
+  // Typed host writes, `set(variable, to: value)`, on the players, for a host that authored its
+  // document with RcCreation. Opt-in, so an app that only plays documents links no authoring code.
+  .library(name: "RcCreationHost", targets: ["RcCreationHost"]),
   .library(name: "RcNativePlayerUIKit", targets: ["RcNativePlayerUIKit"]),
   // The AppKit renderer as a command-line tool: what the preview server's `swift-appkit` lane
   // spawns. Released as `rc-swift-render-macos-arm64.zip`; see docs/design/RC_SWIFT_RENDER.md.
@@ -74,6 +84,14 @@ if !nativeOnly {
     .target(name: "RcComposePlayer", condition: .when(platforms: [.iOS, .macOS])), at: 0)
 }
 
+// The host writes reach every player the build has: the native session everywhere, and the
+// SwiftUI controller and UIKit player on Apple platforms. Its sources import the latter two only
+// where they can be imported.
+var creationHostDependencies: [Target.Dependency] = ["RcCreation", "RcNativePlayerCore"]
+if !coreOnly {
+  creationHostDependencies += ["RcComposePlayerSwiftUI", "RcNativePlayerUIKit"]
+}
+
 var targets: [Target] = [
   // Each shipping Apple target carries an App Store privacy manifest. `RcNativePlayerUIKit`
   // declares the system-boot-time reason because its AppKit host still reads
@@ -81,6 +99,29 @@ var targets: [Target] = [
   .target(name: "RcPlayerAppleFonts", resources: [.copy("PrivacyInfo.xcprivacy")]),
   .target(name: "RcComposePlayerSwiftUI", dependencies: swiftUIDependencies),
   .target(name: "RcNativePlayerCore"),
+  // Writes through the generated bindings: every operation it emits is a `WireOperation`.
+  .target(name: "RcCreation", dependencies: ["RcWireOperations"]),
+  .target(name: "RcCreationFoundation", dependencies: ["RcCreation"]),
+  .target(name: "RcCreationAppleUI", dependencies: ["RcCreation", "RcCreationFoundation"]),
+  .target(name: "RcCreationHost", dependencies: creationHostDependencies),
+  .testTarget(
+    name: "RcCreationHostTests",
+    dependencies: ["RcCreation", "RcCreationHost", "RcNativePlayerCore"]),
+  .testTarget(
+    name: "RcCreationAppleUITests",
+    dependencies: [
+      "RcCreation", "RcCreationFoundation", "RcCreationAppleUI", "RcWireOperations",
+      "RcNativePlayerCore",
+    ]),
+  // Upstream AndroidX's per-operation Swift bindings, generated Foundation-free by `:rc-codegen`
+  // (target `swift`) from the forked schema in `third_party/remote-generator`. Not a product of
+  // its own yet; RcCreation writes through it and its tests hold it to the documents this
+  // repository plays.
+  .target(name: "RcWireOperations"),
+  .testTarget(name: "RcWireOperationsTests", dependencies: ["RcWireOperations", "RcCreation"]),
+  // Round trips: documents written by RcCreation, read back by the native document core.
+  .testTarget(
+    name: "RcCreationTests", dependencies: ["RcCreation", "RcWireOperations", "RcNativePlayerCore"]),
   .target(
     name: "RcNativePlayerUIKit",
     dependencies: ["RcNativePlayerCore", "RcPlayerAppleFonts"],
@@ -126,8 +167,18 @@ if nativeOnly {
     ))
 }
 if coreOnly {
-  let coreTargets: Set<String> = ["RcNativePlayerCore", "RcNativePlayerCoreTests"]
-  products = products.filter { $0.name == "RcNativePlayerCore" }
+  let coreTargets: Set<String> = [
+    "RcNativePlayerCore", "RcNativePlayerCoreTests", "RcCreation", "RcCreationTests",
+    "RcCreationFoundation", "RcCreationAppleUI", "RcCreationAppleUITests",
+    "RcCreationHost", "RcCreationHostTests",
+    "RcWireOperations", "RcWireOperationsTests",
+  ]
+  products = products.filter {
+    [
+      "RcNativePlayerCore", "RcCreation", "RcCreationFoundation", "RcCreationAppleUI",
+      "RcCreationHost",
+    ].contains($0.name)
+  }
   targets = targets.filter { coreTargets.contains($0.name) }
 }
 if !nativeOnly {

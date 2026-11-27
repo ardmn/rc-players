@@ -619,6 +619,20 @@ enum NativeSwiftHeaderKey {
   static let densityBehavior = 27
 }
 
+/// `BackgroundModifierOperation`'s `shapeType`: every value AndroidX defines. The native core draws
+/// only the rectangle and reports a circle as unsupported.
+enum NativeSwiftBackgroundShape {
+  static let rectangle = 0
+  static let circle = 1
+}
+
+/// Background and border modifier `flags` (`BackgroundModifierOperation`,
+/// `BorderModifierOperation`): bit 1 says the colour is the id in the `colorId` word rather than
+/// the four channel floats. AndroidX names no other bit.
+enum NativeSwiftModifierColorFlag {
+  static let colorID = 2
+}
+
 /// The magic a modern header ORs into the high half of its major-version word
 /// (`Header.MAGIC_NUMBER`).
 let nativeSwiftHeaderMagic = 0x048c_0000
@@ -1041,6 +1055,14 @@ public enum NativeSwiftTextAlignment: Int, Sendable, Equatable {
   public init(wireValue: Int) {
     self = NativeSwiftTextAlignment(rawValue: wireValue) ?? .start
   }
+}
+
+/// `TextLayout`'s flags, the upper half of its `textAlign` word (shifted down), from the schema's
+/// `TextLayout.textAlign` bits: `isDynamicColor` is bit 16 of the word; bits 17 to 31 are
+/// reserved.
+public enum NativeSwiftTextLayoutFlag {
+  /// `color` is a colour id, not an ARGB value.
+  public static let dynamicColor: UInt32 = 1
 }
 
 /// `RcTextLayout`'s text overflow values.
