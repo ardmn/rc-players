@@ -249,6 +249,27 @@ captures to the same document operation for operation, in dp and legacy density.
 corpus, Material components draw through canvases with computed geometry, so most documents come
 back as a correct component tree with their drawing marked rather than written.
 
+#### From Swift (`RcCreation`) — experimental
+
+The `RcCreation` SwiftPM product writes documents from Swift in SwiftUI's shape: `RemoteView` structs
+with a `body`, modifiers on any view, stacks, string interpolation, typed variables the host writes
+later, adaptive colours and text styles. Every operation goes through the generated `RcWireOperations`
+bindings, and encoding throws a typed `RemoteEncodingError`. Pure Swift with no player dependency, so
+it builds on Linux too. Its tests read every document back through the native player core. Design and
+coverage: [`docs/design/RC_SWIFT_CREATION.md`](docs/design/RC_SWIFT_CREATION.md).
+
+```swift
+let progress = RemoteVariable("progress", default: 0.62)
+let document = RemoteDocument(width: 360, height: 200, displayScale: 2) {
+  RemoteVStack(alignment: .leading, spacing: 12) {
+    RemoteText("Upload \(progress * 100, decimals: 0)%").font(.footnote)
+    RemoteColor.blue.frame(width: progress * 328, height: 8)
+  }
+  .padding(16)
+}
+let bytes: [UInt8] = try document.encode()
+```
+
 ### Reading and diffing a document
 
 A capture is reproducible down to the bit: the same content and display capture to the same bytes
@@ -398,6 +419,14 @@ text-metrics set. Committed visual evidence is under `renders/`.
 `rc-player/compat-tests` generates `.rc` fixtures with the real AndroidX writer, so the CMP reader is
 tested against documents it did not produce. `rc-player/profile` and `rc-player/metrics` are the
 profiling and text-metric harnesses. None of the three publishes anything.
+
+`rc-codegen` generates wire code from AndroidX's Remote Compose schema, through a fork of AndroidX's
+`remote-generator` (`third_party/remote-generator`) that takes pluggable targets. It owns one
+committed Swift source: `RcWireOperations`, upstream's per-operation Swift bindings made Swift 6
+(Foundation-free, typed throws, `Sendable`, a closed `WireOperation` enum), which `RcCreation`
+writes through. `./gradlew :rc-codegen:generateSwiftSources` regenerates it, and `check` fails while
+it is stale. See
+[`docs/design/RC_CODEGEN.md`](docs/design/RC_CODEGEN.md).
 
 For an Apple-only, simulator-oriented CMP/UIKit comparison, see
 [`docs/design/APPLE_PLAYER_BENCHMARKS.md`](docs/design/APPLE_PLAYER_BENCHMARKS.md).
