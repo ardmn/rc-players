@@ -129,6 +129,28 @@ class RcComposeSupportTest {
     assertEquals(30f, rcTextFontSizePixels(variable, 30f, 2f, RcHeader.DENSITY_BEHAVIOR_DP))
   }
 
+  /**
+   * Android's `Paint.setTextSize` ignores a NaN or negative size, and takes any other; Skia's text
+   * layout here throws on NaN and on an infinity's metrics, so a size past the cap is the cap.
+   */
+  @Test
+  fun aTextSizeIsWhatAndroidsPaintTakesWithinTheCap() {
+    for (ignored in listOf(Float.NaN, -5f, -1e30f, Float.NEGATIVE_INFINITY)) {
+      assertEquals(RC_DEFAULT_TEXT_SIZE_PX, rcTextSizePixels(ignored), "$ignored")
+      assertEquals(20f, rcTextSizePixels(ignored, previous = 20f), "$ignored")
+    }
+    assertEquals(0f, rcTextSizePixels(0f))
+    assertEquals(36f, rcTextSizePixels(36f))
+    for (huge in listOf(1e30f, Float.MAX_VALUE, Float.POSITIVE_INFINITY)) {
+      assertEquals(RC_MAX_TEXT_SIZE_PX, rcTextSizePixels(huge), "$huge")
+    }
+    val variable = RcFloatWord(0x7f800000 or 42)
+    assertEquals(
+      RC_DEFAULT_TEXT_SIZE_PX,
+      rcTextFontSizePixels(variable, Float.NaN, 2f, RcHeader.DENSITY_BEHAVIOR_DP),
+    )
+  }
+
   @Test
   fun dimensionConstraintsRetainTheirAndroidXLegacyException() {
     assertEquals(52f, rcDimensionConstraintDp(52f, 2f, RcHeader.DENSITY_BEHAVIOR_LEGACY))

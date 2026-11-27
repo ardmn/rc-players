@@ -3322,7 +3322,34 @@ internal fun rcTextFontSizePixels(
   resolved: Float,
   density: Float,
   densityBehavior: Int,
-): Float = if (word.isNaNEncoded) resolved else rcDpTypedPixels(resolved, density, densityBehavior)
+): Float =
+  rcTextSizePixels(
+    if (word.isNaNEncoded) resolved else rcDpTypedPixels(resolved, density, densityBehavior),
+  )
+
+/**
+ * A text size, in pixels, as AndroidX's players hand it to Android's `Paint.setTextSize`, made safe
+ * for Skia's text layout here, which throws on a NaN size (skiko `TextStyle.setFontSize`'s
+ * `check(!size.isNaN())`) and on the NaN metrics an infinite size gives (`setBaselineShift`).
+ *
+ * Any float may arrive: the size may be a host's value. Android ignores a NaN or negative size
+ * (frameworks/base `libs/hwui/jni/Paint.cpp:1001`, `if (textSize >= 0)`), and the paint keeps the
+ * size it had, [previous]: a canvas paint's last size, or for a text component the size a fresh
+ * paint holds, Skia's 12 px default (`SkFont`'s `kDefault_Size`). A size past
+ * [RC_MAX_TEXT_SIZE_PX], an infinity included, Android takes as it is, and draws no glyph a screen
+ * shows; here it is that cap, so the same value always lays out the same.
+ */
+internal fun rcTextSizePixels(size: Float, previous: Float = RC_DEFAULT_TEXT_SIZE_PX): Float =
+  if (size >= 0f) size.coerceAtMost(RC_MAX_TEXT_SIZE_PX) else previous
+
+/** The text size a fresh Android `Paint` holds: Skia's `SkFont` default. */
+internal const val RC_DEFAULT_TEXT_SIZE_PX: Float = 12f
+
+/**
+ * The largest text size the players lay out: a glyph a million pixels tall is past any screen, and
+ * far inside the range Skia's text metrics stay finite in.
+ */
+internal const val RC_MAX_TEXT_SIZE_PX: Float = 1_000_000f
 
 private fun RcPlayerState.textFontSizePixels(word: RcFloatWord, density: Density): Float =
   rcTextFontSizePixels(word, resolve(word), density.density, document.header.densityBehavior)
@@ -8284,8 +8311,11 @@ private fun applyPaint(
     when (command and 0xffff) {
       1 ->
         state.textSize =
-          values.resolve(
-            ee.schimke.composeai.rcplayer.protocol.RcFloatWord(operation.words[index++]),
+          rcTextSizePixels(
+            values.resolve(
+              ee.schimke.composeai.rcplayer.protocol.RcFloatWord(operation.words[index++]),
+            ),
+            previous = state.textSize,
           )
       4 -> state.color = operation.words[index++] // PaintBundle.COLOR
       5 ->
