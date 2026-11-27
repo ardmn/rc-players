@@ -74,11 +74,15 @@ import ee.schimke.composeai.rcplayer.trace.RcTraceCategory
 import ee.schimke.composeai.rcplayer.trace.rcTrace
 
 /**
- * The passes a loop nest runs in all ([RcPlayerState.forEachLoopValue]): AndroidX has no bound, so
- * this one is the player's own: the bound AndroidX holds `A_SUM_TILL` to
- * (`Limits.MAX_SUM_TILL_ITERATIONS`), and far past any loop a document draws on purpose.
+ * The loop operations a frame runs in all ([RcPlayerState.forEachLoopValue]): AndroidX's
+ * `Limits.MAX_OP_COUNT` (Limits.java:24, androidx-main 4cd983e99fe). AndroidX counts one for every
+ * pass of a loop and one for every operation in its body, at every depth (`LoopOperation.paint`,
+ * LoopOperation.java:126-140, through `RemoteContext.incrementOpCount`, RemoteContext.java:1144),
+ * from zero at the top of each paint (`CoreDocument.paint`'s `clearLastOpCount`), and throws past
+ * it. Here the loop stops and the frame renders. The native Swift player's constant of the same
+ * name is its twin.
  */
-private const val MAX_LOOP_ITERATIONS = 10_000
+private const val MAX_LOOP_OPERATIONS_PER_FRAME = 20_000
 
 /**
  * The `sp` size AndroidX publishes as `RemoteContext.ID_FONT_SIZE`, before density and font scale.
@@ -973,27 +977,42 @@ private constructor(
   }
 
   /**
-   * Runs AndroidX's loop, `for (i = from; i < until; i += step)`, with a hard resource bound.
+   * Runs AndroidX's loop, `for (i = from; i < until; i += step)`, under AndroidX's operation
+   * budget.
    *
    * Every bound may be a host's value, so any float reaches here: a NaN bound or step runs what
-   * Java's loop runs (none, or a single pass for a NaN step). AndroidX's `LoopOperation.paint` has
-   * no bound at all (LoopOperation.java:125 and :133, androidx-main 4cd983e99fe), so a loop it
-   * would never leave (an infinite bound, a step that does not advance the index) hangs its player.
-   * Here a loop and every loop nested in it run at most [MAX_LOOP_ITERATIONS] passes **in all**,
-   * counting each pass at every depth in the order they run: two nested loops to a host's infinity
-   * ran 10 000 x 10 000 passes otherwise. Each outermost loop starts a fresh budget, so what a nest
-   * draws does not depend on what ran before it, and a frame runs at most that many passes per
-   * outermost loop in the document.
+   * Java's loop runs (none, or a single pass for a NaN step), and a loop it would never leave (an
+   * infinite bound, a step that does not advance the index) runs until the budget is spent.
+   *
+   * The budget is AndroidX's: [MAX_LOOP_OPERATIONS_PER_FRAME] for all of a frame's loops, a pass
+   * costing one plus the [bodyOperations] it runs, inner loops' passes counted as they run.
+   * AndroidX paints every loop of a document each frame, in document order, so a loop has what the
+   * loops before it in the document left. Compose redraws only what changed, so here each outermost
+   * loop records what it used, and a loop starts with the budget less what the loops before it in
+   * the document used when they last ran: what a loop draws depends on the document and its values,
+   * not on which components this frame redrew. A pass runs only when all of it fits, where AndroidX
+   * throws part way through one. A loop that is not one of the document's own operations has the
+   * whole budget.
    */
-  public fun forEachLoopValue(operation: RcLoopOperation, block: (Float) -> Unit) {
+  public fun forEachLoopValue(
+    operation: RcLoopOperation,
+    bodyOperations: Int,
+    block: (Float) -> Unit,
+  ) {
     val until = resolve(operation.until)
     val step = resolve(operation.step)
     var value = resolve(operation.from)
-    if (loopDepth == 0) loopPassesLeft = MAX_LOOP_ITERATIONS
+    val passCost = 1 + bodyOperations.coerceAtLeast(0)
+    val ordinal = if (loopDepth == 0) documentLoops.indexOfFirst { it === operation } else -1
+    if (loopDepth == 0) {
+      loopOperationsLeft =
+        MAX_LOOP_OPERATIONS_PER_FRAME - (0 until ordinal).sumOf { loopOperationsUsed[it] }
+    }
+    val budgetAtStart = loopOperationsLeft
     loopDepth++
     try {
-      while (value < until && loopPassesLeft > 0) {
-        loopPassesLeft--
+      while (value < until && loopOperationsLeft >= passCost) {
+        loopOperationsLeft -= passCost
         if (operation.indexVariableId != 0) {
           setFloat(operation.indexVariableId, value)
           loopDependents(operation.indexVariableId).forEach(::applyFloatExpression)
@@ -1003,12 +1022,21 @@ private constructor(
       }
     } finally {
       loopDepth--
+      if (ordinal >= 0) loopOperationsUsed[ordinal] = budgetAtStart - loopOperationsLeft
     }
   }
 
-  /** How deep [forEachLoopValue] is nested, and the passes its outermost loop has left. */
+  /** How deep [forEachLoopValue] is nested, and the operations its outermost loop has left. */
   private var loopDepth = 0
-  private var loopPassesLeft = 0
+  private var loopOperationsLeft = 0
+
+  /** The document's loops, in document order: the order AndroidX spends a frame's budget in. */
+  private val documentLoops: List<RcLoopOperation> by lazy {
+    document.operations.filterIsInstance<RcLoopOperation>()
+  }
+
+  /** The operations each of [documentLoops] used, with every loop in it, when it last ran. */
+  private val loopOperationsUsed: IntArray by lazy { IntArray(documentLoops.size) }
 
   private val loopDependentExpressions = mutableMapOf<Int, List<RcFloatExpression>>()
 
@@ -1404,7 +1432,9 @@ private constructor(
                 theme == requestedTheme
             if (visible) {
               runCatching {
-                forEachLoopValue(loop) { applyScope(node.children, theme, applyDirect = true) }
+                forEachLoopValue(loop, node.children.size) {
+                  applyScope(node.children, theme, applyDirect = true)
+                }
               }
             }
           }

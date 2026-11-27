@@ -6485,7 +6485,7 @@ private fun DrawScope.drawOperationsRouted(
           }
           RcOpcodes.LOOP_START -> {
             val loop = node.operation as RcLoopOperation
-            state.forEachLoopValue(loop) {
+            state.forEachLoopValue(loop, node.children.size) {
               drawOperations(
                 node.children,
                 state,

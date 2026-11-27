@@ -419,7 +419,7 @@ class RcHostValueEdgeRenderTest {
 
     /**
      * A case's frames, composition included, in a fraction of this: a loop nest the host can run
-     * forever is cut to 10 000 passes in all, a few milliseconds of rects.
+     * forever stops at AndroidX's 20 000 operations a frame, a few milliseconds of rects.
      */
     private const val MAX_RENDER_MILLIS = 3_000L
 
