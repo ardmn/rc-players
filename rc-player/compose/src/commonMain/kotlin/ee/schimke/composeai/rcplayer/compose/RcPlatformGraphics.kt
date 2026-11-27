@@ -199,3 +199,13 @@ internal fun rcConicAsQuads(
  * This player's own Android rendering of that case has not been captured.
  */
 internal expect val rcChildLayersMissModulatedAlpha: Boolean
+
+/**
+ * Whether text breaks into lines greedily, each break decided by the text up to the end of the word
+ * it falls in, so [RcBasicText] may lay out a prefix of a long text alone. On Skiko it does:
+ * Compose hands Skia's paragraph neither `LineBreak` nor `Hyphens` (compose-ui-text 1.12.2
+ * `skikoMain`, where both are only declared). Not on Android, whose `LineBreak.Paragraph` balances
+ * a paragraph's lines and whose hyphenation looks at whole words; its text keeps its Android
+ * behaviour.
+ */
+internal expect val rcTextBreaksLinesGreedily: Boolean

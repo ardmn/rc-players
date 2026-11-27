@@ -146,6 +146,40 @@ class RcFlatLayoutTest {
     }
   }
 
+  /**
+   * An exact size past what a Compose `Constraints` can hold, on one axis or both, lays out as on
+   * the per-component path: up to the space there is. Copying the constraints with it threw "Can't
+   * represent a width".
+   */
+  @Test
+  fun anExactSizePastComposeConstraintsLaysOutAsOnThePerComponentPath() {
+    for (size in listOf(262_143f, 1_048_576f, 16_777_216f)) {
+      val huge =
+        listOf(
+          RcBoxLayout(10, -1, 1, 1),
+          RcWidthModifier(RcDimensionType.EXACT, RcFloatWord.literal(size)),
+          RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(size)),
+          RcLayoutContent(11),
+        ) + box(20, 1f, 30f, 20f) + listOf(end, end)
+      val document =
+        document(
+          RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)),
+          listOf(box(30, 0f, 30f, 20f), huge),
+        )
+      assertTrue(10 in RcPreparedDocument(document).plainComponents, "the box is not flattened")
+      // Neither path shows ink in this scene; what matters is that both lay it out, alike.
+      for (unboundedHeight in listOf(false, true)) {
+        assertSameBothWays(
+          document,
+          width = 100,
+          height = 60,
+          unboundedHeight = unboundedHeight,
+          drawsSomething = false,
+        )
+      }
+    }
+  }
+
   @Test
   fun aRowLeavesRoomForItsGapsWhenItMeasures() {
     // 60 + 10 + 60 in 100: the second box gets the 30 left after the gap, as a Compose row gives
@@ -815,6 +849,8 @@ class RcFlatLayoutTest {
     room: Int = 0,
     /** Space below the player, so a child that overflows it downwards shows. */
     roomBelow: Int = 0,
+    /** Whether the per-component path must draw something, so the two cannot both be blank. */
+    drawsSomething: Boolean = true,
   ) {
     val prepared = RcPreparedDocument(document)
     assertTrue(prepared.plainComponents.isNotEmpty(), "nothing to flatten")
@@ -851,7 +887,7 @@ class RcFlatLayoutTest {
       }
     }
     val components = draw(flatten = false)
-    assertTrue(components.any { it != 0 }, "nothing was drawn")
+    if (drawsSomething) assertTrue(components.any { it != 0 }, "nothing was drawn")
     assertContentEquals(components, draw(flatten = true))
   }
 

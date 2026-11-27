@@ -94,12 +94,44 @@ class RcHostValueEdgeRenderTest {
       FLOAT_NAME
     }
 
+  /**
+   * Every float consumer takes the sizes past what a Compose `Constraints` can hold, and their
+   * negatives: an exact width from 262 143 px up to the `Int.MAX_VALUE` that `roundToPx` takes as
+   * no size threw "Can't represent a width". AndroidX's `remote-core` takes the size up to the
+   * space it has (`LegacyMeasurePolicy`: `Math.min(maxWidth, …)`). Both axes at once too.
+   */
+  @Test(timeout = 120_000)
+  fun everyFloatConsumerTakesSizesPastComposeConstraints() =
+    assertRenders(
+      (floatCases + playerOnlyCases + bothAxes).flatMap { case ->
+        CONSTRAINT_LIMIT_FLOATS.map { value ->
+          Triple(case, "$value", RcNamedValue.FloatValue(value))
+        }
+      },
+    ) {
+      FLOAT_NAME
+    }
+
   @Test(timeout = 120_000)
   fun everyTextConsumerTakesAStringFarOverADocumentString() =
     assertRenders(
       textCases.flatMap { case ->
         LONG_TEXTS.map { text -> Triple(case, "${text.length} chars", RcNamedValue.Text(text)) }
       },
+    ) {
+      TEXT_NAME
+    }
+
+  /**
+   * A megabyte of one word, in a `TextLayout`, a merge and a `CoreText`, renders in time: Skia lays
+   * out a word too long for a line in time quadratic in its length, and this one took minutes.
+   */
+  @Test(timeout = 120_000)
+  fun aMegabyteWordLaysOutInTime() =
+    assertRenders(
+      (textCases.filter { it.name != "long-text-length-as-width" } +
+          Case("core-text", coreTextDocument(fontSize = literal(12f))))
+        .map { case -> Triple(case, "1 MB", RcNamedValue.Text(MEGABYTE_WORD)) },
     ) {
       TEXT_NAME
     }
@@ -312,6 +344,15 @@ class RcHostValueEdgeRenderTest {
       ),
     )
 
+  private val bothAxes: Case =
+    canvas(
+      "width-and-height",
+      listOf(
+        RcWidthModifier(RcDimensionType.EXACT, HOST),
+        RcHeightModifier(RcDimensionType.EXACT, HOST),
+      ),
+    )
+
   private val textCases: List<Case> =
     listOf(
       text("long-text", HOST_TEXT_ID),
@@ -419,7 +460,7 @@ class RcHostValueEdgeRenderTest {
 
     /**
      * A case's frames, composition included, in a fraction of this: a loop nest the host can run
-     * forever is cut to 10 000 passes in all, a few milliseconds of rects.
+     * forever stops at AndroidX's 20 000 operations a frame, a few milliseconds of rects.
      */
     private const val MAX_RENDER_MILLIS = 3_000L
 
@@ -453,7 +494,19 @@ class RcHostValueEdgeRenderTest {
     /** Past the values the Swift fixtures are rendered with. */
     private val HUGE_AND_NEGATIVE_FLOATS = floatArrayOf(1e30f, -1e30f, -5f, Float.MAX_VALUE)
 
+    /**
+     * Around the sizes a Compose `Constraints` can hold: 262 142 px on one axis, 262 143 the first
+     * it cannot, up to the first float `roundToPx` takes as unbounded.
+     */
+    private val CONSTRAINT_LIMIT_FLOATS =
+      floatArrayOf(262_142f, 262_143f, 1_048_576f, 16_777_216f, 1e9f, 3e9f).let { sizes ->
+        sizes + sizes.map { -it }
+      }
+
     private val LONG_TEXTS = listOf("x".repeat(4_001), "word ".repeat(20_000), "😀".repeat(50_000))
+
+    /** A megabyte of one word: Skia's line breaker walked it once per line it filled. */
+    private val MEGABYTE_WORD = "x".repeat(1 shl 20)
 
     private fun literal(value: Float) = RcFloatWord.literal(value)
 

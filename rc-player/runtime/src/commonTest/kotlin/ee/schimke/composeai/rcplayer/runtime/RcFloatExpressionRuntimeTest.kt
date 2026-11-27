@@ -44,22 +44,7 @@ class RcFloatExpressionRuntimeTest {
 
   private var source = 1f
 
-  private val runtime =
-    RcFloatExpressionRuntime(
-      RcFloatExpression(
-        id = 59,
-        expression = listOf(RcFloatWord(SOURCE_REFERENCE)),
-        animation =
-          listOf(
-            RcFloatWord.literal(0f),
-            RcFloatWord.literal(1400f),
-            RcFloatWord.literal(74.83315f),
-            RcFloatWord.literal(0.001f),
-            RcFloatWord(0),
-          ),
-      ),
-      arrays = { null },
-    )
+  private val runtime = springRuntime()
 
   private fun at(seconds: Float): Float =
     runtime.evaluate(seconds) { word -> if (word.bits == SOURCE_REFERENCE) source else word.value }
@@ -101,7 +86,67 @@ class RcFloatExpressionRuntimeTest {
     assertTrue(next < first && next > 0f, "the spring did not start moving: $next")
   }
 
+  /**
+   * A host's NaN or infinity as the target, from rest or mid-flight, settles the spring at that
+   * target: its energy is NaN, which no stop threshold is above, so it asked for frames forever.
+   * The next finite target starts at rest there, and springs to the one after, not with the NaN
+   * velocity AndroidX's `SpringStopEngine` keeps.
+   */
+  @Test
+  fun aNonFiniteTargetSettlesAndTheNextFiniteOneStartsAtRest() {
+    for (edge in listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+      for (midFlight in listOf(false, true)) {
+        val case = "target $edge, mid-flight $midFlight"
+        val spring = springRuntime()
+        var target = 1f
+        fun at(seconds: Float) =
+          spring.evaluate(seconds) { word ->
+            if (word.bits == SOURCE_REFERENCE) target else word.value
+          }
+        at(0f)
+        if (midFlight) {
+          target = 0f
+          at(0.016f)
+          assertTrue(spring.isAnimating(0.016f), "$case: the spring did not start")
+        }
+        target = edge
+        at(0.032f)
+        at(0.048f)
+        assertFalse(spring.isAnimating(0.048f), "$case: the spring still asks for frames")
+        target = 0.5f
+        assertEquals(0.5f, at(0.064f), "$case: the finite target is not where it rests")
+        assertFalse(spring.isAnimating(0.064f), "$case: the spring moves off its target")
+        assertEquals(0.5f, at(0.5f), "$case: the spring kept a velocity")
+        // And springs from rest there to the next target, rather than snapping to it.
+        target = 0f
+        at(0.516f)
+        val moving = at(0.532f)
+        assertTrue(moving > 0f && moving < 0.5f, "$case: the spring did not spring: $moving")
+        assertTrue(spring.isAnimating(0.532f), "$case: the spring is not animating")
+      }
+    }
+  }
+
+  private fun springRuntime() =
+    RcFloatExpressionRuntime(
+      RcFloatExpression(
+        id = 59,
+        expression = listOf(RcFloatWord(SOURCE_REFERENCE)),
+        animation = SPRING,
+      ),
+      arrays = { null },
+    )
+
   private companion object {
+    val SPRING =
+      listOf(
+        RcFloatWord.literal(0f),
+        RcFloatWord.literal(1400f),
+        RcFloatWord.literal(74.83315f),
+        RcFloatWord.literal(0.001f),
+        RcFloatWord(0),
+      )
+
     /** A NaN-boxed reference to id 58, the integer `checked` flag in the captured document. */
     const val SOURCE_REFERENCE: Int = 0xff80003a.toInt()
   }

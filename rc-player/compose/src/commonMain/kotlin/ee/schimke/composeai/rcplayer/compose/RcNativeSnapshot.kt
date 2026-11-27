@@ -1182,9 +1182,8 @@ public object RcNativeSnapshotBridge {
                 ),
             )
       } else if (operation is RcTextLayout) {
-        val size = state.resolve(operation.fontSize) / document.header.density
-        val weight = state.resolve(operation.fontWeight).coerceIn(1f, 1000f)
-        require(size.isFinite() && size > 0f) { "TextLayout font size must be finite and positive" }
+        val size = rcTextSizePixels(state.resolve(operation.fontSize) / document.header.density)
+        val weight = rcTextWeight(state.resolve(operation.fontWeight))
         require(operation.textAlign in 1..6) {
           "TextLayout alignment ${operation.textAlign} is invalid"
         }
@@ -1238,14 +1237,15 @@ public object RcNativeSnapshotBridge {
             .lastOrNull { it.id == 5 }
             ?.value
             ?.let(state::resolve)
-            ?.div(document.header.density) ?: 36f
+            ?.div(document.header.density)
+            ?.let(::rcTextSizePixels) ?: 36f
         val weight =
           properties
             .filterIsInstance<RcTextStyleProperty.FloatValue>()
             .lastOrNull { it.id == 7 }
             ?.value
             ?.let(state::resolve)
-            ?.coerceIn(1f, 1000f) ?: 400f
+            ?.let(::rcTextWeight) ?: RC_NORMAL_TEXT_WEIGHT.toFloat()
         fun intProperty(id: Int, default: Int): Int =
           properties
             .filterIsInstance<RcTextStyleProperty.IntValue>()
@@ -1281,7 +1281,6 @@ public object RcNativeSnapshotBridge {
         val letterSpacing = floatProperty(12, 0f)
         val lineHeightAdd = floatProperty(13, 0f)
         val lineHeightMultiplier = floatProperty(14, 1f)
-        require(size.isFinite() && size > 0f) { "CoreText font size must be finite and positive" }
         require(alignment in 1..6) { "CoreText alignment $alignment is invalid" }
         require(overflow in 1..5) { "CoreText overflow $overflow is invalid" }
         require(maxLines >= 1) { "CoreText maxLines must be positive" }

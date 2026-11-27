@@ -36,17 +36,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredHeightIn
-import androidx.compose.foundation.layout.requiredWidthIn
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.text.modifiers.TextAutoSizeLayoutScope
 import androidx.compose.foundation.verticalScroll
@@ -2270,7 +2265,7 @@ private fun RenderLayoutNodeContent(
           val fontWeight = rcFontWeight(state.resolve(operation.fontWeight))
           val italic = isWireItalic(operation.fontStyle)
           val lines = remember { RcTextLines() }
-          BasicText(
+          RcBasicText(
             text = state.text(operation.textId).orEmpty(),
             modifier =
               effectiveModifier
@@ -2320,6 +2315,7 @@ private fun RenderLayoutNodeContent(
               ),
             overflow = operation.composeTextOverflow(),
             maxLines = androidXMaxLines(operation.overflow, operation.maxLines),
+            textMeasurer = textMeasurer,
           )
         }
         is RcLayoutNode.CoreText -> {
@@ -2385,7 +2381,7 @@ private fun RenderLayoutNodeContent(
                 )
               }
             } else null
-          BasicText(
+          RcBasicText(
             text = text,
             modifier =
               effectiveModifier
@@ -2490,6 +2486,10 @@ private fun RenderLayoutNodeContent(
                   stepSize = with(density) { 0.5f.toSp() },
                 )
               else null,
+            textMeasurer = textMeasurer,
+            autoSizeMinFontSize = with(density) { resolvedMinFontSize.toSp() },
+            // The closed-form Ahem model wraps and sizes the whole text itself.
+            cuttable = !LocalRcAhemTextMetrics.current,
           )
         }
         is RcLayoutNode.FitBox -> {
@@ -5490,12 +5490,9 @@ private fun Modifier.applyWidthRange(
   val max = maximum.dp
   return when {
     minimum == -1f && maximum == -1f -> this
-    required && minimum == -1f -> requiredWidthIn(max = max)
-    required && maximum == -1f -> requiredWidthIn(min = min)
-    required -> requiredWidthIn(min = min, max = max)
-    minimum == -1f -> widthIn(max = max)
-    maximum == -1f -> widthIn(min = min)
-    else -> widthIn(min = min, max = max)
+    minimum == -1f -> rcSize(maxWidth = max, enforceIncoming = !required)
+    maximum == -1f -> rcSize(minWidth = min, enforceIncoming = !required)
+    else -> rcSize(minWidth = min, maxWidth = max, enforceIncoming = !required)
   }
 }
 
@@ -5508,12 +5505,9 @@ private fun Modifier.applyHeightRange(
   val max = maximum.dp
   return when {
     minimum == -1f && maximum == -1f -> this
-    required && minimum == -1f -> requiredHeightIn(max = max)
-    required && maximum == -1f -> requiredHeightIn(min = min)
-    required -> requiredHeightIn(min = min, max = max)
-    minimum == -1f -> heightIn(max = max)
-    maximum == -1f -> heightIn(min = min)
-    else -> heightIn(min = min, max = max)
+    minimum == -1f -> rcSize(maxHeight = max, enforceIncoming = !required)
+    maximum == -1f -> rcSize(minHeight = min, enforceIncoming = !required)
+    else -> rcSize(minHeight = min, maxHeight = max, enforceIncoming = !required)
   }
 }
 
@@ -5668,8 +5662,8 @@ private fun Modifier.applyWidth(
     // `DimensionModifierOperation.updateVariables` scales it — and as the embedded player reads it
     // since androidx/androidx@65a3bf206. Dividing it by the density regardless drew a DP document's
     // fixed-size components at 1/density.
-    RcDimensionType.EXACT -> width(state.dpTypedDp(state.resolve(width.value), density))
-    RcDimensionType.EXACT_DP -> width(state.resolve(width.value).dp)
+    RcDimensionType.EXACT -> rcWidth(state.dpTypedDp(state.resolve(width.value), density))
+    RcDimensionType.EXACT_DP -> rcWidth(state.resolve(width.value).dp)
     RcDimensionType.FILL,
     RcDimensionType.FILL_PARENT_MAX_WIDTH -> fillMaxWidth(state.fillFraction(width.value))
     // WRAP is the *absence* of a size modifier — Compose already sizes a component to its content,
@@ -5707,7 +5701,18 @@ private fun rcChildWeight(type: Int?, value: RcFloatWord?, state: RcPlayerState)
  * rounding NaN threw, as in AndroidX's embedded player (androidx-main `300a543b2`).
  */
 internal fun rcFontWeight(resolved: Float): Int =
-  if (resolved.isNaN()) 400 else resolved.javaRoundToInt().coerceIn(1, 1000)
+  if (resolved.isNaN()) RC_NORMAL_TEXT_WEIGHT else resolved.javaRoundToInt().coerceIn(1, 1000)
+
+/**
+ * [rcFontWeight] unrounded, for the native snapshot: `coerceIn` keeps a NaN, which then reached the
+ * native renderer as the weight. The Swift player's `NativeSwiftTextSnapshot.normalWeight` is its
+ * twin.
+ */
+internal fun rcTextWeight(resolved: Float): Float =
+  if (resolved.isNaN()) RC_NORMAL_TEXT_WEIGHT.toFloat() else resolved.coerceIn(1f, 1000f)
+
+/** The weight a text whose weight does not resolve to a number takes: CSS and Android's normal. */
+internal const val RC_NORMAL_TEXT_WEIGHT: Int = 400
 
 private fun Float.finiteOr(default: Float): Float = if (isFinite()) this else default
 
@@ -5854,8 +5859,8 @@ private fun Modifier.applyHeight(
 ): Modifier =
   when (height.type) {
     // A dp-typed field, like EXACT width: see [applyWidth].
-    RcDimensionType.EXACT -> height(state.dpTypedDp(state.resolve(height.value), density))
-    RcDimensionType.EXACT_DP -> height(state.resolve(height.value).dp)
+    RcDimensionType.EXACT -> rcHeight(state.dpTypedDp(state.resolve(height.value), density))
+    RcDimensionType.EXACT_DP -> rcHeight(state.resolve(height.value).dp)
     RcDimensionType.FILL,
     RcDimensionType.FILL_PARENT_MAX_HEIGHT -> fillMaxHeight(state.fillFraction(height.value))
     // See `applyWidth`: WRAP is Compose's default sizing, INTRINSIC_MIN/MAX are the unimplemented
@@ -6485,7 +6490,7 @@ private fun DrawScope.drawOperationsRouted(
           }
           RcOpcodes.LOOP_START -> {
             val loop = node.operation as RcLoopOperation
-            state.forEachLoopValue(loop) {
+            state.forEachLoopValue(loop, node.children.size) {
               drawOperations(
                 node.children,
                 state,
@@ -9336,14 +9341,16 @@ private class RcFlatEngine(
     (type == RcDimensionType.EXACT || type == RcDimensionType.EXACT_DP) &&
       state.resolve(value).isNaN()
 
+  // Through [rcConstraints]: a host's size may be past what a `Constraints` holds, and `copy`
+  // threw on one, as Compose's `Modifier.width` did on the per-component path.
   private fun Constraints.fixWidth(width: Int): Constraints {
     val w = constrainWidth(width.coerceAtLeast(0))
-    return copy(minWidth = w, maxWidth = w)
+    return rcConstraints(w, w, minHeight, maxHeight)
   }
 
   private fun Constraints.fixHeight(height: Int): Constraints {
     val h = constrainHeight(height.coerceAtLeast(0))
-    return copy(minHeight = h, maxHeight = h)
+    return rcConstraints(minWidth, maxWidth, h, h)
   }
 
   private fun androidx.compose.ui.graphics.drawscope.DrawScope.decorate(
