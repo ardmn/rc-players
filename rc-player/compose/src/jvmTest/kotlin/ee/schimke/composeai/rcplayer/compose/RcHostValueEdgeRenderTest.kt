@@ -94,6 +94,24 @@ class RcHostValueEdgeRenderTest {
       FLOAT_NAME
     }
 
+  /**
+   * Every float consumer takes the sizes past what a Compose `Constraints` can hold, and their
+   * negatives: an exact width from 262 143 px up to the `Int.MAX_VALUE` that `roundToPx` takes as
+   * no size threw "Can't represent a width". AndroidX's `remote-core` takes the size up to the
+   * space it has (`LegacyMeasurePolicy`: `Math.min(maxWidth, …)`). Both axes at once too.
+   */
+  @Test(timeout = 120_000)
+  fun everyFloatConsumerTakesSizesPastComposeConstraints() =
+    assertRenders(
+      (floatCases + playerOnlyCases + bothAxes).flatMap { case ->
+        CONSTRAINT_LIMIT_FLOATS.map { value ->
+          Triple(case, "$value", RcNamedValue.FloatValue(value))
+        }
+      },
+    ) {
+      FLOAT_NAME
+    }
+
   @Test(timeout = 120_000)
   fun everyTextConsumerTakesAStringFarOverADocumentString() =
     assertRenders(
@@ -326,6 +344,15 @@ class RcHostValueEdgeRenderTest {
       ),
     )
 
+  private val bothAxes: Case =
+    canvas(
+      "width-and-height",
+      listOf(
+        RcWidthModifier(RcDimensionType.EXACT, HOST),
+        RcHeightModifier(RcDimensionType.EXACT, HOST),
+      ),
+    )
+
   private val textCases: List<Case> =
     listOf(
       text("long-text", HOST_TEXT_ID),
@@ -466,6 +493,15 @@ class RcHostValueEdgeRenderTest {
 
     /** Past the values the Swift fixtures are rendered with. */
     private val HUGE_AND_NEGATIVE_FLOATS = floatArrayOf(1e30f, -1e30f, -5f, Float.MAX_VALUE)
+
+    /**
+     * Around the sizes a Compose `Constraints` can hold: 262 142 px on one axis, 262 143 the first
+     * it cannot, up to the first float `roundToPx` takes as unbounded.
+     */
+    private val CONSTRAINT_LIMIT_FLOATS =
+      floatArrayOf(262_142f, 262_143f, 1_048_576f, 16_777_216f, 1e9f, 3e9f).let { sizes ->
+        sizes + sizes.map { -it }
+      }
 
     private val LONG_TEXTS = listOf("x".repeat(4_001), "word ".repeat(20_000), "😀".repeat(50_000))
 
