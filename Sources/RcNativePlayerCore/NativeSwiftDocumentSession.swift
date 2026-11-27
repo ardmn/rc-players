@@ -1451,12 +1451,6 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
   }
 
-  /// Resolves a float field that a document may either state outright or compute.
-  ///
-  /// A literal word is its own bit pattern, so `resolve` is a strict generalisation of the eager
-  /// `Float` these fields used to hold; a NaN-boxed word is a reference into `values`. Validation
-  /// that used to run while parsing runs here, because a computed field has nothing to validate
-  /// until it resolves — and failing here is what keeps a garbage value from reaching UIKit.
   /// A `CoreText`'s font settings with their tags and values resolved. A tag with no text, or a
   /// value that does not resolve to a number, is dropped, as the Compose player drops it.
   private func fontSettings(
@@ -1769,10 +1763,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // expression that reads a measured value see it. Evaluation is pure, so repeating it is safe.
     //
     // This first pass is deliberately tolerant. An expression that reads a binding the measurement
-    // below has not produced yet resolves that reference to zero, which can divide to a non-finite
-    // result that `evaluate` rejects — correctly, but not yet. Dropping it here leaves the id
-    // unset, exactly as it was before this pass existed; the authoritative pass after the
-    // measurement evaluates it for real and throws if it is still bad.
+    // below has not produced yet resolves that reference to zero; a NaN or an infinity from that is
+    // a value like any other, but an expression that fails (a list read past its end) is dropped
+    // here, which leaves the id unset, exactly as it was before this pass existed. The
+    // authoritative pass after the measurement evaluates it for real and throws if it still fails.
     //
     // The first pass only changes what the second computes when something sits between them to
     // read it -- a component-value binding -- or when an expression reads an id that the same or a
