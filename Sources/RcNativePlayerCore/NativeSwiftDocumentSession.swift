@@ -35,6 +35,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// projected; the rest of `integers` is the integer view of a float, which already has its float.
   /// Kept apart so a frame does not walk every float constant's integer view.
   private let integerSlotIDs: Set<Int>
+  /// Ids an integer reader (an integer expression, a state layout's index) names that no integer
+  /// producer owns: floats it reads through their integer view, as AndroidX's `setFloat` publishes
+  /// one for every float, a float expression's result and a clock included.
+  private let integerReadsOfFloats: Set<Int>
+  /// The integer and float expressions in wire order, for a document whose integers read floats:
+  /// they run as one pass in this order, as the reference's does. Empty for any other document.
+  private let wireOrderedExpressions: [WireOrderedExpression]
   /// Each `ImageAttribute` output's size. The reference writes it again on every pass, so every
   /// resolution puts it back over whatever a write left there.
   private let imageSizeByID: [Int: Float]
@@ -100,6 +107,34 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     slotIDs.formUnion(document.dataMapLookups.map(\.outputID))
     slotIDs.insert(NativeSwiftSystemVariables.epochSecond)
     integerSlotIDs = slotIDs
+    var integerReads: Set<Int> = []
+    for expression in document.integerExpressions.values {
+      let maskBits = UInt32(bitPattern: Int32(truncatingIfNeeded: expression.mask))
+      for (index, token) in expression.tokens.enumerated()
+      where maskBits & (UInt32(1) << UInt32(index & 31)) != 0
+        && token < NativeSwiftIntegerOperator.offset
+      {
+        integerReads.insert(token)
+      }
+    }
+    func collectStateIndexes(_ node: ParsedNode) {
+      if let id = node.stateIndexID { integerReads.insert(id) }
+      node.children.forEach(collectStateIndexes)
+    }
+    collectStateIndexes(document.root)
+    integerReadsOfFloats = integerReads.subtracting(slotIDs)
+    var steps: [(offset: Int, step: WireOrderedExpression)] = []
+    if !integerReadsOfFloats.isEmpty {
+      for id in document.integerExpressionOrder {
+        if let expression = document.integerExpressions[id] {
+          steps.append((expression.offset, .integer(id)))
+        }
+      }
+      for (index, expression) in document.expressions.enumerated() {
+        steps.append((expression.offset, .float(index)))
+      }
+    }
+    wireOrderedExpressions = steps.sorted { $0.offset < $1.offset }.map(\.step)
   }
 
   /// The document's own floats and integers, each float also its integer view.
@@ -205,6 +240,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     recordedFloats = other.recordedFloats
     recordedIntegers = other.recordedIntegers
     integerSlotIDs = other.integerSlotIDs
+    integerReadsOfFloats = other.integerReadsOfFloats
+    wireOrderedExpressions = other.wireOrderedExpressions
     imageSizeByID = other.imageSizeByID
     floatExpressionIDs = other.floatExpressionIDs
     documentClaimsEpochSecond = other.documentClaimsEpochSecond
@@ -1652,6 +1689,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     if hostOwnsEpochSecond, let wallClock {
       integers[epochSecond] = Int(NativeSwiftWallClock.floorDiv(wallClock.epochMillis, 1000))
     }
+    // The integer expressions' values from the previous pass, which the wire-ordered pass below
+    // starts from.
+    let integerExpressionsBeforePass =
+      wireOrderedExpressions.isEmpty
+      ? [:] : document.integerExpressionOrder.reduce(into: [Int: Int?]()) { $0[$1] = integers[$1] }
     try resolveIntegerExpressions()
     var result = floats
     result.merge(floatOverrides) { _, override in override }
@@ -1835,20 +1877,60 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         of: measuredNode, type: binding.type, available: available, values: result,
         estimates: &estimates)
     }
+    func evaluate(_ expression: ParsedFloatExpression) throws {
+      guard floatOverrides[expression.id] == nil else { return }
+      let target = try NativeSwiftFloatExpression.evaluate(
+        expression.words, values: result, opcode: expression.opcode, offset: expression.offset)
+      if resolveAnimatedValues, expression.animationWords != nil {
+        let runtime = try animationRuntime(for: expression)
+        result[expression.id] = runtime.evaluate(target: target, at: Float(timeSeconds))
+      } else {
+        result[expression.id] = target
+      }
+    }
     func evaluateExpressions() throws {
-      for expression in document.expressions {
-        guard floatOverrides[expression.id] == nil else { continue }
-        let target = try NativeSwiftFloatExpression.evaluate(
-          expression.words, values: result, opcode: expression.opcode, offset: expression.offset)
-        if resolveAnimatedValues, expression.animationWords != nil {
-          let runtime = try animationRuntime(for: expression)
-          result[expression.id] = runtime.evaluate(target: target, at: Float(timeSeconds))
-        } else {
-          result[expression.id] = target
+      for expression in document.expressions { try evaluate(expression) }
+    }
+    if wireOrderedExpressions.isEmpty {
+      try evaluateExpressions()
+    } else {
+      // The document's integers read floats, as AndroidX's `setFloat` lets them: every float has an
+      // integer view, so an integer expression or a state layout that names a float expression or
+      // a clock reads it truncated. The reference runs one pass in wire order, so the integer and
+      // float expressions run here as one loop in that order: each reads what came before it this
+      // pass, and what comes after it as the previous pass left it.
+      for (id, value) in integerExpressionsBeforePass {
+        integers[id] = value
+        if floatOverrides[id] == nil {
+          result[id] = floats[id] ?? value.map(Float.init)
+        }
+      }
+      // Floats the document does not compute (clocks, host writes, component sizes) are known
+      // before every expression.
+      for id in integerReadsOfFloats where !floatExpressionIDs.contains(id) {
+        if let value = result[id] { integers[id] = nativeSwiftIntegerView(value) }
+      }
+      for step in wireOrderedExpressions {
+        switch step {
+        case .integer(let id):
+          guard let expression = document.integerExpressions[id] else { continue }
+          storeInteger(
+            id,
+            try NativeSwiftIntegerExpression.evaluate(
+              mask: expression.mask, tokens: expression.tokens, values: integers,
+              offset: expression.offset))
+          if floatOverrides[id] == nil, let value = floats[id] ?? integers[id].map(Float.init) {
+            result[id] = value
+          }
+        case .float(let index):
+          let expression = document.expressions[index]
+          try evaluate(expression)
+          if integerReadsOfFloats.contains(expression.id), let value = result[expression.id] {
+            integers[expression.id] = nativeSwiftIntegerView(value)
+          }
         }
       }
     }
-    try evaluateExpressions()
     // Text lengths and `ID_LOOKUP` feed expressions but are produced from state the expressions
     // themselves decide (a derived text, a computed index). The reference runs them in wire order;
     // this settles them instead: produce, and if any output moved, re-run what reads it. Chains are
@@ -2380,4 +2462,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 struct NativeSwiftEstimateKey: Hashable {
   let node: ObjectIdentifier
   let type: Int
+}
+
+/// One expression of a pass that runs the integer and float expressions together in wire order.
+private enum WireOrderedExpression {
+  /// An integer expression, by id.
+  case integer(Int)
+  /// A float expression, by its index in the document's expressions.
+  case float(Int)
 }
