@@ -75,6 +75,8 @@ public struct RemoteFloat: Hashable, Sendable, ExpressibleByFloatLiteral,
     case canvasSize(RemoteCanvasAxis)
     /// The same, in pixels: what the writer scales a size to.
     case canvasPixels(RemoteCanvasAxis)
+    /// An integer read through its float view: the players keep each integer as a float as well.
+    case integerView(RemoteInt.Node)
     case unary(Operator, Node)
     case binary(Operator, Node, Node)
   }
@@ -193,6 +195,19 @@ extension RemoteFloat.Node {
     switch self {
     case .canvasSize, .canvasPixels: true
     case .constant, .variable, .system, .declared: false
+    case .integerView(let integer): integer.readsCanvasSize
+    case .unary(_, let operand): operand.readsCanvasSize
+    case .binary(_, let lhs, let rhs): lhs.readsCanvasSize || rhs.readsCanvasSize
+    }
+  }
+}
+
+extension RemoteInt.Node {
+  /// Whether the integer reads the size of the canvas being drawn, through a float it truncates.
+  var readsCanvasSize: Bool {
+    switch self {
+    case .constant, .variable: false
+    case .floatView(let float): float.readsCanvasSize
     case .unary(_, let operand): operand.readsCanvasSize
     case .binary(_, let lhs, let rhs): lhs.readsCanvasSize || rhs.readsCanvasSize
     }
@@ -318,6 +333,17 @@ public struct RemoteString: Hashable, Sendable, ExpressibleByStringInterpolation
     ) {
       parts.append(
         RemoteString(RemoteFloat(variable), decimals: decimals, integerDigits: integerDigits))
+    }
+
+    /// An integer, as its digits: `"\(page + 1) of \(count)"`.
+    public mutating func appendInterpolation(_ number: RemoteInt) {
+      // Ten digits: every Int32, so none is cut to the formatter's default nine.
+      parts.append(RemoteString(RemoteFloat(number), decimals: 0, integerDigits: 10))
+    }
+
+    /// An `Int` variable's live value, as its digits.
+    public mutating func appendInterpolation(_ variable: RemoteVariable<Int>) {
+      appendInterpolation(RemoteInt(variable))
     }
 
     /// A Swift string, as a constant.
