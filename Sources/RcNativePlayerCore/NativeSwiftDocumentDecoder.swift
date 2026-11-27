@@ -170,8 +170,9 @@ enum NativeSwiftDocumentDecoder {
     /// target a host allocates, so both are bounded as the CMP player's `RcOffscreenTargetLimits`.
     var offscreenTargetIDs: Set<Int> = []
     var offscreenTargetPixels = 0
-    /// Every text operation in wire order: the one list both the resolution steps' producers and
-    /// the clock scan read.
+    /// Every text operation in wire order, read by the action text producers
+    /// (`ParsedTextOperation.producers`) and the clock scan; `appendTextOperation` keeps it in step
+    /// with `resolutionSteps`.
     var textOperations: [ParsedTextOperation] = []
     var idLists: [Int: [Int]] = [:]
     var floatLists: [Int: [UInt32]] = [:]

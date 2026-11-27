@@ -52,6 +52,12 @@ import Testing
   /// `TextFromFloat`'s digits word: digits before the point in the high half, after it in the low.
   private static func digits(before: Int, after: Int) -> Int { (before << 16) | after }
 
+  /// The digits word and flags of Kotlin's `RcTextFromFloat(4, [2], 255, 0, 517)`
+  /// (`RcPlayerStateTest.anActionSendsTheTextItsOpsComputeFromCurrentValues`): a whole number is
+  /// written as its plain digits, 50 as "50".
+  private static let plainDigits = digits(before: 255, after: 0)
+  private static let plainDigitsFlags = 517
+
   /// A root-level `DrawTextRun` of the whole of text `id`.
   private static func drawText(_ document: Writer, id: Int) {
     document.u8(Op.drawText).int(id).int(0).int(-1).int(0).int(0).float(0).float(0).u8(0)
@@ -179,7 +185,7 @@ import Testing
     document.text(id: 3, "ticks=")
     // Kotlin's `RcTextFromFloat(4, [2], 255, 0, 517)`.
     document.u8(Op.textFromFloat).int(4).int(Writer.nanReference(2))
-      .int(Self.digits(before: 255, after: 0)).int(517)
+      .int(Self.plainDigits).int(Self.plainDigitsFlags)
     document.u8(Op.textMerge).int(5).int(3).int(4)
     document.u8(Op.layoutRoot).int(1)
     document.u8(Op.layoutBox).int(3).int(-1).int(1).int(4)
@@ -194,11 +200,12 @@ import Testing
     #expect(events == [.namedAction(name: "ha", value: .text("ticks=50"))], "\(events as Any)")
   }
 
-  /// A text-from-float has two readers: the resolution pass that writes its text, and the
-  /// decoder's clock scan that decides whether the frame needs a wall-clock refresh. Both read the
-  /// one list of text operations, so a conversion of `TIME_IN_SEC` is drawn as the current second
-  /// of the hour and asks for a refresh, at the root and inside layout content alike. A conversion
-  /// that one of them missed would draw a frozen clock or never draw it.
+  /// A text-from-float has two readers: the resolution pass (`resolutionSteps`) that writes its
+  /// text, and the decoder's clock scan (`textOperations`) that decides whether the frame needs a
+  /// wall-clock refresh. `appendTextOperation` adds each conversion to both, so a conversion of
+  /// `TIME_IN_SEC` is drawn as the current second of the hour and asks for a refresh, at the root
+  /// and inside layout content alike. A conversion that one of them missed would draw a frozen
+  /// clock or never draw it.
   @Test func aClockConversionIsDrawnAndAsksForAWallClockRefresh() throws {
     // `TIME_IN_SEC` is the second of the hour: 1_789_821_296 s is 2096 s into its hour.
     let wallClock = NativeSwiftWallClock(epochMillis: 1_789_821_296_789, offsetSeconds: 0)
@@ -208,7 +215,7 @@ import Testing
       document.u8(Op.layoutRoot).int(1)
       if inLayoutContent { document.u8(Op.layoutContent).int(2) }
       document.u8(Op.textFromFloat).int(4).int(Writer.nanReference(System.timeInSeconds))
-        .int(Self.digits(before: 255, after: 0)).int(517)
+        .int(Self.plainDigits).int(Self.plainDigitsFlags)
       if inLayoutContent { document.u8(Op.containerEnd) }
       Self.drawText(document, id: 4)
       document.u8(Op.containerEnd)
