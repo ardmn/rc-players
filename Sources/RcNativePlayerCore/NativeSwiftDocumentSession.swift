@@ -1061,7 +1061,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         source.sizeWord, densityBehavior: document.densityBehavior)
       // A weight variable with no value yet keeps the normal weight.
       let weight =
-        NativeSwiftFloatExpression.referenceID(source.weightWord).map { values[$0] ?? 400 }
+        NativeSwiftFloatExpression.referenceID(source.weightWord).map {
+          values[$0] ?? NativeSwiftTextSnapshot.normalWeight
+        }
         ?? Float(bitPattern: source.weightWord)
       text = NativeSwiftTextSnapshot(
         value: texts[source.textID] ?? "",

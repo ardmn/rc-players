@@ -65,8 +65,9 @@ tasks.test {
   val fixture = rootProject.file("Tests/RcNativePlayerCoreTests/Fixtures/host-value-parity.tsv")
   systemProperty("rc.hostValueParity.fixture", fixture.absolutePath)
   inputs.file(fixture).withPropertyName("hostValueParityFixture").optional()
-  providers.gradleProperty("rc.hostValueParity.update").orNull?.let {
-    systemProperty("rc.hostValueParity.update", it)
+  val updateProperty = "rc.hostValueParity.update"
+  providers.gradleProperty(updateProperty).orNull?.let {
+    systemProperty(updateProperty, it)
     outputs.upToDateWhen { false }
   }
 }

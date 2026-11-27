@@ -254,8 +254,9 @@ tasks.withType<Test>().configureEach {
     .withPropertyName("hostValueEdgeFixtures")
     .withPathSensitivity(PathSensitivity.RELATIVE)
     .optional()
-  (project.findProperty("rc.hostValueEdges.update") as String?)?.let {
-    systemProperty("rc.hostValueEdges.update", it)
+  val updateProperty = "rc.hostValueEdges.update"
+  (project.findProperty(updateProperty) as String?)?.let {
+    systemProperty(updateProperty, it)
     // Rewriting the fixtures is the point of the run, whatever was checked before.
     outputs.upToDateWhen { false }
   }

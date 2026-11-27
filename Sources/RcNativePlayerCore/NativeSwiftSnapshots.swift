@@ -1035,6 +1035,8 @@ public struct NativeSwiftTextSnapshot: Sendable {
   /// The size text takes when its own is below 0 or NaN: a reset Android paint's, Skia's
   /// `SkPaintDefaults_TextSize` (12 pixels), which `Paint.setTextSize` then leaves in place.
   static let androidDefaultSize: Float = 12
+  /// The weight a NaN weight, or a weight variable with no value yet, takes: `FontWeight.Normal`.
+  static let normalWeight: Float = 400
   public let style: Int
   /// The font weight, 1...1000; NaN is the normal 400, as the Kotlin player's `rcFontWeight`
   /// reads it.
@@ -1069,7 +1071,7 @@ public struct NativeSwiftTextSnapshot: Sendable {
     self.size = takesSize ? nativeSwiftSaturated(size) : Self.androidDefaultSize
     self.sizeIsDensityTyped = takesSize && sizeIsDensityTyped
     self.style = style
-    self.weight = weight.isNaN ? 400 : min(max(weight, 1), 1_000)
+    self.weight = weight.isNaN ? Self.normalWeight : min(max(weight, 1), 1_000)
     self.familyID = familyID
     self.familyName = familyName
     self.alignment = alignment
