@@ -107,12 +107,13 @@ public enum NativeMacPolicy {
     }
   }
 
-  /// The UIKit player's frame rules (`NativeRenderSnapshot.init`): a host value never fails the
-  /// frame by its size. Width and height follow `validateLayoutDimension`; padding, spacing,
-  /// constraints and offsets are normalised by `NativeLayoutNode` (`layoutCoordinate`); a draw
-  /// command with non-finite geometry is dropped (`isDrawable`) and the rest only counts against
-  /// the budget. AndroidX takes every such value (`PaddingModifierOperation.updateVariables`,
-  /// `DrawRect.paint`).
+  /// The frame's budget. A resolved value never fails the frame by itself (RC_MACOS_PLAYER_APP.md):
+  /// every layout float, a width or height of any type included, is normalised by
+  /// `NativeLayoutNode` (`layoutCoordinate`, `layoutDimension`) and resolved by
+  /// `NativeLayoutDimension.resolve`, which reads a negative fill fraction as no width and an
+  /// infinite one as the parent's; what a non-finite draw value stops drawing is left out
+  /// (`NativeCanvasCommands.drawable`). Each command still counts against the budget. AndroidX
+  /// takes every such value (`PaddingModifierOperation.updateVariables`, `DrawRect.paint`).
   private static func validateSnapshot(_ snapshot: NativeSwiftDocumentSnapshot) throws
     -> NativeFrameBudget
   {
@@ -122,12 +123,6 @@ public enum NativeMacPolicy {
     var pending: [(NativeSwiftNodeSnapshot, Int)] = [(snapshot.root, 1)]
     while let (node, depth) = pending.popLast() {
       try budget.recordNode(depth: depth, limits: executionLimits)
-      try budget.validateLayoutDimension(
-        value: Double(node.widthValue), type: node.widthType, componentID: node.componentID,
-        field: "width", limits: executionLimits)
-      try budget.validateLayoutDimension(
-        value: Double(node.heightValue), type: node.heightType, componentID: node.componentID,
-        field: "height", limits: executionLimits)
       try budget.recordStrings(
         [
           node.text?.value, node.custom?.config, node.accessibility?.contentDescription,

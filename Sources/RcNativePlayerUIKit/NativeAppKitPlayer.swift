@@ -615,13 +615,37 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
       ]
     }
     return NativeMacRenderedFrame(
-      png: png, tree: player.layoutTree(),
+      png: png, tree: player.layoutTree().map(jsonSafe),
       values: values.isEmpty
         ? nil
-        : try reportedValues(
-           session: session, timeSeconds: timeSeconds, wallClock: wallClock, request: values),
-      records: records,
+        : jsonSafe(
+          try reportedValues(
+            session: session, timeSeconds: timeSeconds, wallClock: wallClock, request: values)),
+      records: jsonSafe(records),
       inputHandled: inputHandled)
+  }
+
+  /// `object` with every non-finite number spelled as Java's `Float.toString` spells it ("NaN",
+  /// "Infinity", "-Infinity"), as `rc2json` does. The batch writes a frame with
+  /// `JSONSerialization`, which raises on a non-finite number, and has no option to spell one
+  /// (`JSONEncoder`'s `nonConformingFloatEncodingStrategy` needs `Encodable` values). A value the
+  /// document resolves, or a host writes, can be NaN or an infinity.
+  static func jsonSafe(_ object: [String: Any]) -> [String: Any] {
+    object.mapValues(jsonSafe(any:))
+  }
+
+  private static func jsonSafe(any value: Any) -> Any {
+    switch value {
+    case let number as NSNumber where CFGetTypeID(number) == CFNumberGetTypeID():
+      let double = number.doubleValue
+      guard !double.isFinite else { return value }
+      // The core's spelling (`NativeSwiftTextFormatter.javaFloatString`) is internal to it.
+      if double.isNaN { return "NaN" }
+      return double < 0 ? "-Infinity" : "Infinity"  // lint-ok: the core's spelling is internal
+    case let object as [String: Any]: return jsonSafe(object)
+    case let array as [Any]: return array.map(jsonSafe(any:))
+    default: return value
+    }
   }
 
   /// The conformance draw log is the decoded canvas stream in wire order. Its checks are ordered
@@ -2947,12 +2971,11 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
 
   private static func canvasCommands(for node: NativeMacNode) -> [NativeMacDrawCommand] {
     let promotesImage = node.kind == .image
-    // A command with non-finite geometry draws nothing, as on AndroidX's Canvas; the UIKit player
-    // drops it the same way (`isDrawable`).
-    return node.commands.filter {
-      !(promotesImage && $0.kind == NativeSwiftDrawKind.bitmap)
-        && NativeMacPolicy.executionLimits.isDrawable($0)
-    }
+    // What a non-finite value stops drawing on AndroidX's Canvas is left out, as on UIKit
+    // (`NativeCanvasCommands.drawable`).
+    return NativeCanvasCommands.drawable(
+      node.commands.filter { !(promotesImage && $0.kind == NativeSwiftDrawKind.bitmap) },
+      limits: NativeMacPolicy.executionLimits)
   }
 
   private static func labelTexts(for node: NativeMacNode) -> [NativeSwiftTextSnapshot] {
@@ -2964,10 +2987,11 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
     for node: NativeMacNode, images: [Int: NSImage]
   ) -> [(image: NSImage, draw: NativeSwiftImageDrawSnapshot, alpha: Float)] {
     guard node.kind == .image else { return [] }
-    return node.commands.compactMap {
+    let commands = NativeCanvasCommands.drawable(
+      node.commands, limits: NativeMacPolicy.executionLimits)
+    return commands.compactMap {
       command -> (image: NSImage, draw: NativeSwiftImageDrawSnapshot, alpha: Float)? in
-      guard command.kind == NativeSwiftDrawKind.bitmap,
-        NativeMacPolicy.executionLimits.isDrawable(command), let draw = command.image,
+      guard command.kind == NativeSwiftDrawKind.bitmap, let draw = command.image,
         let image = images[draw.imageID]
       else { return nil }
       return (image, draw, command.alpha)
@@ -3679,12 +3703,14 @@ private final class NativeMacCanvasView: NSView {
     case NativeSwiftDrawKind.matrixRestore: context.restoreGState()
     case NativeSwiftDrawKind.matrixTranslate: context.translateBy(x: v[0], y: v[1])
     case NativeSwiftDrawKind.matrixScale:
-      let pivot = CGPoint(x: v[2].isNaN ? 0 : v[2], y: v[3].isNaN ? 0 : v[3])
+      // A NaN centre x is no pivot (`AndroidPaintContext.matrixScale`).
+      let pivot = v[2].isNaN ? CGPoint.zero : CGPoint(x: v[2], y: v[3])
       context.translateBy(x: pivot.x, y: pivot.y)
       context.scaleBy(x: v[0], y: v[1])
       context.translateBy(x: -pivot.x, y: -pivot.y)
     case NativeSwiftDrawKind.matrixRotate:
-      let pivot = CGPoint(x: v[1].isNaN ? 0 : v[1], y: v[2].isNaN ? 0 : v[2])
+      // A NaN pivot x is no pivot (`AndroidPaintContext.matrixRotate`).
+      let pivot = v[1].isNaN ? CGPoint.zero : CGPoint(x: v[1], y: v[2])
       context.translateBy(x: pivot.x, y: pivot.y)
       context.rotate(by: v[0] * .pi / 180)
       context.translateBy(x: -pivot.x, y: -pivot.y)

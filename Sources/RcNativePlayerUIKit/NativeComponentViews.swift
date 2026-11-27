@@ -85,14 +85,9 @@
       var pending: [(NativeSwiftNodeSnapshot, Int)] = [(swiftSnapshot.root, 1)]
       while let (node, depth) = pending.popLast() {
         try budget.recordNode(depth: depth, limits: limits)
-        try budget.validateLayoutDimension(
-          value: Double(node.widthValue), type: node.widthType, componentID: node.componentID,
-          field: "width", limits: limits)
-        try budget.validateLayoutDimension(
-          value: Double(node.heightValue), type: node.heightType, componentID: node.componentID,
-          field: "height", limits: limits)
-        // Padding, spacing and offsets render whatever their value: `NativeLayoutNode` normalises
-        // them through `layoutCoordinate(_:)`.
+        // Every layout float renders whatever its value: `NativeLayoutNode` normalises it
+        // (`layoutCoordinate`, `layoutDimension`), and `NativeLayoutDimension.resolve` reads a
+        // negative fill fraction as no width and an infinite one as the parent's.
         if let text = node.text {
           try budget.recordCommand(pathElementCount: 0, strings: [text.value], limits: limits)
           try budget.validateFinite(
@@ -108,8 +103,9 @@
             }
           }
         }
-        // A command with non-finite geometry is dropped (`isDrawable`) and the rest clamped
-        // (`NativeDrawCommand(_:limits:)`) by `NativeNode`; each still counts against the budget.
+        // `NativeNode` leaves out what a non-finite value stops drawing
+        // (`NativeCanvasCommands.drawable`) and clamps the rest (`NativeDrawCommand(_:limits:)`);
+        // each command still counts against the budget.
         for command in node.commands {
           try budget.recordCommand(pathElementCount: command.path.count, limits: limits)
         }
@@ -298,7 +294,9 @@
       componentKind = snapshot.componentKind
       scrollDirection = snapshot.scrollDirection
       commands =
-        snapshot.commands.filter(limits.isDrawable).map { NativeDrawCommand($0, limits: limits) }
+        NativeCanvasCommands.drawable(snapshot.commands, limits: limits).map {
+          NativeDrawCommand($0, limits: limits)
+        }
         + (snapshot.text.map { [NativeDrawCommand(text: $0)] } ?? [])
       children = snapshot.children.map {
         NativeNode(swiftSnapshot: $0, densityBehavior: densityBehavior, limits: limits)
@@ -414,14 +412,15 @@
     let usesComponentGeometry: Bool
     let offscreenTarget: NativeSwiftOffscreenTargetSnapshot?
 
-    /// Its geometry, stroke and path held within the coordinate limit (`drawCoordinate`). A
-    /// command that is not `isDrawable` is dropped before it gets here.
+    /// Its coordinates, stroke and path held within the coordinate limit (`drawValues(of:)`,
+    /// `drawCoordinate`). `NativeCanvasCommands.drawable` left out a command with a non-finite
+    /// operand before it gets here.
     init(
       _ snapshot: NativeSwiftDrawCommandSnapshot,
       limits: RemoteComposeNativeExecutionLimits = .default
     ) {
       kind = snapshot.kind
-      values = snapshot.values.map(limits.drawCoordinate)
+      values = limits.drawValues(of: snapshot)
       color = UIColor(remoteComposeARGB: snapshot.colorARGB)
       alpha = CGFloat(snapshot.alpha)
       strokeWidth = limits.drawCoordinate(snapshot.strokeWidth)
@@ -1417,7 +1416,7 @@
             x: Float(frame.minX), y: Float(frame.minY), width: Float(frame.width),
             height: Float(frame.height))
         else { return nil }
-        return commands.map { NativeDrawCommand($0) }
+        return NativeCanvasCommands.drawable(commands).map { NativeDrawCommand($0) }
       }
     }
 
@@ -2487,12 +2486,14 @@
       case NativeSwiftDrawKind.matrixRestore: context.restoreGState()
       case NativeSwiftDrawKind.matrixTranslate: context.translateBy(x: v[0], y: v[1])
       case NativeSwiftDrawKind.matrixScale:
-        let pivot = CGPoint(x: v[2].isNaN ? 0 : v[2], y: v[3].isNaN ? 0 : v[3])
+        // A NaN centre x is no pivot (`AndroidPaintContext.matrixScale`).
+        let pivot = v[2].isNaN ? CGPoint.zero : CGPoint(x: v[2], y: v[3])
         context.translateBy(x: pivot.x, y: pivot.y)
         context.scaleBy(x: v[0], y: v[1])
         context.translateBy(x: -pivot.x, y: -pivot.y)
       case NativeSwiftDrawKind.matrixRotate:
-        let pivot = CGPoint(x: v[1].isNaN ? 0 : v[1], y: v[2].isNaN ? 0 : v[2])
+        // A NaN pivot x is no pivot (`AndroidPaintContext.matrixRotate`).
+        let pivot = v[1].isNaN ? CGPoint.zero : CGPoint(x: v[1], y: v[2])
         context.translateBy(x: pivot.x, y: pivot.y)
         context.rotate(by: v[0] * .pi / 180)
         context.translateBy(x: -pivot.x, y: -pivot.y)

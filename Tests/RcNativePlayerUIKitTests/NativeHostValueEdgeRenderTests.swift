@@ -37,6 +37,44 @@
       }
     }
 
+    /// A 200 KB host string, over the 128 KiB of text one frame may lay out, counts as the longest
+    /// text a document can make by itself (`longestDocumentTextBytes`) and renders, as AndroidX
+    /// shows it (`AndroidRemoteContext.setNamedStringOverride`).
+    @Test(arguments: ["long-text", "long-text-length-as-width"])
+    func aHostStringOverTheTextBudgetRenders(_ name: String) async throws {
+      let text = String(repeating: "\u{1F600}", count: 50_000)
+      #expect(text.utf8.count > RemoteComposeNativeExecutionLimits.default.maximumTextBytes)
+      try await UIKitHostValueEdgeFixtures.render(
+        name, .text(text), for: UIKitHostValueEdgeFixtures.textName,
+        "\(name) with \(text.utf8.count) bytes")
+    }
+
+    /// A negative fill fraction lays out as no width and an infinite one as the parent's
+    /// (`NativeLayoutDimension.resolve`), as on AppKit (`NativeAppKitHostValueTests`): a resolved
+    /// value never fails the frame by itself.
+    @Test(arguments: NativeHostValueDocuments.unusualFillFractions)
+    func aNegativeOrInfiniteFillFractionDraws(_ fraction: Float) async throws {
+      var errors: [RemoteComposeNativePlayerError] = []
+      let view = RemoteComposeNativePlayerView(
+        data: NativeHostValueDocuments.fillBox(fraction: fraction), resourceResolver: nil,
+        onError: { errors.append($0) })
+      view.frame = CGRect(x: 0, y: 0, width: 100, height: 100)
+      try await waitUntil("\(fraction) opens", within: 60) {
+        !view.isOpeningDocument && !view.isBusy
+      }
+      view.layoutIfNeeded()
+      #expect(errors.isEmpty, "\(fraction): \(errors)")
+      #expect(!UIKitHostValueEdgeFixtures.showsTheErrorLabel(view), "\(fraction)")
+      var pending: [UIView] = [view]
+      var box: NativeComponentView?
+      while box == nil, let next = pending.popLast() {
+        box = (next as? NativeComponentView)?.descendant(withID: NativeHostValueDocuments.fillBoxID)
+        pending.append(contentsOf: next.subviews)
+      }
+      let width = try #require(box, "\(fraction): no box").frame.width
+      #expect(width.isFinite && width >= 0 && width <= 100, "\(fraction): \(width)")
+    }
+
     /// A host's 1e9 width is clamped to the parent, as AndroidX's measure clamps an exact size to
     /// the maximum constraint (`BaseModernMeasurePolicy.measure`, `LegacyMeasurePolicy.measure`),
     /// and a NaN offset reads 0, as Java's `(int)` reads it where the Kotlin player rounds one.
@@ -83,6 +121,23 @@
     }
 
     // MARK: - The normalisation itself
+
+    /// A failed write is recognised by its value on the next open (`failedWrites`,
+    /// `takenHostWrites`), so a NaN must equal a NaN there, as Kotlin's boxed `==` compares
+    /// floats (`floatToIntBits`): every NaN alike, 0 not -0.
+    @Test func aNaNWriteIsTheSameValueAsItself() {
+      let payloadNaN = Float(bitPattern: Float.nan.bitPattern | 1)
+      #expect(NativeSwiftNamedValue.float(.nan).isSameValue(as: .float(payloadNaN)))
+      #expect(NativeSwiftNamedValue.floatArray([1, .nan]).isSameValue(as: .floatArray([1, .nan])))
+      #expect(
+        NativeSwiftNamedValue.integer(3, float: .nan).isSameValue(as: .integer(3, float: .nan)))
+      #expect(!NativeSwiftNamedValue.float(0).isSameValue(as: .float(-0.0)))
+      #expect(!NativeSwiftNamedValue.float(.nan).isSameValue(as: .float(1)))
+      #expect(!NativeSwiftNamedValue.integer(3, float: nil).isSameValue(as: .integer(3, float: 3)))
+      #expect(!NativeSwiftNamedValue.floatArray([.nan]).isSameValue(as: .floatArray([.nan, 1])))
+      #expect(NativeSwiftNamedValue.text("a").isSameValue(as: .text("a")))
+      #expect(!NativeSwiftNamedValue.float(1).isSameValue(as: .text("1")))
+    }
 
     @Test func layoutFloatsReadNaNAsZeroAndStayWithinTheCoordinateLimit() {
       let limits = RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10)

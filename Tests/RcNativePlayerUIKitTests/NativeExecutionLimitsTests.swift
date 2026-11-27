@@ -85,22 +85,6 @@ import Testing
     expect(.invalidGradientStop(componentID: 9, actual: -0.1)) {
       try numbers.validateGradientStops([-0.1, 1], componentID: 9)
     }
-    let strictCoordinates = RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 0.5)
-    try numbers.validateLayoutDimension(
-      value: 1, type: 1, componentID: 9, field: "width", limits: strictCoordinates)
-    try numbers.validateLayoutDimension(
-      value: 2, type: 3, componentID: 9, field: "width", limits: strictCoordinates)
-    // An exact size of any value passes: `layoutDimension(_:type:)` clamps it instead.
-    for value: Double in [1, 1e9, -1e9, .infinity, .nan] {
-      try numbers.validateLayoutDimension(
-        value: value, type: NativeSwiftDimensionType.exact, componentID: 9, field: "width",
-        limits: strictCoordinates)
-    }
-    expect(.invalidDimensionValue(componentID: 9, field: "width", actual: -1)) {
-      try numbers.validateLayoutDimension(
-        value: -1, type: 1, componentID: 9, field: "width", limits: .default)
-    }
-
     var work = NativeFrameBudget()
     expect(.frameWorkExceeded(actual: 3, maximum: 2)) {
       try work.recordCommand(
