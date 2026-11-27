@@ -396,10 +396,12 @@ final class NativeSwiftFloatAnimationRuntime {
     let delta = Double(time - springLastTime)
     springLastTime = time
     guard delta > 0 else { return }
-    let requestedSteps = 1 + 9 / (sqrt(stiffness) * delta * 4)
-    let steps =
-      requestedSteps >= 1_000 || !requestedSteps.isFinite
-      ? 1_000 : max(Int(requestedSteps), 1)
+    // AndroidX `SpringStopEngine.compute` (`SpringStopEngine.java:231-232`, mass 1 at `:101`):
+    // over-sample in proportion to the spring's natural frequency times the frame, at most 1000
+    // times, as the Kotlin `RcSpringAnimation.compute` does. Fewer sub-steps on a longer frame
+    // run the midpoint integrator past its stability limit on a stiff spring.
+    let requestedSteps = 1 + 9 * (sqrt(stiffness) * delta * 4)
+    let steps = requestedSteps >= 1_000 ? 1_000 : Int(requestedSteps)
     let dt = delta / Double(steps)
     for _ in 0..<steps {
       let position = Double(springPosition)
