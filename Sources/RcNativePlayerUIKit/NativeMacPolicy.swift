@@ -130,7 +130,12 @@ public enum NativeMacPolicy {
         ].map(Double.init), componentID: node.componentID, field: "layout",
         limits: executionLimits)
       for command in node.commands {
-        try budget.recordCommand(pathElementCount: command.path.count, limits: executionLimits)
+        // The circle's string is typeset every frame, so it spends the text budget as a text
+        // component's does.
+        try budget.recordCommand(
+          pathElementCount: command.path.count,
+          strings: command.kind == NativeSwiftDrawKind.textOnCircle ? [command.text] : [],
+          limits: executionLimits)
         try budget.validateNumbers(
           command.geometryValues.map(Double.init), componentID: node.componentID,
           field: "draw geometry",

@@ -169,7 +169,7 @@ public enum NativeTestDocuments {
     return wire.data
   }
 
-  /// The side of ``textOnCircle(alignment:placement:radius:warp:center:startAngle:definitions:)``.
+  /// The side of ``textOnCircle(_:text:draws:alignment:placement:radius:warp:center:startAngle:definitions:names:)``.
   public static let textOnCircleSize = 240
   /// The centre of that document's circle, on both axes.
   public static let textOnCircleCenter: Float = 120
@@ -177,44 +177,65 @@ public enum NativeTestDocuments {
   public static let textOnCircleRadius: Float = 90
   /// Its warp offset: non-zero, so a renderer that ignored it would draw on the wrong ring.
   public static let textOnCircleWarp: Float = 10
+  /// The angle its string is pinned at, in degrees: the top of the circle.
+  public static let textOnCircleStartAngle: Float = -90
+  /// Its string, its text id and its size.
+  public static let textOnCircleText = "REMOTE COMPOSE"
+  public static let textOnCircleTextID = 7
+  public static let textOnCircleTextSize: Float = 18
 
   /// A float word: a literal, or a reference to float `id` in the form the Kotlin codec writes.
   public enum FloatWord {
     case literal(Float)
     case variable(Int)
 
-    var bits: Int {
+    public var bits: Int {
       switch self {
       case .literal(let value): Int(Int32(bitPattern: value.bitPattern))
-      case .variable(let id): Int(Int32(bitPattern: 0x7fc0_0000 | UInt32(id)))
+      case .variable(let id):
+        Int(Int32(bitPattern: NativeTestWire.floatReferencePrefix | UInt32(id)))
       }
     }
   }
 
-  /// `RcTextOnCircleRenderTest.document(...)`, byte for byte: "REMOTE COMPOSE" at 18 pt in opaque
-  /// black, drawn by one `DrawTextOnCircle` in a ``textOnCircleSize`` square canvas. Every float
-  /// field may be a variable; `definitions` are float constants `(id, value)` written first, and
-  /// `names` declares some of them as named floats a host can write.
-  /// Leaving out `withCurvedText` draws the dial (`dial(withCurvedText:)`) as the Kotlin
-  /// evidence strip does: a grey stroked circle, with or without the blue curved label.
+  /// What ``textOnCircle(_:text:draws:alignment:placement:radius:warp:center:startAngle:definitions:names:)``
+  /// draws.
+  public enum TextOnCircleScene {
+    /// `RcTextOnCircleRenderTest.document(...)`: the string alone, opaque black.
+    case label
+    /// `RcTextOnCircleRenderTest.dial(withCurvedText = false)`: a grey stroked circle and no text.
+    case dial
+    /// `dial(withCurvedText = true)`: the dial with the string in blue on it.
+    case labelledDial
+  }
+
+  /// The documents of the Kotlin player's `RcTextOnCircleRenderTest`, byte for byte: one
+  /// `DrawTextOnCircle` of `text` (``textOnCircleText`` by default) at ``textOnCircleTextSize`` pt in a
+  /// ``textOnCircleSize`` square canvas, as `scene` says; the plain label is drawn `draws` times. Every float field may be a variable;
+  /// `definitions` are float constants `(id, value)` written first, and `names` declares some of
+  /// them as named floats a host can write.
   public static func textOnCircle(
-    alignment: Int = 1, placement: Int = 0,
+    _ scene: TextOnCircleScene = .label,
+    text: String = textOnCircleText,
+    draws: Int = 1,
+    alignment: Int = NativeSwiftTextOnCircleAlignment.center,
+    placement: Int = NativeSwiftTextOnCirclePlacement.outside,
     radius: FloatWord = .literal(textOnCircleRadius - textOnCircleWarp),
     warp: FloatWord = .literal(textOnCircleWarp),
     center: FloatWord = .literal(textOnCircleCenter),
-    startAngle: FloatWord = .literal(-90),
+    startAngle: FloatWord = .literal(textOnCircleStartAngle),
     definitions: [(id: Int, value: Float)] = [],
-    names: [(id: Int, name: String)] = [],
-    dial withCurvedText: Bool? = nil
+    names: [(id: Int, name: String)] = []
   ) -> Data {
     typealias Op = NativeSwiftWireOpcode
+    typealias Key = NativeTestWire.PaintKey
     let wire = NativeTestWire()
     wire.header(width: textOnCircleSize, height: textOnCircleSize)
     for definition in definitions {
       wire.u8(Op.dataFloat).int(definition.id).float(definition.value)
     }
     for (id, name) in names { wire.named(id, NativeTestWire.NamedType.float, name) }
-    wire.u8(Op.dataText).int(7).utf8("REMOTE COMPOSE")
+    wire.u8(Op.dataText).int(textOnCircleTextID).utf8(text)
     wire.u8(Op.layoutRoot).int(1)
     wire.u8(Op.layoutContent).int(2)
     wire.u8(Op.layoutCanvas).int(3).int(30)
@@ -222,29 +243,36 @@ public enum NativeTestDocuments {
       wire.u8(opcode).int(NativeSwiftDimensionType.exact).float(Float(textOnCircleSize))
     }
     wire.u8(Op.canvasOperations)
-    // PAINT_DATA commands: 1 is text size, 4 colour, 5 stroke width, 8 style (1 << 16: stroke).
     func paint(_ words: [Int]) {
       wire.u8(Op.paintValues).int(words.count)
       for word in words { wire.int(word) }
     }
     func drawTextOnCircle() {
-      wire.u8(Op.drawTextOnCircle).int(7)
+      wire.u8(Op.drawTextOnCircle).int(textOnCircleTextID)
       for word in [center, center, radius, startAngle, warp] { wire.int(word.bits) }
       wire.u8(alignment).u8(placement)
     }
-    if let withCurvedText {
-      paint([8 | (1 << 16), 5, FloatWord.literal(2).bits, 4, Int(Int32(bitPattern: 0xff9a_a0a6))])
+    let textSize = FloatWord.literal(textOnCircleTextSize).bits
+    switch scene {
+    case .label:
+      paint([Key.textSize, textSize, Key.color, opaqueBlack])
+      for _ in 0..<draws { drawTextOnCircle() }
+    case .dial, .labelledDial:
+      paint([
+        NativeTestWire.styleWord(NativeTestWire.PaintStyle.stroke), Key.strokeWidth,
+        FloatWord.literal(2).bits, Key.color, Int(Int32(bitPattern: 0xff9a_a0a6)),
+      ])
       wire.u8(Op.drawCircle)
       for value in [textOnCircleCenter, textOnCircleCenter, textOnCircleRadius] {
         wire.float(value)
       }
-      if withCurvedText {
-        paint([8, 1, FloatWord.literal(18).bits, 4, Int(Int32(bitPattern: 0xff1a_73e8))])
+      if scene == .labelledDial {
+        paint([
+          NativeTestWire.styleWord(NativeTestWire.PaintStyle.fill), Key.textSize, textSize,
+          Key.color, Int(Int32(bitPattern: 0xff1a_73e8)),
+        ])
         drawTextOnCircle()
       }
-    } else {
-      paint([1, FloatWord.literal(18).bits, 4, opaqueBlack])
-      drawTextOnCircle()
     }
     // Four opens above (root, content, the canvas layout and its operation block), so four ends.
     for _ in 0..<4 { wire.u8(Op.containerEnd) }
@@ -254,6 +282,28 @@ public enum NativeTestDocuments {
 
 /// Writes `.rc` wire operations, big-endian, for the test documents.
 public final class NativeTestWire {
+  /// `PAINT_DATA` command keys the test documents write: values of the core's internal
+  /// `NativeSwiftPaintCommand`. `NativeTestWireNamedTypeTests` keeps the copy equal to the core.
+  public enum PaintKey {
+    public static let textSize = 1
+    public static let color = 4
+    public static let strokeWidth = 5
+    public static let style = 8
+  }
+
+  /// Paint styles: values of the core's internal `NativeSwiftPaintStyle`.
+  public enum PaintStyle {
+    public static let fill = 0
+    public static let stroke = 1
+  }
+
+  /// A style command word: the key in the low half, the style in the high half.
+  public static func styleWord(_ style: Int) -> Int { PaintKey.style | (style << 16) }
+
+  /// The high bits of a NaN-boxed reference to a float variable, as the Kotlin codec writes it;
+  /// the id goes in the low bits.
+  public static let floatReferencePrefix: UInt32 = 0x7fc0_0000
+
   /// A named variable's wire type: every value of the core's `NativeSwiftNamedVariableType`,
   /// which is internal. `NativeTestWireNamedTypeTests` keeps the two equal.
   public enum NamedType {

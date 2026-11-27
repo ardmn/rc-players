@@ -1314,7 +1314,9 @@ enum NativeSwiftDocumentDecoder {
             path: path, textID: textID))
       case NativeSwiftWireOpcode.drawTextOnCircle:
         let textID = try input.int("draw text circle text id")
-        let geometry = try (0..<5).map { _ in try input.word("draw text circle value") }
+        let geometry = try (0..<NativeSwiftTextOnCircle.ValueIndex.geometryCount).map { _ in
+          try input.word("draw text circle value")
+        }
         // The two bytes ride along as literal floats, after the geometry, so the snapshot carries
         // the whole operation in `NativeSwiftTextOnCircle.ValueIndex` order.
         let alignment = try input.u8("draw text circle alignment")

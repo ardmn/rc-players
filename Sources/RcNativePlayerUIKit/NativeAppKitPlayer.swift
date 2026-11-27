@@ -3944,7 +3944,7 @@ private final class NativeMacCanvasView: NSView {
   /// `DrawTextOnCircle`: the string typeset as `drawText` typesets it, then laid on the circle the
   /// core resolved (`NativeTextOnCircle`).
   private func drawTextOnCircle(_ command: NativeMacDrawCommand, _ context: CGContext) {
-    guard let circle = NativeSwiftTextOnCircle(command), let line = textLine(command) else {
+    guard let circle = NativeSwiftTextOnCircle(drawing: command), let line = textLine(command) else {
       return
     }
     NativeTextOnCircle.draw(line, along: circle, in: context)

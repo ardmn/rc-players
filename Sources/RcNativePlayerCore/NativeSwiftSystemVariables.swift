@@ -11,6 +11,11 @@ import Foundation
 /// *integer* variable whose expressions are evaluated at decode time, before a host clock can be
 /// supplied.
 public enum NativeSwiftSystemVariables {
+  /// AndroidX `RemoteComposeState.START_ID`: ids below it are the player's own (or literal
+  /// constants), and a document's own variables start here. The Kotlin player's
+  /// `LITERAL_ID_LIMIT`.
+  public static let firstDocumentID = 42
+
   /// Device pixels per dp, as the player is playing the document.
   public static let density = 27
 

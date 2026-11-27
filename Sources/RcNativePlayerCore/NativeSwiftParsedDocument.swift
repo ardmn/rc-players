@@ -426,10 +426,14 @@ struct ParsedDrawCommand {
       staticValues
       ?? words.enumerated().map { index, word in
         if nanSentinelIndices.contains(index) { return .nan }
-        // A variable nothing has written is not a number on the circle, as in the Kotlin player
-        // (`RcPlayerState.resolve` falls back to the NaN word): the circle is then unusable and
-        // draws nothing, where reading it as 0 would draw round the origin.
-        if isTextOnCircle, let id = NativeSwiftFloatExpression.referenceID(word) {
+        // A document variable nothing has written is not a number on the circle, as in the
+        // Kotlin player (`RcPlayerState.resolve` falls back to the NaN word): the circle is then
+        // unusable and draws nothing, where reading it as 0 would draw round the origin. The
+        // player's own ids keep the core's rule: Kotlin always loads its clock, and a host here
+        // that supplies none still gets the circle, at 0.
+        if isTextOnCircle, let id = NativeSwiftFloatExpression.referenceID(word),
+          id >= NativeSwiftSystemVariables.firstDocumentID
+        {
           return values[id] ?? .nan
         }
         return NativeSwiftFloatExpression.resolve(word, values: values)

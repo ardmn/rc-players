@@ -23,8 +23,8 @@ public enum NativeSwiftTextOnCirclePlacement {
 public struct NativeSwiftCircleGlyph: Sendable, Equatable {
   public let x: Float
   public let y: Float
-  /// Clockwise from the x axis in y-down coordinates, in degrees.
-  public let rotationDegrees: Float
+  /// Clockwise from the x axis in y-down coordinates, in radians, as `CGContext.rotate` takes it.
+  public let rotationRadians: Float
 }
 
 /// The circle of one `DrawTextOnCircle`, resolved, and the arithmetic that lays a string on it.
@@ -42,25 +42,33 @@ public struct NativeSwiftTextOnCircle: Sendable, Equatable {
   public let radius: Float
   /// Degrees, clockwise from the x axis in y-down coordinates.
   public let startAngle: Float
+  /// A `NativeSwiftTextOnCircleAlignment` value, or any other byte the wire carried.
   public let alignment: Int
+  /// A `NativeSwiftTextOnCirclePlacement` value, or any other byte the wire carried.
   public let placement: Int
 
-  /// Where each field sits in the command's `values`: the wire's order, with the two bytes last.
+  /// Where each field sits in the command's `values`: the wire's five geometry words in their
+  /// order, then the alignment and placement bytes.
   enum ValueIndex {
     static let centerX = 0
     static let centerY = 1
     static let radius = 2
     static let startAngle = 3
     static let warpRadiusOffset = 4
-    static let alignment = 5
-    static let placement = 6
-    static let count = 7
+    /// The number of geometry words on the wire, which the decoder reads.
+    static let geometryCount = 5
+    static let alignment = geometryCount
+    static let placement = geometryCount + 1
+    static let count = geometryCount + 2
   }
+
+  private static let radiansPerDegree: Float = .pi / 180
 
   /// The circle a `NativeSwiftDrawKind.textOnCircle` command's resolved `values` describe, or nil
   /// when they describe none: a non-finite centre or start angle (an unresolved variable), or a
   /// radius plus warp that is not positive. The operation then draws nothing, as the reference's
-  /// does, rather than dividing the sweep by zero.
+  /// does, rather than dividing the sweep by zero. An alignment or placement that is not a whole
+  /// number reads as START or OUTSIDE, the fallback every other unknown value gets.
   public init?(values: [Float]) {
     guard values.count == ValueIndex.count else { return nil }
     let radius = values[ValueIndex.radius] + values[ValueIndex.warpRadiusOffset]
@@ -73,12 +81,13 @@ public struct NativeSwiftTextOnCircle: Sendable, Equatable {
     self.centerY = centerY
     self.radius = radius
     self.startAngle = startAngle
-    alignment = Int(values[ValueIndex.alignment])
-    placement = Int(values[ValueIndex.placement])
+    alignment = Int(exactly: values[ValueIndex.alignment]) ?? NativeSwiftTextOnCircleAlignment.start
+    placement =
+      Int(exactly: values[ValueIndex.placement]) ?? NativeSwiftTextOnCirclePlacement.outside
   }
 
   /// The circle `command` draws on, when it is a `DrawTextOnCircle` that draws.
-  public init?(_ command: NativeSwiftDrawCommandSnapshot) {
+  public init?(drawing command: NativeSwiftDrawCommandSnapshot) {
     guard command.kind == NativeSwiftDrawKind.textOnCircle else { return nil }
     self.init(values: command.values)
   }
@@ -87,9 +96,9 @@ public struct NativeSwiftTextOnCircle: Sendable, Equatable {
 
   /// The arc a string `textWidth` wide is laid along: `arcForCircleText`. The sweep is the width
   /// over the radius, negative for INSIDE; the start is `startAngle` less the alignment's share of
-  /// the sweep, measured along the direction of travel.
+  /// the sweep, measured along the direction of travel. Degrees, as `Path.addArc` takes them.
   public func arc(textWidth: Float) -> (startDegrees: Float, sweepDegrees: Float) {
-    let magnitude = textWidth / radius * 180 / .pi
+    let magnitude = textWidth / radius / Self.radiansPerDegree
     let offset: Float =
       switch alignment {
       case NativeSwiftTextOnCircleAlignment.center: magnitude / 2
@@ -104,27 +113,29 @@ public struct NativeSwiftTextOnCircle: Sendable, Equatable {
   /// `advances`. The arc is cut from their sum, so it is exactly as long as the walk; a glyph
   /// whose centre falls past the arc — past a full turn, for a string longer than the circle — is
   /// dropped with every glyph after it, as the path walker drops glyphs that run off its path.
-  /// O(n) in the glyph count.
+  /// O(n) in the glyph count, once per draw.
   public func glyphs(advances: [Float]) -> [NativeSwiftCircleGlyph] {
     let textWidth = advances.reduce(0, +)
     guard textWidth > 0, textWidth.isFinite else { return [] }
-    let arc = arc(textWidth: textWidth)
-    // A sweep of a full turn or more is the whole circle, as `Path.addArc` draws it.
-    let length = min(abs(arc.sweepDegrees), 360) * .pi / 180 * radius
+    let textArc = arc(textWidth: textWidth)
+    // A sweep of a full turn or more is the whole circle, once: a string does not lap itself.
+    // (The Kotlin player's Compose arc stops short of a full turn here; see the tests.)
+    let arcLength = min(abs(textArc.sweepDegrees), 360) * Self.radiansPerDegree * radius
+    let startRadians = textArc.startDegrees * Self.radiansPerDegree
     let direction: Float = clockwise ? 1 : -1
     var placed: [NativeSwiftCircleGlyph] = []
     placed.reserveCapacity(advances.count)
-    var distance: Float = 0
+    var walked: Float = 0
     for advance in advances {
-      let middle = distance + advance / 2
-      guard middle <= length else { break }
-      let angle = arc.startDegrees * .pi / 180 + direction * middle / radius
+      let glyphCentreDistance = walked + advance / 2
+      guard glyphCentreDistance <= arcLength else { break }
+      let angle = startRadians + direction * glyphCentreDistance / radius
       placed.append(
         NativeSwiftCircleGlyph(
           x: centerX + radius * cos(angle), y: centerY + radius * sin(angle),
           // The tangent along the direction of travel: a quarter turn on from the radius.
-          rotationDegrees: angle * 180 / .pi + direction * 90))
-      distance += advance
+          rotationRadians: angle + direction * .pi / 2))
+      walked += advance
     }
     return placed
   }
