@@ -65,11 +65,12 @@ import Testing
   /// Android's `Paint.setTextSize` ignores a size below 0 or NaN (hwui `jni/Paint.cpp:1001`,
   /// `if (textSize >= 0)`), and AndroidX's `replacePaint` has just reset the paint
   /// (`AndroidPaintContext.java:533`), so such text draws at Skia's default of 12 pixels
-  /// (`SkPaintDefaults.h:20`). An infinity saturates as any layout float does.
+  /// (`SkPaintDefaults.h:20`). A size past 1e6, an infinity included, is 1e6, as the Kotlin
+  /// player's `rcTextSizePixels` caps it (`RC_MAX_TEXT_SIZE_PX`).
   @Test func aHostTextSizeBelowZeroIsAndroidsDefaultSize() throws {
     let cases: [(Float, Float)] = [
-      (.nan, 12), (-.infinity, 12), (-1e30, 12), (-1, 12), (0, 0), (1e30, 1e30),
-      (.infinity, .greatestFiniteMagnitude), (18, 18),
+      (.nan, 12), (-.infinity, 12), (-1e30, 12), (-1, 12), (0, 0), (1e30, 1e6),
+      (.infinity, 1e6), (1e6, 1e6), (18, 18),
     ]
     for (value, expected) in cases {
       let session = try NativeSwiftDocumentSession.open(data: Self.hostTextSizeDocument())
@@ -100,11 +101,8 @@ import Testing
   /// refuse a NaN size or weight: `NativeSwiftTextSnapshot.init` owns it.
   @Test func aTextSnapshotNormalisesItsSizeAndWeight() {
     let cases: [(size: Float, weight: Float, expectedSize: Float, expectedWeight: Float)] = [
-      (.nan, .nan, 12, 400), (-1, -.infinity, 12, 1),
-      (
-        .infinity, .infinity,
-        .greatestFiniteMagnitude, 1_000
-      ), (18, 700, 18, 700),
+      (.nan, .nan, 12, 400), (-1, -.infinity, 12, 1), (.infinity, .infinity, 1e6, 1_000),
+      (18, 700, 18, 700),
     ]
     for entry in cases {
       let text = NativeSwiftTextSnapshot(
@@ -113,6 +111,18 @@ import Testing
       #expect(text.size == entry.expectedSize, "\(entry)")
       #expect(text.weight == entry.expectedWeight, "\(entry)")
       #expect(text.sizeIsDensityTyped == (entry.size >= 0), "\(entry): Android's 12 is pixels")
+    }
+  }
+
+  /// A canvas paint's text size, as the AppKit player draws it, follows the same rule with the
+  /// paint's default for a size Android ignores: the Kotlin player's `rcTextSizePixels`.
+  @Test func aPaintTextSizeTakesAndroidsRule() {
+    let unset = NativeSwiftTextSnapshot.paintDefaultSize
+    let cases: [(Float, Float)] = [
+      (.nan, 16), (-1, 16), (-.infinity, 16), (0, 0), (18, 18), (1e30, 1e6), (.infinity, 1e6),
+    ]
+    for (size, expected) in cases {
+      #expect(NativeSwiftTextSnapshot.androidSize(size, unset: unset) == expected, "\(size)")
     }
   }
 

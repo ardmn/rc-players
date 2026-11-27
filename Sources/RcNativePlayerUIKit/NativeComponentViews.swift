@@ -425,7 +425,7 @@
       strokeCap = snapshot.strokeCap
       strokeJoin = snapshot.strokeJoin
       blendMode = snapshot.blendMode
-      textSize = 16
+      textSize = CGFloat(NativeSwiftTextSnapshot.paintDefaultSize)
       textSizeIsDensityTyped = false
       textWeight = 400
       text = nil
@@ -2031,7 +2031,10 @@
     ) -> UIFont {
       let weightValue = command.textWeight
       let normalizedWeight = min(max((weightValue - 400) / 500, -1), 1)
-      let size = max(command.textSize * scale, 1)
+      // At least 1 point and at most the Kotlin player's cap in pixels; a NaN product (a
+      // non-finite scale) is the 1-point floor rather than a NaN font.
+      let scaled = command.textSize * scale
+      let size = scaled >= 1 ? min(scaled, CGFloat(NativeSwiftTextSnapshot.maximumSize)) : 1
       let base = UIFont.systemFont(ofSize: size, weight: UIFont.Weight(rawValue: normalizedWeight))
       var descriptor = base.fontDescriptor
       let familyName = command.textStyle.fontFamilyName

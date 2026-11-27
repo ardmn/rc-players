@@ -136,5 +136,20 @@
       label.apply(documentScale: 1, layoutDensityScale: 1)
       #expect(label.preferredSize(maximumWidth: 0) == .zero)
     }
+
+    /// A text's point size is at least 1 and at most `NativeSwiftTextSnapshot.maximumSize`, the
+    /// Kotlin player's cap in pixels, whatever the scale: a NaN size (a non-finite scale times the
+    /// size) is the 1-point floor rather than a NaN font.
+    @Test(arguments: [CGFloat.nan, .infinity, -.infinity, 0, 1e9, 2])
+    func aFontSizeIsFiniteAtAnyScale(_ scale: CGFloat) {
+      let snapshot = NativeSwiftTextSnapshot(
+        value: Self.words, colorARGB: 0xff00_0000, size: 16, style: 0, weight: 400,
+        familyID: -1, alignment: .center, overflow: 1, maximumLines: 1)
+      let size = NativeTextAttributes.font(for: NativeDrawCommand(text: snapshot), scale: scale)
+        .pointSize
+      #expect(
+        size >= 1 && size <= CGFloat(NativeSwiftTextSnapshot.maximumSize), "\(scale): \(size)")
+      if scale == 2 { #expect(size == 32) }
+    }
   }
 #endif

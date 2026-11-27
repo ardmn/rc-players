@@ -3959,7 +3959,12 @@ private final class NativeMacCanvasView: NSView {
 
   private func drawText(_ command: NativeMacDrawCommand, _ context: CGContext) {
     guard let text = command.text else { return }
-    let size = max(CGFloat(command.textSize), 1)
+    // A canvas paint's size as Android's `Paint.setTextSize` takes it (`androidSize`). The Kotlin
+    // player keeps the size the paint held before a NaN or negative one; a command carries only
+    // its own, so that is the paint's default here.
+    let paintSize = NativeSwiftTextSnapshot.androidSize(
+      command.textSize, unset: NativeSwiftTextSnapshot.paintDefaultSize)
+    let size = max(CGFloat(paintSize), 1)
     let font =
       conformanceFontName.flatMap { NSFont(name: $0, size: size) }
       ?? NSFont.systemFont(ofSize: size)

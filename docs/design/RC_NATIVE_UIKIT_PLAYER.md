@@ -458,7 +458,8 @@ the raw wire word and resolved with `NativeSwiftFloatExpression.resolve` at snap
 path draw commands have always taken — so a `RemoteDensity.Host` capture renders at whatever
 `setHostDensity` supplied. A value that resolves non-finite no longer fails the frame, since a host
 may write any float: a dimension reads NaN as 0 and an infinity as the largest finite float, a text
-size below 0 or NaN is the 12 pixels an Android paint keeps, and a NaN `widthIn` / `heightIn`
+size below 0 or NaN is the 12 pixels an Android paint keeps and one past 1e6, an infinity included,
+is 1e6, as the Kotlin player caps it, and a NaN `widthIn` / `heightIn`
 maximum is no bound, the Kotlin player's `Dp.Unspecified`. The explicit refusal survives where
 a field genuinely cannot resolve later — `floatWord(_:requireLiteral: true)`, which is what a
 background written as colour channels rather than a colour id still uses.
