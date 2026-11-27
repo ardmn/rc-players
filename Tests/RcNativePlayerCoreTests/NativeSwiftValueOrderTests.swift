@@ -233,15 +233,8 @@ import Testing
       .int(Writer.nanReference(60)).int(Self.floatDiv)
     document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
-    let result = Result { try session.probeValues(timeSeconds: 0) }
-    switch result {
-    case .success(let values):
-      #expect(values.floats[52] == 2, "\(String(describing: values.floats[52]))")
-    case .failure(let error):
-      withKnownIssue("the integer view of a computed float reads 0") {
-        Issue.record("Kotlin 52 = 2; Swift threw \(error)")
-      }
-    }
+    let values = try session.probeValues(timeSeconds: 0)
+    #expect(values.floats[52] == 2, "Kotlin 52 = 2; Swift \(String(describing: values.floats[52]))")
   }
 
   // MARK: - Writes onto an integer expression's output
