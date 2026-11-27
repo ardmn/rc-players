@@ -102,7 +102,9 @@ public enum RemoteVerticalDistribution: Hashable, Sendable {
 ///   RemoteText("Title").flexWeight(1)
 /// }
 /// ```
-public struct RemoteHStack<Content: RemoteStackContent>: _PrimitiveRemoteView {
+public struct RemoteHStack<Content: RemoteStackContent>: RemoteView, RemotePrimitive {
+  public typealias Body = Never
+
   let alignment: RemoteVerticalAlignment
   let spacing: Double
   let distribution: RemoteHorizontalDistribution
@@ -123,18 +125,27 @@ public struct RemoteHStack<Content: RemoteStackContent>: _PrimitiveRemoteView {
     self.content = content()
   }
 
-  public func _write(to writer: _RemoteWriter) throws(RemoteEncodingError) {
+  package func write(to writer: RemoteWriter) throws(RemoteEncodingError) {
     let componentID = writer.newComponentID()
+    // A row with flexible children writes its spacing as each later child's leading padding (see
+    // the writer's `takeModifiers`): the reference players measure weighted children without a
+    // row's `spacedBy`, so the gaps would push the last child out. Any other row uses
+    // `spacedBy`, which leaves no gap beside a gone child.
+    let weighted = containsFlexWeight(content)
     let layout = RowLayout(
       componentId: componentID, animationId: IdEncoding.noId,
       horizontalPositioning: distribution.wire, verticalPositioning: alignment.wire,
-      spacedBy: try writer.pixels(spacing))
-    try writer.writeLayout(.rowLayout(layout), kind: .horizontalStack, content: content)
+      spacedBy: weighted ? 0 : try writer.pixels(spacing))
+    try writer.writeLayout(
+      .rowLayout(layout), kind: .horizontalStack, content: content,
+      rowGap: weighted ? spacing : 0)
   }
 }
 
 /// Children one above another, as SwiftUI's `VStack` (a Compose `Column`).
-public struct RemoteVStack<Content: RemoteStackContent>: _PrimitiveRemoteView {
+public struct RemoteVStack<Content: RemoteStackContent>: RemoteView, RemotePrimitive {
+  public typealias Body = Never
+
   let alignment: RemoteHorizontalAlignment
   let spacing: Double
   let distribution: RemoteVerticalDistribution
@@ -155,7 +166,7 @@ public struct RemoteVStack<Content: RemoteStackContent>: _PrimitiveRemoteView {
     self.content = content()
   }
 
-  public func _write(to writer: _RemoteWriter) throws(RemoteEncodingError) {
+  package func write(to writer: RemoteWriter) throws(RemoteEncodingError) {
     let componentID = writer.newComponentID()
     let layout = ColumnLayout(
       componentId: componentID, animationId: IdEncoding.noId,
@@ -166,7 +177,9 @@ public struct RemoteVStack<Content: RemoteStackContent>: _PrimitiveRemoteView {
 }
 
 /// Children on top of each other, later ones in front, as SwiftUI's `ZStack` (a Compose `Box`).
-public struct RemoteZStack<Content: RemoteView>: _PrimitiveRemoteView {
+public struct RemoteZStack<Content: RemoteView>: RemoteView, RemotePrimitive {
+  public typealias Body = Never
+
   let alignment: RemoteAlignment
   let content: Content
 
@@ -177,7 +190,7 @@ public struct RemoteZStack<Content: RemoteView>: _PrimitiveRemoteView {
     self.content = content()
   }
 
-  public func _write(to writer: _RemoteWriter) throws(RemoteEncodingError) {
+  package func write(to writer: RemoteWriter) throws(RemoteEncodingError) {
     let componentID = writer.newComponentID()
     let layout = BoxLayout(
       componentId: componentID, animationId: IdEncoding.noId,
@@ -189,7 +202,12 @@ public struct RemoteZStack<Content: RemoteView>: _PrimitiveRemoteView {
 
 /// Space. In a stack, `RemoteSpacer()` takes the space the other children leave, shared with any
 /// other spacers and flex-weighted views; `RemoteSpacer(length:)` is a fixed gap along the stack.
-public struct RemoteSpacer: _PrimitiveRemoteView {
+public struct RemoteSpacer: RemoteView, RemotePrimitive, RemoteFlexWeightReporting {
+  public typealias Body = Never
+
+  /// A flexible spacer shares a stack's leftover space, as a flex-weighted child does.
+  package var containsFlexWeight: Bool { length == nil }
+
   let length: RemoteFloat?
 
   /// Flexible space.
@@ -198,7 +216,7 @@ public struct RemoteSpacer: _PrimitiveRemoteView {
   /// A gap of `length` points along the enclosing stack.
   public init(length: RemoteFloat) { self.length = length }
 
-  public func _write(to writer: _RemoteWriter) throws(RemoteEncodingError) {
+  package func write(to writer: RemoteWriter) throws(RemoteEncodingError) {
     try writer.writeSpacer(length: length)
   }
 }

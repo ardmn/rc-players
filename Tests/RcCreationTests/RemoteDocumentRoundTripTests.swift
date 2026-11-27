@@ -40,7 +40,7 @@ import Testing
   @Test func stackOfTexts() throws {
     let document = RemoteDocument(width: 200, height: 100) {
       RemoteVStack(alignment: .center, spacing: 4) {
-        RemoteText("Title").font(size: 20, weight: .bold)
+        RemoteText("Title").font(.system(size: 20, weight: .bold))
         RemoteText("Subtitle").foregroundStyle(.gray)
       }
       .padding(8)
@@ -71,18 +71,40 @@ import Testing
     #expect(box.padding.left == Float(2 * scale) && box.padding.top == Float(1 * scale))
   }
 
-  @Test func backgroundBorderAndClip() throws {
+  /// A rounded background is drawn behind the content, as AndroidX's `drawWithContent`, rather
+  /// than clipping it; a rounded border keeps its own shape.
+  @Test func roundedBackgroundDrawsBehindWithoutClipping() throws {
     let document = RemoteDocument(width: 100, height: 100) {
       RemoteZStack {}
         .frame(width: 50, height: 50)
         .background(.hex(0x3366CC), in: .roundedRectangle(cornerRadius: 6))
         .border(.black, width: 2, cornerRadius: 6)
     }
+    let operations = try operations(document)
+    #expect(!operations.contains { $0.opCode == .roundedClipRectModifierOperation })
+    #expect(operations.contains { $0.opCode == .drawContentOperation })
     let box = try first(document)
-    #expect(box.backgroundARGB == 0xFF33_66CC)
+    let fill = try #require(drawCommands(box).first)
+    #expect(fill.colorARGB == 0xFF33_66CC)
+    // The component's full size, from its bound width and height, with the corner radius.
+    #expect(fill.values == [0, 0, 50, 50, 6, 6])
     #expect(box.borderARGB == 0xFF00_0000)
     #expect(box.borderWidth == 2)
-    #expect(box.cornerRadius == 6)
+  }
+
+  /// A rounded background inside a padding covers only what the padding surrounds, as SwiftUI
+  /// insets it: the padding goes on a box around the background's own.
+  @Test func roundedBackgroundInsideAPaddingIsInset() throws {
+    let document = RemoteDocument(width: 100, height: 100) {
+      RemoteZStack {}
+        .frame(width: 40, height: 40)
+        .background(.red, in: .roundedRectangle(cornerRadius: 4))
+        .padding(5)
+    }
+    let outer = try first(document)
+    #expect(outer.padding.left == 5 && outer.padding.top == 5)
+    let fill = try #require(drawCommands(outer).first)
+    #expect(fill.values == [0, 0, 40, 40, 4, 4])
   }
 
   @Test func flexWeightsShareAStack() throws {
@@ -255,7 +277,7 @@ import Testing
     let document = RemoteDocument(width: 200, height: 100, displayScale: scale) {
       RemoteVStack {
         RemoteText("Styled").font(.headline)
-        RemoteText("Fixed").font(size: 17)
+        RemoteText("Fixed").font(.system(size: 17))
       }
     }
     let texts = components(try first(document))
@@ -274,7 +296,7 @@ import Testing
     let document = RemoteDocument(width: 100, height: 100) {
       RemoteColor.red
         .frame(width: 40, height: 40)
-        .onTap(.host(id: 7), .host("opened"), .set(tab, to: 2))
+        .onTapGesture(.host(id: 7), .host("opened"), .set(tab, to: 2))
     }
     let session = try open(document)
     let box = try #require(components(try session.snapshot().root).first)
@@ -332,6 +354,25 @@ import Testing
     #expect(drawCommands(canvases[1]).first?.values == [30 * scale, 15 * scale, 5 * scale])
   }
 
+  /// A stroke writes its cap and join even when they are the defaults, as a paint's state carries
+  /// over from the draw before it.
+  @Test func aDefaultStrokeAfterARoundOneIsButt() throws {
+    let document = RemoteDocument(width: 100, height: 100) {
+      RemoteCanvas { context, _ in
+        context.stroke(
+          .line(from: RemotePoint(x: 0, y: 0), to: RemotePoint(x: 10, y: 10)), with: .black,
+          lineWidth: 4, lineCap: .round, lineJoin: .round)
+        context.stroke(
+          .line(from: RemotePoint(x: 0, y: 10), to: RemotePoint(x: 10, y: 0)), with: .black,
+          lineWidth: 4)
+      }
+      .frame(width: 20, height: 20)
+    }
+    let strokes = drawCommands(try first(document))
+    #expect(strokes.map(\.strokeCap) == [.round, .butt])
+    #expect(strokes.map(\.strokeJoin) == [.round, .miter])
+  }
+
   @Test func modifiersApplyToCustomViews() throws {
     struct Badge: RemoteView {
       let label: String
@@ -347,23 +388,27 @@ import Testing
     let showFooter = false
     let document = RemoteDocument(width: 300, height: 100) {
       RemoteHStack(spacing: 4) {
-        for label in labels { Badge(label: label).padding(2) }
+        RemoteForEach(labels) { label in Badge(label: label).padding(2) }
         if showFooter { RemoteText("never written") }
       }
     }
-    let badges = components(try first(document))
-    #expect(badges.compactMap(\.text?.value) == labels)
-    // Outermost first, as SwiftUI applies them: the outer padding, then the background (a
-    // rounded background clips first), then the padding inside it.
+    func texts(_ node: NativeSwiftNodeSnapshot) -> [String] {
+      (node.text.map { [$0.value] } ?? []) + node.children.flatMap(texts)
+    }
+    #expect(texts(try first(document)) == labels)
+    // As SwiftUI applies them, outermost first: the outer padding on a box, the rounded
+    // background on a box inside it (drawing behind its content, clipping nothing), then the
+    // text with its own padding.
     let operations = try operations(document)
+    #expect(!operations.contains { $0.opCode == .roundedClipRectModifierOperation })
+    #expect(operations.filter { $0.opCode == .drawContentOperation }.count == labels.count)
     let text = try #require(
       operations.firstIndex { if case .textLayout = $0 { true } else { false } })
     let content = try #require(operations[text...].firstIndex { $0.opCode == .layoutContent })
-    #expect(
-      operations[(text + 1)..<content].map(\.opCode) == [
-        .paddingModifierOperation, .roundedClipRectModifierOperation, .backgroundModifierOperation,
-        .paddingModifierOperation,
-      ])
+    #expect(operations[(text + 1)..<content].map(\.opCode) == [.paddingModifierOperation])
+    let marker = try #require(operations[..<text].lastIndex { $0.opCode == .drawContentOperation })
+    #expect(operations[marker + 1].opCode == .layoutContent)
+    #expect(operations[marker + 2].opCode == .canvasOperations)
   }
 
   @Test func conflictingVariablesFailToEncode() {
@@ -418,6 +463,32 @@ import Testing
       RemoteDocument(width: 10, height: 10) {
         RemoteColor.red.border(.black, width: .infinity)
       },
+      // Path coordinates: NaN, and a Double that overflows a Float once scaled.
+      RemoteDocument(width: 10, height: 10) {
+        RemoteCanvas { context, _ in
+          context.fill(
+            .path(
+              RemotePath {
+                $0.move(to: .nan, 0)
+                $0.addLine(to: 10, 10)
+              }), with: .black)
+        }
+      },
+      RemoteDocument(width: 10, height: 10) {
+        RemoteCanvas { context, _ in
+          context.fill(
+            .path(
+              RemotePath {
+                $0.move(to: 0, 0)
+                $0.addLine(to: 1e300, 10)
+              }), with: .black)
+        }
+      },
+      // A computed action that folds to NaN: written as a constant, it would read as an id.
+      RemoteDocument(width: 10, height: 10) {
+        RemoteColor.red.onTapGesture(
+          .set(RemoteVariable("target", default: 1.0), to: RemoteFloat(0.0) / 0))
+      },
     ] {
       #expect(throws: RemoteEncodingError.nonFiniteValue) { try document.encode() }
     }
@@ -427,12 +498,12 @@ import Testing
     let tooLarge = Int(Int32.max) + 1
     #expect(throws: RemoteEncodingError.integerOutOfRange(tooLarge)) {
       try RemoteDocument(width: 10, height: 10) {
-        RemoteColor.red.onTap(.host(id: tooLarge))
+        RemoteColor.red.onTapGesture(.host(id: tooLarge))
       }.encode()
     }
     #expect(throws: RemoteEncodingError.integerOutOfRange(tooLarge)) {
       try RemoteDocument(width: 10, height: 10) {
-        RemoteColor.red.visibility(.visible).onTap(
+        RemoteColor.red.visibility(.visible).onTapGesture(
           .set(RemoteVariable("n", default: 0), to: tooLarge))
       }.encode()
     }
@@ -442,7 +513,7 @@ import Testing
   @Test func semanticsOfATappableViewAreClickable() throws {
     let document = RemoteDocument(width: 100, height: 100) {
       RemoteColor.blue.frame(width: 40, height: 40)
-        .onTap(.host("go"))
+        .onTapGesture(.host("go"))
         .accessibilityLabel("Go")
     }
     let semantics = try operations(document).compactMap {
@@ -473,6 +544,49 @@ import Testing
     }
     let session = try open(document)
     #expect(components(try session.snapshot().root).first?.text?.value == "7 -3 1 2")
+  }
+
+  /// Text styles come from the environment, so they apply on a container, after a layout
+  /// modifier, and on a custom view, as SwiftUI's do; the innermost setting wins.
+  @Test func textStylesComeFromTheEnvironment() throws {
+    struct Caption: RemoteView {
+      let text: String
+      var body: some RemoteView { RemoteText(text).padding(2) }
+    }
+    let scale = 2.0
+    let document = RemoteDocument(width: 300, height: 200, displayScale: scale) {
+      RemoteVStack {
+        RemoteText("Container")
+        RemoteText("Inner").font(.system(size: 20))
+        RemoteText("After padding").padding(4).foregroundStyle(.white)
+        Caption(text: "Custom").italic()
+      }
+      .font(.system(size: 13))
+      .fontWeight(.bold)
+    }
+    let texts = components(try #require(components(try open(document).snapshot().root).first))
+      .flatMap { $0.text == nil ? components($0) : [$0] }
+      .compactMap(\.text)
+    #expect(texts.map(\.size) == [13, 20, 13, 13].map { Float($0 * scale) })
+    #expect(texts.allSatisfy { $0.weight == Float(RemoteFontWeight.bold.value) })
+    #expect(texts[2].colorARGB == 0xFFFF_FFFF)
+    #expect(texts.map(\.style) == [0, 0, 0, 1])
+  }
+
+  /// A weight set outside a font keeps applying when an inner `font` changes the size.
+  @Test func fontWeightSurvivesAnInnerFont() throws {
+    let document = RemoteDocument(width: 100, height: 40) {
+      RemoteText("x").font(.system(size: 17)).fontWeight(.bold)
+    }
+    #expect(
+      try first(document).text?.weight == Float(RemoteFontWeight.bold.value))
+  }
+
+  @Test func namedColorsAreLightDarkPairs() throws {
+    let themes = try operations(RemoteDocument(width: 10, height: 10) { RemoteColor.blue })
+      .compactMap { if case .colorTheme(let theme) = $0 { theme } else { nil } }
+    #expect(themes.map(\.lightModeFallback) == [RemoteColorValue.hex(0x007AFF).argb])
+    #expect(themes.map(\.darkModeFallback) == [RemoteColorValue.hex(0x0A84FF).argb])
   }
 
   @Test func identicalValuesAreDeclaredOnce() throws {
