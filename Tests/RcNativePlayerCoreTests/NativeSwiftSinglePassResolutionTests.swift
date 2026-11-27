@@ -194,6 +194,32 @@ import Testing
     #expect(events == [.namedAction(name: "ha", value: .text("ticks=50"))], "\(events as Any)")
   }
 
+  /// A text-from-float has two readers: the resolution pass that writes its text, and the
+  /// decoder's clock scan that decides whether the frame needs a wall-clock refresh. Both read the
+  /// one list of text operations, so a conversion of `TIME_IN_SEC` is drawn as the current second
+  /// of the hour and asks for a refresh, at the root and inside layout content alike. A conversion
+  /// that one of them missed would draw a frozen clock or never draw it.
+  @Test func aClockConversionIsDrawnAndAsksForAWallClockRefresh() throws {
+    // `TIME_IN_SEC` is the second of the hour: 1_789_821_296 s is 2096 s into its hour.
+    let wallClock = NativeSwiftWallClock(epochMillis: 1_789_821_296_789, offsetSeconds: 0)
+    for inLayoutContent in [false, true] {
+      let document = Writer()
+      document.header(width: 100, height: 100)
+      document.u8(Op.layoutRoot).int(1)
+      if inLayoutContent { document.u8(Op.layoutContent).int(2) }
+      document.u8(Op.textFromFloat).int(4).int(Writer.nanReference(System.timeInSeconds))
+        .int(Self.digits(before: 255, after: 0)).int(517)
+      if inLayoutContent { document.u8(Op.containerEnd) }
+      Self.drawText(document, id: 4)
+      document.u8(Op.containerEnd)
+      let snapshot = try NativeSwiftDocumentSession.open(data: document.data)
+        .snapshot(wallClock: wallClock)
+      let drawn = Self.drawnTexts(snapshot)
+      #expect(drawn == ["2096"], "layoutContent=\(inLayoutContent) drew \(drawn)")
+      #expect(snapshot.needsWallClockRefresh, "layoutContent=\(inLayoutContent)")
+    }
+  }
+
   /// `RcPlayerStateTest.aTextNotYetProducedReadsAsEmptyAndAnEmptyPathExpressionDrawsNothing`, the
   /// text half: a merge, length or substring over a text nothing produced reads it as "", and a
   /// range past the text selects what there is.

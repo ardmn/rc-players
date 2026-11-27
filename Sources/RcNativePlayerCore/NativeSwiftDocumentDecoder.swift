@@ -170,8 +170,9 @@ enum NativeSwiftDocumentDecoder {
     /// target a host allocates, so both are bounded as the CMP player's `RcOffscreenTargetLimits`.
     var offscreenTargetIDs: Set<Int> = []
     var offscreenTargetPixels = 0
+    /// Every text operation in wire order: the one list both the resolution steps' producers and
+    /// the clock scan read.
     var textOperations: [ParsedTextOperation] = []
-    var textFromFloats: [ParsedTextFromFloat] = []
     var idLists: [Int: [Int]] = [:]
     var floatLists: [Int: [UInt32]] = [:]
     var floatListUpdates: [Int: [(index: UInt32, value: UInt32)]] = [:]
@@ -1872,7 +1873,6 @@ enum NativeSwiftDocumentDecoder {
           outputID: outputID, value: value,
           digitsBefore: Int(Int16(bitPattern: UInt16(digits >> 16))),
           digitsAfter: Int(Int16(bitPattern: UInt16(digits & 0xffff))), flags: flags)
-        textFromFloats.append(conversion)
         appendTextOperation(.fromFloat(conversion))
       case NativeSwiftWireOpcode.textMerge:
         let merge = ParsedTextMerge(
@@ -3108,7 +3108,6 @@ enum NativeSwiftDocumentDecoder {
       }) {
         return true
       }
-      if textFromFloats.contains(where: { references(ids, in: [$0.value]) }) { return true }
       if textOperations.contains(where: { operation in
         switch operation {
         case .fromFloat(let op): return references(ids, in: [op.value])
