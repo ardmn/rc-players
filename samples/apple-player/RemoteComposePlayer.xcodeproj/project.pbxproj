@@ -70,6 +70,7 @@
 		100000000000000000000023 /* NativeTexturePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000026 /* NativeTexturePolicy.swift */; };
 		100000000000000000000062 /* NativeOffscreenTargets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000062 /* NativeOffscreenTargets.swift */; };
 		100000000000000000000061 /* NativeGradientTiling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000061 /* NativeGradientTiling.swift */; };
+		1000000000000000000000F5 /* NativeTextOnCircle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000F5 /* NativeTextOnCircle.swift */; };
 		100000000000000000000024 /* RemoteComposeFontVariation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000027 /* RemoteComposeFontVariation.swift */; };
 		10000000000000000000006B /* RemoteComposeFontSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000006B /* RemoteComposeFontSettings.swift */; };
 		100000000000000000000025 /* SwiftControls.rc in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000028 /* SwiftControls.rc */; };
@@ -114,6 +115,7 @@
 		200000000000000000000026 /* NativeTexturePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeTexturePolicy.swift; path = "../../Sources/RcNativePlayerUIKit/NativeTexturePolicy.swift"; sourceTree = "<group>"; };
 		200000000000000000000062 /* NativeOffscreenTargets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeOffscreenTargets.swift; path = "../../Sources/RcNativePlayerUIKit/NativeOffscreenTargets.swift"; sourceTree = "<group>"; };
 		200000000000000000000061 /* NativeGradientTiling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeGradientTiling.swift; path = "../../Sources/RcNativePlayerUIKit/NativeGradientTiling.swift"; sourceTree = "<group>"; };
+		2000000000000000000000F5 /* NativeTextOnCircle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeTextOnCircle.swift; path = "../../Sources/RcNativePlayerUIKit/NativeTextOnCircle.swift"; sourceTree = "<group>"; };
 		200000000000000000000013 /* NativeLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeLayout.swift; path = "../../Sources/RcNativePlayerUIKit/NativeLayout.swift"; sourceTree = "<group>"; };
 		20000000000000000000004E /* NativeLayoutEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeLayoutEngine.swift; path = "../../Sources/RcNativePlayerUIKit/NativeLayoutEngine.swift"; sourceTree = "<group>"; };
 		200000000000000000000014 /* NativeGraphicsState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeGraphicsState.swift; path = "../../Sources/RcNativePlayerUIKit/NativeGraphicsState.swift"; sourceTree = "<group>"; };
@@ -259,6 +261,7 @@
 				200000000000000000000026 /* NativeTexturePolicy.swift */,
 				200000000000000000000062 /* NativeOffscreenTargets.swift */,
 				200000000000000000000061 /* NativeGradientTiling.swift */,
+				2000000000000000000000F5 /* NativeTextOnCircle.swift */,
 				200000000000000000000013 /* NativeLayout.swift */,
 				20000000000000000000004E /* NativeLayoutEngine.swift */,
 				200000000000000000000014 /* NativeGraphicsState.swift */,
@@ -417,6 +420,7 @@
 				100000000000000000000023 /* NativeTexturePolicy.swift in Sources */,
 				100000000000000000000062 /* NativeOffscreenTargets.swift in Sources */,
 				100000000000000000000061 /* NativeGradientTiling.swift in Sources */,
+				1000000000000000000000F5 /* NativeTextOnCircle.swift in Sources */,
 				100000000000000000000011 /* NativeLayout.swift in Sources */,
 				10000000000000000000004E /* NativeLayoutEngine.swift in Sources */,
 				100000000000000000000012 /* NativeGraphicsState.swift in Sources */,

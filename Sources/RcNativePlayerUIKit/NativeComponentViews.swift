@@ -427,10 +427,13 @@
       strokeCap = snapshot.strokeCap
       strokeJoin = snapshot.strokeJoin
       blendMode = snapshot.blendMode
-      textSize = 16
+      // Only `DrawTextOnCircle` draws its string from here. A canvas `DrawText` keeps the nil it
+      // always had, so `drawText` still skips it: drawing it is a change of its own.
+      let carriesText = snapshot.kind == NativeSwiftDrawKind.textOnCircle
+      textSize = carriesText ? CGFloat(snapshot.textSize) : 16
       textSizeIsDensityTyped = false
       textWeight = 400
-      text = nil
+      text = carriesText ? snapshot.text : nil
       path = snapshot.path.map {
         NativePathElement(kind: $0.kind, values: $0.values.map(CGFloat.init))
       }
@@ -2529,6 +2532,7 @@
         paint(path.cgPath, command, context)
       case NativeSwiftDrawKind.arc, NativeSwiftDrawKind.sector: drawArc(command, context)
       case NativeSwiftDrawKind.text: drawText(command)
+      case NativeSwiftDrawKind.textOnCircle: drawTextOnCircle(command, context)
       case NativeSwiftDrawKind.path, NativeSwiftDrawKind.tweenPath:
         paint(
           NativePathBuilder.make(command.path), command, context,
@@ -2655,6 +2659,27 @@
       context.textPosition = CGPoint(x: x, y: baseline)
       CTLineDraw(line, context)
       context.restoreGState()
+    }
+
+    /// `DrawTextOnCircle`: the string typeset as `drawText` typesets it, then laid on the circle
+    /// the core resolved (`NativeTextOnCircle`).
+    private func drawTextOnCircle(_ command: NativeDrawCommand, _ context: CGContext) {
+      guard command.blendMode != NativeSwiftPaintBlendMode.destination,
+        let text = command.text, !text.isEmpty,
+        let circle = NativeSwiftTextOnCircle(values: command.values.map(Float.init))
+      else { return }
+      let font = NativeTextAttributes.font(for: command, scale: 1, fontNames: fontNames)
+      let attributed = NSMutableAttributedString(
+        attributedString: NativeTextAttributes.string(
+          for: command, font: font, scale: 1,
+          layoutDirection: effectiveUserInterfaceLayoutDirection))
+      // The colour with its own alpha: `draw` already made the paint alpha the context's, and the
+      // shared attributes replace the colour's alpha with it, which would apply it twice.
+      attributed.addAttribute(
+        .foregroundColor, value: command.color,
+        range: NSRange(location: 0, length: attributed.length))
+      NativeTextOnCircle.draw(
+        CTLineCreateWithAttributedString(attributed), along: circle, in: context)
     }
 
     private func drawImage(_ command: NativeDrawCommand, _ context: CGContext) {

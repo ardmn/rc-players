@@ -168,6 +168,88 @@ public enum NativeTestDocuments {
     wire.u8(Op.containerEnd)
     return wire.data
   }
+
+  /// The side of ``textOnCircle(alignment:placement:radius:warp:center:startAngle:definitions:)``.
+  public static let textOnCircleSize = 240
+  /// The centre of that document's circle, on both axes.
+  public static let textOnCircleCenter: Float = 120
+  /// The radius its glyphs sit on: the operation's radius plus its warp offset.
+  public static let textOnCircleRadius: Float = 90
+  /// Its warp offset: non-zero, so a renderer that ignored it would draw on the wrong ring.
+  public static let textOnCircleWarp: Float = 10
+
+  /// A float word: a literal, or a reference to float `id` in the form the Kotlin codec writes.
+  public enum FloatWord {
+    case literal(Float)
+    case variable(Int)
+
+    var bits: Int {
+      switch self {
+      case .literal(let value): Int(Int32(bitPattern: value.bitPattern))
+      case .variable(let id): Int(Int32(bitPattern: 0x7fc0_0000 | UInt32(id)))
+      }
+    }
+  }
+
+  /// `RcTextOnCircleRenderTest.document(...)`, byte for byte: "REMOTE COMPOSE" at 18 pt in opaque
+  /// black, drawn by one `DrawTextOnCircle` in a ``textOnCircleSize`` square canvas. Every float
+  /// field may be a variable; `definitions` are float constants `(id, value)` written first, and
+  /// `names` declares some of them as named floats a host can write.
+  /// Leaving out `withCurvedText` draws the dial (`dial(withCurvedText:)`) as the Kotlin
+  /// evidence strip does: a grey stroked circle, with or without the blue curved label.
+  public static func textOnCircle(
+    alignment: Int = 1, placement: Int = 0,
+    radius: FloatWord = .literal(textOnCircleRadius - textOnCircleWarp),
+    warp: FloatWord = .literal(textOnCircleWarp),
+    center: FloatWord = .literal(textOnCircleCenter),
+    startAngle: FloatWord = .literal(-90),
+    definitions: [(id: Int, value: Float)] = [],
+    names: [(id: Int, name: String)] = [],
+    dial withCurvedText: Bool? = nil
+  ) -> Data {
+    typealias Op = NativeSwiftWireOpcode
+    let wire = NativeTestWire()
+    wire.header(width: textOnCircleSize, height: textOnCircleSize)
+    for definition in definitions {
+      wire.u8(Op.dataFloat).int(definition.id).float(definition.value)
+    }
+    for (id, name) in names { wire.named(id, NativeTestWire.NamedType.float, name) }
+    wire.u8(Op.dataText).int(7).utf8("REMOTE COMPOSE")
+    wire.u8(Op.layoutRoot).int(1)
+    wire.u8(Op.layoutContent).int(2)
+    wire.u8(Op.layoutCanvas).int(3).int(30)
+    for opcode in [Op.modifierWidth, Op.modifierHeight] {
+      wire.u8(opcode).int(NativeSwiftDimensionType.exact).float(Float(textOnCircleSize))
+    }
+    wire.u8(Op.canvasOperations)
+    // PAINT_DATA commands: 1 is text size, 4 colour, 5 stroke width, 8 style (1 << 16: stroke).
+    func paint(_ words: [Int]) {
+      wire.u8(Op.paintValues).int(words.count)
+      for word in words { wire.int(word) }
+    }
+    func drawTextOnCircle() {
+      wire.u8(Op.drawTextOnCircle).int(7)
+      for word in [center, center, radius, startAngle, warp] { wire.int(word.bits) }
+      wire.u8(alignment).u8(placement)
+    }
+    if let withCurvedText {
+      paint([8 | (1 << 16), 5, FloatWord.literal(2).bits, 4, Int(Int32(bitPattern: 0xff9a_a0a6))])
+      wire.u8(Op.drawCircle)
+      for value in [textOnCircleCenter, textOnCircleCenter, textOnCircleRadius] {
+        wire.float(value)
+      }
+      if withCurvedText {
+        paint([8, 1, FloatWord.literal(18).bits, 4, Int(Int32(bitPattern: 0xff1a_73e8))])
+        drawTextOnCircle()
+      }
+    } else {
+      paint([1, FloatWord.literal(18).bits, 4, opaqueBlack])
+      drawTextOnCircle()
+    }
+    // Four opens above (root, content, the canvas layout and its operation block), so four ends.
+    for _ in 0..<4 { wire.u8(Op.containerEnd) }
+    return wire.data
+  }
 }
 
 /// Writes `.rc` wire operations, big-endian, for the test documents.
