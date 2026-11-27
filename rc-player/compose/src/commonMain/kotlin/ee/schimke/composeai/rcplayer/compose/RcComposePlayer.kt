@@ -46,7 +46,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.text.modifiers.TextAutoSizeLayoutScope
 import androidx.compose.foundation.verticalScroll
@@ -2270,7 +2269,7 @@ private fun RenderLayoutNodeContent(
           val fontWeight = rcFontWeight(state.resolve(operation.fontWeight))
           val italic = isWireItalic(operation.fontStyle)
           val lines = remember { RcTextLines() }
-          BasicText(
+          RcBasicText(
             text = state.text(operation.textId).orEmpty(),
             modifier =
               effectiveModifier
@@ -2320,6 +2319,7 @@ private fun RenderLayoutNodeContent(
               ),
             overflow = operation.composeTextOverflow(),
             maxLines = androidXMaxLines(operation.overflow, operation.maxLines),
+            textMeasurer = textMeasurer,
           )
         }
         is RcLayoutNode.CoreText -> {
@@ -2385,7 +2385,7 @@ private fun RenderLayoutNodeContent(
                 )
               }
             } else null
-          BasicText(
+          RcBasicText(
             text = text,
             modifier =
               effectiveModifier
@@ -2490,6 +2490,10 @@ private fun RenderLayoutNodeContent(
                   stepSize = with(density) { 0.5f.toSp() },
                 )
               else null,
+            textMeasurer = textMeasurer,
+            autoSizeMinFontSize = with(density) { resolvedMinFontSize.toSp() },
+            // The closed-form Ahem model wraps and sizes the whole text itself.
+            cuttable = !LocalRcAhemTextMetrics.current,
           )
         }
         is RcLayoutNode.FitBox -> {

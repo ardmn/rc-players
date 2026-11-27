@@ -105,6 +105,20 @@ class RcHostValueEdgeRenderTest {
     }
 
   /**
+   * A megabyte of one word, in a `TextLayout`, a merge and a `CoreText`, renders in time: Skia lays
+   * out a word too long for a line in time quadratic in its length, and this one took minutes.
+   */
+  @Test(timeout = 120_000)
+  fun aMegabyteWordLaysOutInTime() =
+    assertRenders(
+      (textCases.filter { it.name != "long-text-length-as-width" } +
+          Case("core-text", coreTextDocument(fontSize = literal(12f))))
+        .map { case -> Triple(case, "1 MB", RcNamedValue.Text(MEGABYTE_WORD)) },
+    ) {
+      TEXT_NAME
+    }
+
+  /**
    * Renders every case with its value, and fails with every one that threw or took longer than
    * [MAX_RENDER_MILLIS] for its frames, not only the first.
    */
@@ -454,6 +468,9 @@ class RcHostValueEdgeRenderTest {
     private val HUGE_AND_NEGATIVE_FLOATS = floatArrayOf(1e30f, -1e30f, -5f, Float.MAX_VALUE)
 
     private val LONG_TEXTS = listOf("x".repeat(4_001), "word ".repeat(20_000), "😀".repeat(50_000))
+
+    /** A megabyte of one word: Skia's line breaker walked it once per line it filled. */
+    private val MEGABYTE_WORD = "x".repeat(1 shl 20)
 
     private fun literal(value: Float) = RcFloatWord.literal(value)
 
