@@ -109,14 +109,42 @@ import Testing
     #expect(Self.kept(commands) == ["kind 0", "rect 1", "kind 1"])
   }
 
+  /// A `DrawToBitmap` redirect to `bitmapID`; 0 is the main canvas.
+  static func redirect(_ bitmapID: Int) -> NativeSwiftDrawCommandSnapshot {
+    let base = command(Kind.drawToBitmap)
+    return NativeSwiftDrawCommandSnapshot(
+      kind: base.kind, values: base.values, colorARGB: base.colorARGB, alpha: base.alpha,
+      strokeWidth: base.strokeWidth, isStroke: base.isStroke, strokeCap: base.strokeCap,
+      strokeJoin: base.strokeJoin, blendMode: base.blendMode, path: base.path,
+      pathWinding: base.pathWinding, image: nil, textureImageID: nil, textureTileModeX: 0,
+      textureTileModeY: 0, shaderMatrix: nil, filterQuality: nil, usesComponentGeometry: false,
+      gradient: nil, text: nil, textSize: base.textSize, textFlags: 0, unsetValueIndices: [],
+      offscreenTarget: NativeSwiftOffscreenTargetSnapshot(
+        bitmapID: bitmapID, mode: 0, colorARGB: 0, width: bitmapID == 0 ? 0 : 8,
+        height: bitmapID == 0 ? 0 : 8))
+  }
+
   /// A `DrawToBitmap` draws into another canvas (`AndroidPaintContext.drawToBitmap` swaps
   /// `mCanvas`), whose matrix the earlier transform did not touch.
   @Test func aDrawToBitmapEndsTheSuppression() {
     let commands = [
-      Self.command(Kind.matrixTranslate, [.nan, 0]), Self.rect(1),
-      Self.command(Kind.drawToBitmap), Self.rect(2),
+      Self.command(Kind.matrixTranslate, [.nan, 0]), Self.rect(1), Self.redirect(5), Self.rect(2),
     ]
     #expect(Self.kept(commands) == ["kind \(Kind.drawToBitmap)", "rect 2"])
+  }
+
+  /// Each canvas keeps its own matrix: AndroidX swaps `mCanvas` back to `mMainCanvas` on a
+  /// redirect to 0, and to the bitmap's cached `Canvas` (`mCCache`) on one to the same bitmap, so
+  /// what a non-finite transform suppressed on either is suppressed again when drawing returns.
+  @Test func returningToACanvasRestoresItsSuppression() {
+    let nan = Self.command(Kind.matrixTranslate, [.nan, 0])
+    let commands = [
+      nan, Self.rect(1), Self.redirect(5), Self.rect(2), nan, Self.rect(3), Self.redirect(0),
+      Self.rect(4), Self.redirect(6), Self.rect(5), Self.redirect(5), Self.rect(6),
+    ]
+    let redirect = "kind \(Kind.drawToBitmap)"
+    #expect(
+      Self.kept(commands) == [redirect, "rect 2", redirect, redirect, "rect 5", redirect])
   }
 
   // MARK: - Values the UIKit player draws
