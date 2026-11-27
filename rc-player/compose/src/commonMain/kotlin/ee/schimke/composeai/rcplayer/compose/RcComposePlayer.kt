@@ -335,6 +335,7 @@ import ee.schimke.composeai.rcplayer.runtime.RcScrollBlock
 import ee.schimke.composeai.rcplayer.runtime.RcTouchActionBlock
 import ee.schimke.composeai.rcplayer.runtime.RcTouchActionType
 import ee.schimke.composeai.rcplayer.runtime.RcTouchExpressionRuntime
+import ee.schimke.composeai.rcplayer.runtime.javaRoundToInt
 import ee.schimke.composeai.rcplayer.trace.RcTraceCategory
 import ee.schimke.composeai.rcplayer.trace.rcTrace
 import kotlin.coroutines.EmptyCoroutineContext
@@ -342,7 +343,6 @@ import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -3909,13 +3909,6 @@ private fun rcPaddingEndPixels(first: Float, second: Float): Int =
 
 internal fun rcCombinedPaddingPixels(first: Float, second: Float): Int =
   (first.coerceAtLeast(0f) + second.coerceAtLeast(0f)).javaRoundToInt()
-
-/**
- * Java's `Math.round`, which AndroidX's players round with: NaN — a host's value, or an expression
- * that divides zero by zero — is 0, where `roundToInt` throws; the infinities saturate, as they do
- * there.
- */
-private fun Float.javaRoundToInt(): Int = if (isNaN()) 0 else roundToInt()
 
 /** Publishes the pointer position to the document, as AndroidX does on every touch event. */
 private data class RcTouchPositionElement(

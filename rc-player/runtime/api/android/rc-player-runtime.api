@@ -281,6 +281,10 @@ public final class ee/schimke/composeai/rcplayer/runtime/RcIntegerExpressionEval
 	public final fun validationError (Lee/schimke/composeai/rcplayer/protocol/RcIntegerExpression;)Ljava/lang/String;
 }
 
+public final class ee/schimke/composeai/rcplayer/runtime/RcJavaRoundingKt {
+	public static final fun javaRoundToInt (F)I
+}
+
 public final class ee/schimke/composeai/rcplayer/runtime/RcLayoutComputeBlock {
 	public fun <init> (Lee/schimke/composeai/rcplayer/protocol/RcLayoutCompute;Ljava/util/List;)V
 	public final fun component1 ()Lee/schimke/composeai/rcplayer/protocol/RcLayoutCompute;
