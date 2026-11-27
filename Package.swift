@@ -52,6 +52,9 @@ var products: [Product] = [
   .library(name: "RcPlayerAppleFonts", targets: ["RcPlayerAppleFonts"]),
   .library(name: "RcComposePlayerSwiftUI", targets: ["RcComposePlayerSwiftUI"]),
   .library(name: "RcNativePlayerCore", targets: ["RcNativePlayerCore"]),
+  // Authoring `.rc` documents from Swift, in SwiftUI's shape: views, modifiers and stacks. Pure
+  // Swift with no player dependency, so it builds on every platform, Linux included.
+  .library(name: "RcCreation", targets: ["RcCreation"]),
   .library(name: "RcNativePlayerUIKit", targets: ["RcNativePlayerUIKit"]),
   // The AppKit renderer as a command-line tool: what the preview server's `swift-appkit` lane
   // spawns. Released as `rc-swift-render-macos-arm64.zip`; see docs/design/RC_SWIFT_RENDER.md.
@@ -81,6 +84,17 @@ var targets: [Target] = [
   .target(name: "RcPlayerAppleFonts", resources: [.copy("PrivacyInfo.xcprivacy")]),
   .target(name: "RcComposePlayerSwiftUI", dependencies: swiftUIDependencies),
   .target(name: "RcNativePlayerCore"),
+  // Writes through the generated bindings: every operation it emits is a `WireOperation`.
+  .target(name: "RcCreation", dependencies: ["RcWireOperations"]),
+  // Upstream AndroidX's per-operation Swift bindings, generated Foundation-free by `:rc-codegen`
+  // (target `swift`) from the forked schema in `third_party/remote-generator`. Not a product of
+  // its own yet; RcCreation writes through it and its tests hold it to the documents this
+  // repository plays.
+  .target(name: "RcWireOperations"),
+  .testTarget(name: "RcWireOperationsTests", dependencies: ["RcWireOperations", "RcCreation"]),
+  // Round trips: documents written by RcCreation, read back by the native document core.
+  .testTarget(
+    name: "RcCreationTests", dependencies: ["RcCreation", "RcWireOperations", "RcNativePlayerCore"]),
   .target(
     name: "RcNativePlayerUIKit",
     dependencies: ["RcNativePlayerCore", "RcPlayerAppleFonts"],
@@ -126,8 +140,11 @@ if nativeOnly {
     ))
 }
 if coreOnly {
-  let coreTargets: Set<String> = ["RcNativePlayerCore", "RcNativePlayerCoreTests"]
-  products = products.filter { $0.name == "RcNativePlayerCore" }
+  let coreTargets: Set<String> = [
+    "RcNativePlayerCore", "RcNativePlayerCoreTests", "RcCreation", "RcCreationTests",
+    "RcWireOperations", "RcWireOperationsTests",
+  ]
+  products = products.filter { ["RcNativePlayerCore", "RcCreation"].contains($0.name) }
   targets = targets.filter { coreTargets.contains($0.name) }
 }
 if !nativeOnly {
