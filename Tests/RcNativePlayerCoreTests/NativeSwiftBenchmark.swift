@@ -54,18 +54,16 @@ import Testing
   }
 
   /// Steady per-frame cost of value resolution alone (no layout to speak of) against the number of
-  /// float expressions, for the shapes a wire-order resolver treats differently. The base line a
-  /// rewrite of the session's value resolution must not regress.
+  /// float expressions, for the shapes a wire-order resolver treats differently: the base line a
+  /// change to the session's value resolution is measured against.
   private struct ResolutionCostReport: Codable {
     enum Shape: String, Codable, CaseIterable {
       /// n float constants and n float expressions over one moving float.
       case floats
       /// `floats` plus one integer expression over a constant float expression.
       case integerOverStatic
-      /// `floats` plus one integer expression over the moving float. Today it costs what
-      /// `integerOverStatic` does, because an integer expression does not read a computed float's
-      /// integer view (a known issue in `NativeSwiftValueOrderTests`); a resolver that fixes that
-      /// pays for the moving read here.
+      /// `floats` plus one integer expression over the moving float, read through its integer
+      /// view.
       case integerOverMoving
       /// n integer-float expression pairs, each reading the one before it in wire order.
       case interleavedChain

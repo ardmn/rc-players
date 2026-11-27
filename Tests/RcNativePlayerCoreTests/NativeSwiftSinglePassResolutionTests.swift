@@ -1017,8 +1017,9 @@ import Testing
 
   // MARK: - Transitions of the live store
 
-  /// `RcValueOrderReferenceTest.cycle`: the store is live, so each resolution starts from what the
-  /// last one left. I60 = [70] + 1, F70 = [60] + 1: 1 and 2 on the first pass, 3 and 4 on the next.
+  /// `RcValueOrderReferenceTest.aCycleThroughBothViewsAdvancesOncePerPass`: the store is live, so
+  /// each resolution starts from what the last one left. I60 = [70] + 1, F70 = [60] + 1: 1 and 2
+  /// on the first pass, 3 and 4 on the next.
   @Test func aCycleMovesOnByOnePassPerResolution() throws {
     let session = try NativeSwiftDocumentSession.open(
       data: NativeSwiftValueOrderTests.cycleDocument(), toleratingRootlessData: true)
@@ -1052,8 +1053,8 @@ import Testing
     #expect(widths == [80, 80, 120], "\(widths)")
   }
 
-  /// A measurement that moves runs the frame's steps once more (`resolveAgain`), so a text built
-  /// from the measured width draws it in the same snapshot, not one frame late.
+  /// A measurement that moves runs the frame's steps once more (`reapplyResolutionSteps`), so a
+  /// text built from the measured width draws it in the same snapshot, not one frame late.
   @Test func aTextOverAMeasuredWidthDrawsTheMeasurementInItsFrame() throws {
     let document = Writer()
     document.header(width: 400, height: 400)
@@ -1072,8 +1073,8 @@ import Testing
     #expect(drawn == ["40"], "\(drawn)")
   }
 
-  /// A `RUN_ACTION`'s write runs the frame's steps once more (`resolveAgain`): F21 = [20] * 2,
-  /// declared before the action that sets I20 to 4, draws 8 in that frame.
+  /// A `RUN_ACTION`'s write runs the frame's steps once more (`reapplyResolutionSteps`):
+  /// F21 = [20] * 2, declared before the action that sets I20 to 4, draws 8 in that frame.
   @Test func aValueDerivedFromARunActionsWriteDrawsInItsFrame() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -1105,9 +1106,9 @@ import Testing
     #expect(values.floats[System.year] == Float(clock.fields.year))
   }
 
-  /// An event's data runs the steps once more before its condition (`resolveAgain`): F41 = [40] * 2
-  /// over the data slot 40 reads 6 for the data 3, so the condition max([41] - 5, 0) is not zero
-  /// and the handler runs; read before the data, F41 is 0 and the condition 0.
+  /// An event's data runs the steps once more before its condition (`reapplyResolutionSteps`): F41
+  /// = [40] * 2 over the data slot 40 reads 6 for the data 3, so the condition max([41] - 5, 0) is
+  /// not zero and the handler runs; read before the data, F41 is 0 and the condition 0.
   @Test func anEventConditionReadsAValueDerivedFromItsData() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -1251,5 +1252,91 @@ import Testing
     }
     let widths = Self.drawnWidths(try session.snapshot(timeSeconds: 4.5))
     #expect(widths == [4.5], "\(widths)")
+  }
+
+  // MARK: - Review round on the merge with upstream #992
+
+  /// A state layout indexed by a system id reads that id's integer view, as an integer expression
+  /// does (`integerVariable`): WEEK_DAY is 1...7, so a two-branch layout shows its second branch.
+  /// The integer store has no entry for a system id, and reading it directly gave branch 0.
+  @Test func aStateLayoutIndexedByASystemIDReadsItsIntegerView() throws {
+    let document = Writer()
+    document.header(width: 300, height: 200)
+    document.u8(Op.layoutRoot).int(-2)
+    document.u8(Op.layoutState).int(-3).int(0).int(1).int(4).int(System.weekDay)
+    document.u8(Op.modifierHeight).int(6).float(100)
+    document.u8(Op.layoutBox).int(-5).int(0).int(1).int(4)
+    document.u8(Op.modifierWidth).int(6).float(120)
+    document.u8(Op.modifierHeight).int(6).float(80)
+    document.u8(Op.containerEnd)
+    document.u8(Op.layoutBox).int(-6).int(0).int(1).int(4)
+    document.u8(Op.modifierWidth).int(6).float(200)
+    document.u8(Op.modifierHeight).int(6).float(150)
+    document.u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd)
+    let clock = NativeSwiftWallClock(epochMillis: 1_780_000_000_000)
+    #expect(clock.fields.isoDayOfWeek >= 1)
+    let snapshot = try NativeSwiftDocumentSession.open(data: document.data)
+      .snapshot(timeSeconds: 0, wallClock: clock)
+    let state = try #require(snapshot.root.children.first)
+    #expect(state.stateIndex == 1, "\(String(describing: state.stateIndex))")
+  }
+
+  /// I60 = [TIME_IN_SEC] + 0, F70 = [60] * 10, then I60 = 5: the first integer expression still
+  /// runs as its own step, so the document reads the clock and asks for a wall-clock refresh, though
+  /// the last expression at 60 reads none.
+  @Test func aShadowedIntegerExpressionOverTheClockKeepsTheDocumentLive() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.integerExpression).int(60).int(0b101).int(3).int(System.timeInSeconds).int(0)
+      .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
+    document.u8(Op.animatedFloat).int(70).int(3).int(Writer.nanReference(60)).float(10)
+      .int(Self.mul)
+    document.u8(Op.integerExpression).int(60).int(0).int(1).int(5)
+    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    let snapshot = try NativeSwiftDocumentSession.open(data: document.data)
+      .snapshot(timeSeconds: 0, wallClock: NativeSwiftWallClock(epochMillis: 1_780_000_000_000))
+    #expect(snapshot.needsWallClockRefresh)
+  }
+
+  /// A conformance probe after a host write at an instant already resolved resolves again, so it
+  /// reads the write: float list 14 = [[61]], F61 = [60] * 2, host x (60) 1 -> 5 gives [10].
+  @Test func aProbeAfterAHostWriteAtTheSameInstantReadsTheWrite() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(60).float(1)
+    document.namedVariable(id: 60, type: NativeSwiftNamedVariableType.float, name: "USER:x")
+    document.u8(Op.animatedFloat).int(61).int(3).int(Writer.nanReference(60)).float(2)
+      .int(Self.mul)
+    document.u8(Op.floatList).int(14).int(1).int(Writer.nanReference(61))
+    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    _ = try session.snapshot(timeSeconds: 1)
+    #expect(try session.probeFloatList(id: 14, dynamic: false, timeSeconds: 1) == [2])
+    #expect(session.setFloat(5, for: "USER:x"))
+    #expect(try session.probeFloatList(id: 14, dynamic: false, timeSeconds: 1) == [10])
+  }
+
+  /// `RcPlayerState`'s init ends with `beginFrame()`, so an event that arrives before any frame
+  /// reads the loaded density (1 until the host reports one): F50 = 14 / [DENSITY], run again
+  /// for the event's data. Unloaded, the density read 0 and the event's pass refused 14 / 0.
+  @Test func anEventBeforeTheFirstFrameReadsTheLoadedDensity() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(40).float(0)
+    document.u8(Op.animatedFloat).int(50).int(3).float(14).int(Writer.nanReference(System.density))
+      .int(Writer.floatOperator(NativeSwiftFloatOperator.div))
+    let (eventType, filter) = (5, 7)
+    document.u8(Op.eventAction).int(NativeSwiftEventActionWire.version)
+      .int(eventType).int(filter).u16(0).u16(1)
+      .int(1).int(40)
+      .int(1).float(1)
+    document.u8(Op.valueIntegerChangeAction).int(60).int(1)
+    document.u8(Op.containerEnd)
+    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    let dispatch = try session.dispatchEvent(
+      type: eventType, metadata: filter, data: [3], timeSeconds: 0)
+    #expect(dispatch.handledFlags == [1], "\(dispatch.handledFlags)")
+    #expect(session.currentValues().floats[50] == 14)
   }
 }

@@ -597,6 +597,12 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
     guard let png = bitmap.representation(using: .png, properties: [:]) else {
       throw NativeSwiftCoreError.malformed(offset: 0, reason: "Could not encode AppKit capture")
     }
+    // Read before the records' snapshot below: that one may resolve the instant again (a wall
+    // clock, continuous frames), and a value that reads its own previous one would move past the
+    // frame the PNG shows.
+    let reported =
+      values.isEmpty
+      ? nil : try reportedValues(session: session, timeSeconds: timeSeconds, request: values)
     var records = operationRecords(
       try session.snapshot(timeSeconds: timeSeconds, wallClock: wallClock),
       operationCount: session.linkedOperationCount, operationNames: try operationNames(in: data))
@@ -616,9 +622,7 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
     }
     return NativeMacRenderedFrame(
       png: png, tree: player.layoutTree(),
-      values: values.isEmpty
-        ? nil
-        : try reportedValues(session: session, timeSeconds: timeSeconds, request: values),
+      values: reported,
       records: records,
       inputHandled: inputHandled)
   }

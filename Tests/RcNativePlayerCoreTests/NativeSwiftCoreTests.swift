@@ -1890,8 +1890,8 @@ import Testing
       timedValues.floats[28] == -10,
       "a from-now interval resolved to \(String(describing: timedValues.floats[28]))")
     // Without a wall clock there is no "now" to measure from, and the slot stays unwritten rather
-    // than measuring from the 1970 epoch; fields of a stated instant still resolve. A fresh session:
-    // the store is live, so one resolved with a clock keeps what that resolution wrote.
+    // than measuring from the 1970 epoch; fields of a stated instant still resolve, in a fresh
+    // session and in one that resolved with a clock before.
     let unclocked = try NativeSwiftDocumentSession.open(
       data: timed.data, toleratingRootlessData: true
     ).probeValues(timeSeconds: 0)

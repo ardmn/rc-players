@@ -71,8 +71,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// of the document's own actions — as opposed to ones only the document's computations fill (a
   /// text operation's output, an integer expression). A float write is in `writtenFloatIDs`.
   private var writtenIntegerAndTextIDs: Set<Int> = []
-  /// The instant and wall clock the last resolution ran at, which a float expression's animation
-  /// (an action's included) and a time attribute read.
+  /// The wall clock the last resolution ran at, which a float expression's animation (an action's
+  /// included) and a time attribute read.
   private var frameWallClock: NativeSwiftWallClock?
   /// The instant the last resolution ran at, which an animation and a time attribute read.
   private var frameTimeSeconds: TimeInterval = 0
@@ -144,6 +144,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       document.expressions.filter { $0.opcode == NativeSwiftWireOpcode.dataFloat }.map(\.id))
     claimed = claimed.filter(NativeSwiftSystemVariables.isSystem)
     (claimedSystemIDs, documentClaimedSystemIDs) = (claimed, claimed)
+    // `RcPlayerState`'s init ends with `beginFrame()`: the system variables and the density are
+    // loaded before any frame, so input that arrives first reads them rather than 0.
+    beginFrame(timeSeconds: 0, wallClock: nil)
   }
 
   /// The document's own floats and integers, loaded as `RcSeedValues.load` loads them: constants in
@@ -291,7 +294,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // Published now, not at the next resolution, as `RcPlayerState.setHostDensity` does: input that
     // arrives before the next frame reads the density the host just reported.
     loadHostDensity()
-    staticSnapshotCache = nil
+    invalidateResolution()
   }
 
   /// Pins the instant the document was first painted, on the `timeSeconds` clock.
@@ -336,7 +339,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     stateLock.lock()
     defer { stateLock.unlock() }
     requestedTheme = theme
-    staticSnapshotCache = nil
+    invalidateResolution()
   }
 
   /// - Parameter measuredComponents: what the host laid each bound component out at, once it knows.
@@ -560,8 +563,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// for `type`, in document order. A handler takes the event when its filter equals `metadata`: it
   /// writes `data` into its data ids, slot by slot (a zero id skips a slot), then, unless its
   /// condition evaluates to zero, runs its actions and reports its flags. Once a handler has written
-  /// its data the document's steps run again (`reapplyResolutionSteps`), so the condition and the actions
-  /// read the values derived from that data.
+  /// its data the document's steps run again (`reapplyResolutionSteps`), so the condition and the
+  /// actions read the values derived from that data.
   public func dispatchEvent(
     type: Int, metadata: Int, data: [Float] = [], timeSeconds: TimeInterval
   ) throws -> NativeSwiftEventDispatch {
@@ -573,7 +576,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       // The reference's `overrideFloat`, which publishes both numeric views as `storeFloat` does.
       var wroteData = false
       for (id, value) in zip(handler.dataIDs, data) where id != 0 && value.isFinite {
-        staticSnapshotCache = nil
+        invalidateResolution()
         overrideFloat(id, value)
         wroteData = true
       }
@@ -616,7 +619,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private func execute(_ actions: [ParsedAction]) throws -> [NativeSwiftEvent] {
     // A sequence can mutate state before a later expression fails. Invalidate before executing the
     // first action so an error cannot leave a stale static snapshot cached over that mutation.
-    staticSnapshotCache = nil
+    invalidateResolution()
     var events: [NativeSwiftEvent] = []
     for action in actions {
       switch action {
@@ -706,9 +709,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   ///
   /// It resolves the values as `snapshot` does — the frame's value operations, its run actions and
   /// particles, against the measurements the last snapshot was given, though not its impulses or
-  /// frame effects — so a probe made after a `snapshot` at
-  /// the same instant is a second resolution: a document whose values read their own previous ones
-  /// moves again, as the Kotlin player's does on a second pass.
+  /// frame effects — so a probe made after a `snapshot` at the same instant is a second
+  /// resolution: a document whose values read their own previous ones moves again, as the Kotlin
+  /// player's does on a second pass.
   @_spi(Conformance) public func probeValues(
     timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock? = nil
   ) throws -> NativeSwiftProbeValues {
@@ -892,7 +895,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case .floatArray(let values):
       floatArrayOverrides[id] = values
     }
-    staticSnapshotCache = nil
+    invalidateResolution()
     return true
   }
 
@@ -911,7 +914,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     guard value.isFinite else { return false }
     setFloat(id, value)
     writtenFloatIDs.insert(id)
-    staticSnapshotCache = nil
+    invalidateResolution()
     return true
   }
 
@@ -991,7 +994,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     default:
       return false
     }
-    staticSnapshotCache = nil
+    invalidateResolution()
     return true
   }
 
@@ -1013,7 +1016,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       })
     else { return false }
     setText(property.valueBits, value)
-    staticSnapshotCache = nil
+    invalidateResolution()
     return true
   }
 
@@ -1029,7 +1032,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     else { return false }
     setFloat(targetID, value)
     writtenFloatIDs.insert(targetID)
-    staticSnapshotCache = nil
+    invalidateResolution()
     return true
   }
 
@@ -1266,7 +1269,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         // alternative in one content node, and clamping against that would always report 0.
         let branches = stateBranches(of: node)
         return branches.isEmpty
-          ? nil : min(max(integers[indexID] ?? 0, 0), branches.count - 1)
+          ? nil : min(max(integerVariable(indexID), 0), branches.count - 1)
       },
       flowMaximumItems: node.flowMaximumItems,
       flowMaximumLines: node.flowMaximumLines,
@@ -1409,7 +1412,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
           try resolve($0, values: values, colors: resolvedColors, timeSeconds: timeSeconds)
         }
       }
-      let active = min(max(integers[indexID] ?? 0, 0), branches.count - 1)
+      let active = min(max(integerVariable(indexID), 0), branches.count - 1)
       if let wrapper {
         return [
           try resolve(
@@ -1711,6 +1714,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// own previous one moves on by one more pass on such a frame, as there.
   private func reapplyResolutionSteps() throws {
     for step in document.resolutionSteps { try applyStep(step) }
+  }
+
+  /// After a write the steps read (a host or action write, a theme, the density): the cached
+  /// static frame is stale, and so is the last resolution for `resolveUnlessResolved`.
+  private func invalidateResolution() {
+    staticSnapshotCache = nil
+    resolvedFrameTime = nil
   }
 
   /// For a conformance read at `timeSeconds` (a matrix, a float list, particle state): the values

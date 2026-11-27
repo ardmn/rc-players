@@ -54,7 +54,7 @@ class RcValueOrderReferenceTest {
   }
 
   @Test
-  fun cycle() {
+  fun aCycleThroughBothViewsAdvancesOncePerPass() {
     val operations =
       listOf(
         RcIntegerExpression(60, 0b101, listOf(70, 1, RcIntegerExpression.ADD)),
@@ -70,7 +70,7 @@ class RcValueOrderReferenceTest {
   }
 
   @Test
-  fun fiveDeepChain() {
+  fun aForwardChainThroughBothViewsResolvesInOnePass() {
     val operations = mutableListOf<RcOperation>()
     operations += RcFloatExpression(100, listOf(RcFloatWord.literal(1.5f)), null)
     for (step in 0 until 5) {

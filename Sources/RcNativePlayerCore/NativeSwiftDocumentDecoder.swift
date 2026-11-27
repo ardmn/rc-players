@@ -3104,8 +3104,12 @@ enum NativeSwiftDocumentDecoder {
     func references(_ ids: Set<Int>) -> Bool {
       if root.references(anyOf: ids) { return true }
       if expressions.contains(where: { references(ids, in: $0.words) }) { return true }
-      if integerExpressions.values.contains(where: {
-        NativeSwiftIntegerExpression.references(anyOf: ids, mask: $0.mask, tokens: $0.tokens)
+      // Every integer expression runs as its own step, a shadowed one at a reused id included, so
+      // the steps are scanned rather than `integerExpressions`, which keeps the last at each id.
+      if resolutionSteps.contains(where: { step in
+        guard case .integerExpression(_, let expression) = step else { return false }
+        return NativeSwiftIntegerExpression.references(
+          anyOf: ids, mask: expression.mask, tokens: expression.tokens)
       }) {
         return true
       }

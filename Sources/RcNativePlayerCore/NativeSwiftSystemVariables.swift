@@ -2,11 +2,12 @@ import Foundation
 
 /// The ids AndroidX's `RemoteContext` reserves for values the player supplies, not the document.
 ///
-/// Only the ones this core actually loads are named, matching the upstream `RcSystemVariables`
+/// Only the ones this core actually loads are public, matching the upstream `RcSystemVariables`
 /// contract. A reference to an id the player does not load resolves to 0 and poisons the arithmetic
 /// downstream, so naming one here without loading it would be worse than leaving it out.
 ///
-/// `ANIMATION_DELTA_TIME` (31) is deliberately absent: this core does not supply a frame delta.
+/// `WINDOW_WIDTH`, `WINDOW_HEIGHT` and `ANIMATION_DELTA_TIME` are deliberately not loaded (this
+/// core supplies no window size or frame delta); they are named internally, for `unsuppliedIDs`.
 public enum NativeSwiftSystemVariables {
   /// Device pixels per dp, as the player is playing the document.
   public static let density = 27
@@ -71,9 +72,13 @@ public enum NativeSwiftSystemVariables {
     weekDay, dayOfMonth, density, animationTime, epochSecond, fontSize, dayOfYear, year,
   ]
 
-  /// The reference's ids this core does not load: `WINDOW_WIDTH`, `WINDOW_HEIGHT` and
-  /// `ANIMATION_DELTA_TIME`.
-  static let unsuppliedIDs: Set<Int> = [5, 6, 31]
+  /// The reference's `WINDOW_WIDTH`, `WINDOW_HEIGHT` and `ANIMATION_DELTA_TIME`, which this core
+  /// does not load.
+  static let windowWidth = 5
+  static let windowHeight = 6
+  static let animationDeltaTime = 31
+  /// The reference's ids this core does not load.
+  static let unsuppliedIDs: Set<Int> = [windowWidth, windowHeight, animationDeltaTime]
 
   /// `allIDs` as bits, every id being below `maskWidth` (a test holds it to that): a resolution
   /// asks of every value it writes whether it is a system id, so the answer is a shift rather

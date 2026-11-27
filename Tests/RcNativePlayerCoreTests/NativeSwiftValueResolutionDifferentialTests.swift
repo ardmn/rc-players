@@ -167,6 +167,9 @@ import Testing
   @Test func theSystemIDsAreKotlinsLessTheOnesThisCoreDoesNotLoad() throws {
     typealias System = NativeSwiftSystemVariables
     let fixture = try Self.fixture()
+    // The ones not loaded, by their reference ids, so moving an id into the set fails here:
+    // WINDOW_WIDTH, WINDOW_HEIGHT, ANIMATION_DELTA_TIME.
+    #expect(System.unsuppliedIDs == [5, 6, 31])
     #expect(Set(System.allIDs) == Set(fixture.systemIDs).subtracting(System.unsuppliedIDs))
     let maskRange = 0..<System.maskWidth
     #expect(System.allIDs.allSatisfy(maskRange.contains))

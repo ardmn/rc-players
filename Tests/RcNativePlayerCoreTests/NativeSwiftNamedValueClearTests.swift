@@ -171,7 +171,7 @@ import Testing
     #expect(session.writtenNamedValues().isEmpty)
   }
 
-  /// A float variable a document action wrote as an integer (`storeInteger`, as
+  /// A float variable a document action wrote as an integer (`overrideInteger`, as
   /// `RcPlayerState.setInteger`, replaces the float view too) is the document's again once cleared,
   /// in both views: the Kotlin clear writes the recorded float back through `setFloat`, so the
   /// float is 1.5 again and the integer its view, not the action's 9.
