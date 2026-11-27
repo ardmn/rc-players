@@ -204,8 +204,10 @@ public struct NativeSwiftVisibilityFunction: @unchecked Sendable {
     resolved.reserveCapacity(function.commands.count)
     for (position, parsed) in function.commands.enumerated() {
       try evaluateExpressions(through: position)
-      let command = try parsed.resolve(
-        values: values, integers: integers, colors: colors, texts: texts, matrices: matrices)
+      guard
+        let command = try parsed.resolve(
+          values: values, integers: integers, colors: colors, texts: texts, matrices: matrices)
+      else { continue }
       // The frame's own commands pass a host's numeric budget; these are resolved after it, so the
       // same rule — every geometry value finite — is applied here.
       let numbers =

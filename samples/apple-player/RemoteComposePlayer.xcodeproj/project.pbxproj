@@ -57,6 +57,7 @@
 		1000000000000000000000F0 /* NativeSwiftImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000F0 /* NativeSwiftImageLoader.swift */; };
 		100000000000000000000046 /* NativeSwiftParsedDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000046 /* NativeSwiftParsedDocument.swift */; };
 		100000000000000000000047 /* NativeSwiftParticles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000047 /* NativeSwiftParticles.swift */; };
+		1000000000000000000000F4 /* NativeSwiftTextOnCircle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2000000000000000000000F4 /* NativeSwiftTextOnCircle.swift */; };
 		100000000000000000000048 /* NativeSwiftAnimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000048 /* NativeSwiftAnimation.swift */; };
 		100000000000000000000049 /* NativeSwiftExpressions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000049 /* NativeSwiftExpressions.swift */; };
 		10000000000000000000004A /* NativeSwiftText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000004A /* NativeSwiftText.swift */; };
@@ -148,6 +149,7 @@
 		2000000000000000000000F0 /* NativeSwiftImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSwiftImageLoader.swift; path = "../../Sources/RcNativePlayerCore/NativeSwiftImageLoader.swift"; sourceTree = "<group>"; };
 		200000000000000000000046 /* NativeSwiftParsedDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSwiftParsedDocument.swift; path = "../../Sources/RcNativePlayerCore/NativeSwiftParsedDocument.swift"; sourceTree = "<group>"; };
 		200000000000000000000047 /* NativeSwiftParticles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSwiftParticles.swift; path = "../../Sources/RcNativePlayerCore/NativeSwiftParticles.swift"; sourceTree = "<group>"; };
+		2000000000000000000000F4 /* NativeSwiftTextOnCircle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSwiftTextOnCircle.swift; path = "../../Sources/RcNativePlayerCore/NativeSwiftTextOnCircle.swift"; sourceTree = "<group>"; };
 		200000000000000000000048 /* NativeSwiftAnimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSwiftAnimation.swift; path = "../../Sources/RcNativePlayerCore/NativeSwiftAnimation.swift"; sourceTree = "<group>"; };
 		200000000000000000000049 /* NativeSwiftExpressions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSwiftExpressions.swift; path = "../../Sources/RcNativePlayerCore/NativeSwiftExpressions.swift"; sourceTree = "<group>"; };
 		20000000000000000000004A /* NativeSwiftText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSwiftText.swift; path = "../../Sources/RcNativePlayerCore/NativeSwiftText.swift"; sourceTree = "<group>"; };
@@ -281,6 +283,7 @@
 				2000000000000000000000F0 /* NativeSwiftImageLoader.swift */,
 				200000000000000000000046 /* NativeSwiftParsedDocument.swift */,
 				200000000000000000000047 /* NativeSwiftParticles.swift */,
+				2000000000000000000000F4 /* NativeSwiftTextOnCircle.swift */,
 				200000000000000000000048 /* NativeSwiftAnimation.swift */,
 				200000000000000000000049 /* NativeSwiftExpressions.swift */,
 				20000000000000000000004A /* NativeSwiftText.swift */,
@@ -438,6 +441,7 @@
 				1000000000000000000000F0 /* NativeSwiftImageLoader.swift in Sources */,
 				100000000000000000000046 /* NativeSwiftParsedDocument.swift in Sources */,
 				100000000000000000000047 /* NativeSwiftParticles.swift in Sources */,
+				1000000000000000000000F4 /* NativeSwiftTextOnCircle.swift in Sources */,
 				100000000000000000000048 /* NativeSwiftAnimation.swift in Sources */,
 				100000000000000000000049 /* NativeSwiftExpressions.swift in Sources */,
 				10000000000000000000004A /* NativeSwiftText.swift in Sources */,

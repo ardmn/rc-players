@@ -413,28 +413,41 @@ struct ParsedDrawCommand {
       || (path?.sourceReferences(anyOf: componentValueIDs) ?? false)
   }
 
+  /// This command against one set of values, or nil when it draws nothing at all: a
+  /// `DrawTextOnCircle` whose circle is unusable (`NativeSwiftTextOnCircle(values:)`).
   func resolve(
     values: [Int: Float], integers: [Int: Int], colors: [Int: UInt32], texts: [Int: String],
     matrices: [Int: ParsedMatrixExpression]
   ) throws
-    -> NativeSwiftDrawCommandSnapshot
+    -> NativeSwiftDrawCommandSnapshot?
   {
+    let isTextOnCircle = kind == NativeSwiftDrawKind.textOnCircle
     let resolvedValues =
       staticValues
       ?? words.enumerated().map { index, word in
-        nanSentinelIndices.contains(index)
-          ? .nan : NativeSwiftFloatExpression.resolve(word, values: values)
+        if nanSentinelIndices.contains(index) { return .nan }
+        // A variable nothing has written is not a number on the circle, as in the Kotlin player
+        // (`RcPlayerState.resolve` falls back to the NaN word): the circle is then unusable and
+        // draws nothing, where reading it as 0 would draw round the origin.
+        if isTextOnCircle, let id = NativeSwiftFloatExpression.referenceID(word) {
+          return values[id] ?? .nan
+        }
+        return NativeSwiftFloatExpression.resolve(word, values: values)
       }
     let resolvedPath = try path?.resolve(values: values, integers: integers) ?? []
     // MATRIX_FROM_PATH draws as the matrix measured off its path, not as the path itself.
     let isPathMatrix = kind == NativeSwiftDrawKind.matrixFromPath
+    // Resolved before the circle is checked, so a paint the player cannot draw is still reported
+    // when the circle would have drawn nothing.
+    let colorARGB = try resolvePaintColor(colors: colors)
+    if isTextOnCircle, NativeSwiftTextOnCircle(values: resolvedValues) == nil { return nil }
     return NativeSwiftDrawCommandSnapshot(
       kind: kind,
       values: isPathMatrix
         ? NativeSwiftPathMeasure(resolvedPath).matrix(
           fraction: resolvedValues.first ?? 0, flags: matrixFlags)
         : resolvedValues,
-      colorARGB: try resolvePaintColor(colors: colors),
+      colorARGB: colorARGB,
       alpha: alphaWord.map { NativeSwiftFloatExpression.resolve($0, values: values) }
         ?? min(max(NativeSwiftFloatExpression.resolve(paint.alpha, values: values), 0), 1),
       strokeWidth: NativeSwiftFloatExpression.resolve(paint.strokeWidth, values: values),
