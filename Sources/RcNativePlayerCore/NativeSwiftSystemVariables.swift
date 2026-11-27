@@ -63,8 +63,9 @@ public enum NativeSwiftSystemVariables {
   /// document's own (`isSystem`): a write to one claims it from the player
   /// (`RcPlayerState.claimedSystemIds`), and an integer expression reads an unclaimed one as its
   /// float truncated. The reference's `RcSystemVariables.ALL` also has `unsuppliedIDs`, which this
-  /// core does not load; at those ids a document's value is its own. The differential fixture carries Kotlin's set, and
-  /// `NativeSwiftValueResolutionDifferentialTests` fails when the two drift.
+  /// core does not load; at those ids a document's value is its own. The differential fixture
+  /// carries Kotlin's set, and `NativeSwiftValueResolutionDifferentialTests` fails when the two
+  /// drift.
   static let allIDs = [
     continuousSeconds, timeInSeconds, timeInMinutes, timeInHours, calendarMonth, offsetToUTC,
     weekDay, dayOfMonth, density, animationTime, epochSecond, fontSize, dayOfYear, year,
