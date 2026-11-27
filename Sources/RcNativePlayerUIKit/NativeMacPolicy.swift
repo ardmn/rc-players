@@ -128,11 +128,6 @@ public enum NativeMacPolicy {
           node.text?.value, node.custom?.config, node.accessibility?.contentDescription,
           node.accessibility?.text, node.accessibility?.stateDescription,
         ], limits: executionLimits)
-      if let text = node.text {
-        try budget.validateFinite(
-          [text.size, text.weight].map(Double.init), componentID: node.componentID,
-          field: "text")
-      }
       for command in node.commands {
         try budget.recordCommand(pathElementCount: command.path.count, limits: executionLimits)
       }

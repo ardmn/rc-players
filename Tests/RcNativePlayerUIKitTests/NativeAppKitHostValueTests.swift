@@ -45,6 +45,20 @@
       }
     }
 
+    /// A host's NaN, infinite, huge or negative text size or weight renders, as the core and the
+    /// Kotlin player take it (`rcTextSizePixels`, `rcFontWeight`): a NaN or negative size is
+    /// Android's 12 px (hwui `jni/Paint.cpp:1001`) and a NaN weight the normal 400.
+    @Test(arguments: NativeHostValueDocuments.unusualTextSizesAndWeights)
+    func aHostTextSizeOrWeightRenders(_ value: Float) throws {
+      let session = try NativeSwiftDocumentSession.open(
+        data: NativeHostValueDocuments.hostTextSizeAndWeight())
+      #expect(session.setFloat(value, for: NativeHostValueDocuments.hostTextFloatName))
+      let snapshot = try session.snapshot(timeSeconds: 0)
+      #expect(throws: Never.self, "\(value)") {
+        _ = try NativeMacPolicy.evaluate(snapshot, compatibility: .compatible)
+      }
+    }
+
     /// RC_MACOS_PLAYER_APP.md: a resolved value never fails the frame by itself. A negative fill
     /// fraction lays out as no width and an infinite one as the parent's
     /// (`NativeLayoutDimension.resolve`), as AppKit drew them before the frame policy checked them.

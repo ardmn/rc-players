@@ -75,6 +75,32 @@
       #expect(width.isFinite && width >= 0 && width <= 100, "\(fraction): \(width)")
     }
 
+    /// A host's NaN, infinite, huge or negative text size or weight renders, as the core and the
+    /// Kotlin player take it (`rcTextSizePixels`, `rcFontWeight`): a NaN or negative size is
+    /// Android's 12 px (hwui `jni/Paint.cpp:1001`) and a NaN weight the normal 400.
+    @Test(arguments: NativeHostValueDocuments.unusualTextSizesAndWeights)
+    func aHostTextSizeOrWeightRenders(_ value: Float) async throws {
+      var errors: [RemoteComposeNativePlayerError] = []
+      let view = RemoteComposeNativePlayerView(
+        data: NativeHostValueDocuments.hostTextSizeAndWeight(), resourceResolver: nil,
+        onError: { errors.append($0) })
+      view.frame = CGRect(x: 0, y: 0, width: 100, height: 60)
+      try await waitUntil("\(value) opens", within: 60) {
+        !view.isOpeningDocument && !view.isBusy
+      }
+      #expect(
+        await view.submit(.float(value), for: NativeHostValueDocuments.hostTextFloatName)
+          == .accepted, "\(value)")
+      try await waitUntil("\(value) settles", within: 60) { !view.isBusy }
+      view.setNeedsLayout()
+      view.layoutIfNeeded()
+      _ = UIGraphicsImageRenderer(size: view.bounds.size).image {
+        view.layer.render(in: $0.cgContext)
+      }
+      #expect(errors.isEmpty, "\(value): \(errors)")
+      #expect(!UIKitHostValueEdgeFixtures.showsTheErrorLabel(view), "\(value)")
+    }
+
     /// A host's 1e9 width is clamped to the parent, as AndroidX's measure clamps an exact size to
     /// the maximum constraint (`BaseModernMeasurePolicy.measure`, `LegacyMeasurePolicy.measure`),
     /// and a NaN offset reads 0, as Java's `(int)` reads it where the Kotlin player rounds one.

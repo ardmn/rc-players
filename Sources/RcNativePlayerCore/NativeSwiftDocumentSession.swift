@@ -1054,26 +1054,21 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   ) throws -> NativeSwiftNodeSnapshot {
     let text: NativeSwiftTextSnapshot?
     if let source = node.text {
-      // Any float a host writes reaches a size. Android's `Paint.setTextSize` ignores one below 0
-      // or NaN (hwui `jni/Paint.cpp:1001`, `if (textSize >= 0)`) on a paint AndroidX's
-      // `replacePaint` has just reset (`AndroidPaintContext.java:533`), so such text draws at
-      // Skia's default size in pixels (`SkPaintDefaults.h:20`); an infinity saturates.
-      let requestedSize = NativeSwiftFloatExpression.resolve(source.sizeWord, values: values)
-      let takesRequestedSize = requestedSize >= 0
-      let size =
-        takesRequestedSize
-        ? nativeSwiftSaturated(requestedSize) : NativeSwiftTextSnapshot.androidDefaultSize
-      let sizeIsDensityTyped =
-        takesRequestedSize
-        && NativeSwiftTextSnapshot.isDensityTypedFontSize(
-          source.sizeWord, densityBehavior: document.densityBehavior)
-      let weight = resolveOptionalFloat(source.weightWord, values: values) ?? 400
+      // `NativeSwiftTextSnapshot.init` takes a NaN or negative size as Android's 12 px and holds
+      // the weight to 1...1000, NaN as 400, as the Kotlin player does.
+      let size = NativeSwiftFloatExpression.resolve(source.sizeWord, values: values)
+      let sizeIsDensityTyped = NativeSwiftTextSnapshot.isDensityTypedFontSize(
+        source.sizeWord, densityBehavior: document.densityBehavior)
+      // A weight variable with no value yet keeps the normal weight.
+      let weight =
+        NativeSwiftFloatExpression.referenceID(source.weightWord).map { values[$0] ?? 400 }
+        ?? Float(bitPattern: source.weightWord)
       text = NativeSwiftTextSnapshot(
         value: texts[source.textID] ?? "",
         colorARGB: source.colorID.flatMap { resolvedColors[$0] } ?? source.colorARGB,
         size: size,
         style: source.style,
-        weight: min(max(weight, 1), 1_000),
+        weight: weight,
         familyID: source.familyID,
         familyName: texts[source.familyID],
         alignment: source.alignment,

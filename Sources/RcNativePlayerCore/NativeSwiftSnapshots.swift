@@ -1036,6 +1036,8 @@ public struct NativeSwiftTextSnapshot: Sendable {
   /// `SkPaintDefaults_TextSize` (12 pixels), which `Paint.setTextSize` then leaves in place.
   static let androidDefaultSize: Float = 12
   public let style: Int
+  /// The font weight, 1...1000; NaN is the normal 400, as the Kotlin player's `rcFontWeight`
+  /// reads it.
   public let weight: Float
   public let familyID: Int
   public let familyName: String?
@@ -1058,10 +1060,16 @@ public struct NativeSwiftTextSnapshot: Sendable {
   ) {
     self.value = value
     self.colorARGB = colorARGB
-    self.size = size
-    self.sizeIsDensityTyped = sizeIsDensityTyped
+    // Any float a host writes reaches a size. Android's `Paint.setTextSize` ignores one below 0
+    // or NaN (hwui `jni/Paint.cpp:1001`, `if (textSize >= 0)`) on a paint AndroidX's
+    // `replacePaint` has just reset (`AndroidPaintContext.java:533`), so such text draws at
+    // Skia's default size in pixels (`SkPaintDefaults.h:20`); an infinity saturates. Every host
+    // renders the size it is given, so this init is the one owner of the rule.
+    let takesSize = size >= 0
+    self.size = takesSize ? nativeSwiftSaturated(size) : Self.androidDefaultSize
+    self.sizeIsDensityTyped = takesSize && sizeIsDensityTyped
     self.style = style
-    self.weight = weight
+    self.weight = weight.isNaN ? 400 : min(max(weight, 1), 1_000)
     self.familyID = familyID
     self.familyName = familyName
     self.alignment = alignment

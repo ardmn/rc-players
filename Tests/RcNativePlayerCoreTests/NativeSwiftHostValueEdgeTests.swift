@@ -82,6 +82,40 @@ import Testing
     }
   }
 
+  /// A host's text weight takes the Kotlin player's `rcFontWeight`: NaN is the normal 400, and
+  /// any other value is held to the 1...1000 `FontWeight` takes.
+  @Test func aHostTextWeightIsNormalised() throws {
+    let cases: [(Float, Float)] = [
+      (.nan, 400), (.infinity, 1_000), (-.infinity, 1), (1e30, 1_000), (-1, 1), (700, 700),
+    ]
+    for (value, expected) in cases {
+      let session = try NativeSwiftDocumentSession.open(data: Self.hostTextWeightDocument())
+      #expect(session.setFloat(value, for: HostValueEdgeFixtures.floatName), "\(value)")
+      let text = try Self.nodes(session.snapshot(timeSeconds: 0).root).compactMap(\.text).first
+      #expect(text?.weight == expected, "\(value): \(String(describing: text?.weight))")
+    }
+  }
+
+  /// A text snapshot a host builds itself follows the same rule, so no platform player has to
+  /// refuse a NaN size or weight: `NativeSwiftTextSnapshot.init` owns it.
+  @Test func aTextSnapshotNormalisesItsSizeAndWeight() {
+    let cases: [(size: Float, weight: Float, expectedSize: Float, expectedWeight: Float)] = [
+      (.nan, .nan, 12, 400), (-1, -.infinity, 12, 1),
+      (
+        .infinity, .infinity,
+        .greatestFiniteMagnitude, 1_000
+      ), (18, 700, 18, 700),
+    ]
+    for entry in cases {
+      let text = NativeSwiftTextSnapshot(
+        value: "a", colorARGB: 0xff00_0000, size: entry.size, style: 0, weight: entry.weight,
+        familyID: -1, alignment: .start, overflow: 1, maximumLines: 1, sizeIsDensityTyped: true)
+      #expect(text.size == entry.expectedSize, "\(entry)")
+      #expect(text.weight == entry.expectedWeight, "\(entry)")
+      #expect(text.sizeIsDensityTyped == (entry.size >= 0), "\(entry): Android's 12 is pixels")
+    }
+  }
+
   /// The Kotlin player passes `NaN.dp`, `Dp.Unspecified`, to `widthIn(max =)` and `heightIn`
   /// (`RcComposePlayer.kt` `applyWidthRange`), which leaves the bound unset.
   @Test func aNaNSizeInMaximumIsUnbounded() throws {
@@ -135,6 +169,35 @@ import Testing
         moving.value.map { $0 > 2 && $0 < 3 } == true,
         "after \(target): \(String(describing: moving.value))")
     }
+  }
+
+  /// AndroidX's `SpringStopEngine.compute` over-samples a frame in proportion to the spring's
+  /// natural frequency times the frame, `(int) (1 + 9 * (Math.sqrt(mStiffness / mMass) * dt * 4))`
+  /// capped at 1000 (`SpringStopEngine.java:231-232`, mass 1 at `:101`), as the Kotlin
+  /// `RcSpringAnimation.compute` does. Kotlin's `aSpringConvergesAtCoarseFrameIntervals`: the
+  /// `remote-m3` selection spring (stiffness 1400, critically damped) at 100 ms frames stays in
+  /// [0, 1] and settles, and every frame matches AndroidX's integrator.
+  @Test func aStiffSpringConvergesAtCoarseFrameIntervalsAsAndroidXDoes() throws {
+    let stiffness = 1_400.0
+    let damping = Double(Float(74.83315))
+    let session = try NativeSwiftDocumentSession.open(
+      data: Self.hostSpringDocument(
+        initial: 0, stiffness: Float(stiffness), damping: Float(damping)))
+    var time = 0.0
+    _ = try session.snapshot(timeSeconds: time)
+    _ = try session.probeValues(timeSeconds: time)
+    #expect(session.setFloat(1, for: HostValueEdgeFixtures.floatName))
+    var reference = AndroidXSpring(stiffness: stiffness, damping: damping, target: 1)
+    for _ in 0..<20 {
+      time += 0.1
+      _ = try session.snapshot(timeSeconds: time)
+      let value = try #require(try session.probeValues(timeSeconds: time).floats[51])
+      let expected = reference.get(0.1)
+      #expect(value >= -0.01 && value <= 1.01, "the spring left [0, 1] at t=\(time): \(value)")
+      #expect(abs(Double(value) - expected) < 1e-3, "t=\(time): \(value), AndroidX \(expected)")
+    }
+    #expect(try session.probeValues(timeSeconds: time).floats[51] == 1)
+    #expect(!(try session.snapshot(timeSeconds: time)).needsContinuousFrames)
   }
 
   /// The Kotlin player runs AndroidX's loop, `for (i = from; i < until; i += step)`
@@ -209,6 +272,23 @@ import Testing
     return writer.data
   }
 
+  /// One 16 px text whose weight reads the host's float, declared 400.
+  static func hostTextWeightDocument() -> Data {
+    let writer = Writer()
+    writer.header(width: 100, height: 60)
+    writer.u8(NativeSwiftWireOpcode.dataFloat).int(40).float(400)
+    writer.namedVariable(
+      id: 40, type: NativeSwiftNamedVariableType.float, name: HostValueEdgeFixtures.floatName)
+    writer.text(id: 5, "hello")
+    writer.u8(NativeSwiftWireOpcode.layoutRoot).int(1)
+    writer.u8(NativeSwiftWireOpcode.layoutText).int(5).int(0).int(5)
+      .int(Int(Int32(bitPattern: 0xff00_0000))).float(16).int(0).int(Writer.nanReference(40))
+      .int(-1).int(1).int(1).int(1)
+    writer.u8(NativeSwiftWireOpcode.containerEnd)
+    writer.u8(NativeSwiftWireOpcode.containerEnd)
+    return writer.data
+  }
+
   /// A canvas (id 3) under a `widthIn` or `heightIn` from 0 to the host's float, declared 1.
   static func sizeInDocument(_ opcode: Int) -> Data {
     let writer = Writer()
@@ -227,14 +307,16 @@ import Testing
   }
 
   /// Float 51 is a spring (stiffness 40, damping 8) towards the host's float, declared 1.
-  static func hostSpringDocument() -> Data {
+  static func hostSpringDocument(
+    initial: Float = 1, stiffness: Float = 40, damping: Float = 8
+  ) -> Data {
     let writer = Writer()
     writer.header(width: 100, height: 100)
-    writer.u8(NativeSwiftWireOpcode.dataFloat).int(40).float(1)
+    writer.u8(NativeSwiftWireOpcode.dataFloat).int(40).float(initial)
     writer.namedVariable(
       id: 40, type: NativeSwiftNamedVariableType.float, name: HostValueEdgeFixtures.floatName)
     writer.u8(NativeSwiftWireOpcode.animatedFloat).int(51).int((5 << 16) | 1)
-      .int(Writer.nanReference(40)).float(0).float(40).float(8).float(0.001).int(0)
+      .int(Writer.nanReference(40)).float(0).float(stiffness).float(damping).float(0.001).int(0)
     writer.u8(NativeSwiftWireOpcode.drawRect).int(Writer.nanReference(51)).float(0).float(1)
       .float(1)
     return writer.data
@@ -267,5 +349,43 @@ enum HostValueEdgeFixtures {
         _ = try session.snapshot(timeSeconds: TimeInterval(frame) * 0.016)
       }
     }
+  }
+}
+
+/// AndroidX's `SpringStopEngine` (`SpringStopEngine.java:172-250`), mass 1 and no boundary, from
+/// rest at 0: the reference the Swift spring must match.
+struct AndroidXSpring {
+  let stiffness: Double
+  let damping: Double
+  let target: Double
+  var position = 0.0
+  var velocity = 0.0
+  let stopThreshold = Double(Float(0.001))
+
+  init(stiffness: Double, damping: Double, target: Double) {
+    self.stiffness = stiffness
+    self.damping = damping
+    self.target = target
+  }
+
+  mutating func get(_ frame: Double) -> Double {
+    let requested = 1 + 9 * (stiffness.squareRoot() * frame * 4)
+    let overSample = min(requested.isNaN ? 0 : Int(min(requested, 1e9)), 1_000)
+    let dt = frame / Double(overSample)
+    for _ in 0..<overSample {
+      let x = position - target
+      var a = -stiffness * x - damping * velocity
+      var averageVelocity = velocity + a * dt / 2
+      let averageX = position + dt * averageVelocity / 2 - target
+      a = -averageX * stiffness - averageVelocity * damping
+      let dv = a * dt
+      averageVelocity = velocity + dv / 2
+      velocity += Double(Float(dv))
+      position += Double(Float(averageVelocity * dt))
+    }
+    let x = position - target
+    let energy = velocity * velocity + stiffness * x * x
+    if (energy / stiffness).squareRoot() <= stopThreshold { position = target }
+    return Double(Float(position))
   }
 }

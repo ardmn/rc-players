@@ -90,9 +90,6 @@
         // negative fill fraction as no width and an infinite one as the parent's.
         if let text = node.text {
           try budget.recordCommand(pathElementCount: 0, strings: [text.value], limits: limits)
-          try budget.validateFinite(
-            [text.size, text.weight].map(Double.init), componentID: node.componentID,
-            field: "text")
           if let family = text.familyName?.trimmingCharacters(in: .whitespacesAndNewlines),
             family.lowercased().hasPrefix("google:")
           {
