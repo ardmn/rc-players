@@ -117,7 +117,7 @@ public enum NativeMacPolicy {
   private static func validateSnapshot(_ snapshot: NativeSwiftDocumentSnapshot) throws
     -> NativeFrameBudget
   {
-    var budget = NativeFrameBudget()
+    var budget = NativeFrameBudget(hostStrings: snapshot.hostStrings)
     try budget.validateDocumentDimensions(
       [Double(snapshot.width), Double(snapshot.height)], limits: executionLimits)
     var pending: [(NativeSwiftNodeSnapshot, Int)] = [(snapshot.root, 1)]

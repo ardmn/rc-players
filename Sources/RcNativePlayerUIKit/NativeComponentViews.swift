@@ -78,7 +78,7 @@
       self.timeSeconds = timeSeconds
       self.wallClock = wallClock
       try NativeFrameBudget.validate(limits)
-      var budget = NativeFrameBudget()
+      var budget = NativeFrameBudget(hostStrings: swiftSnapshot.hostStrings)
       var downloadableByID: [Int: NativeDownloadableFont] = [:]
       try budget.validateDocumentDimensions(
         [Double(swiftSnapshot.width), Double(swiftSnapshot.height)], limits: limits)

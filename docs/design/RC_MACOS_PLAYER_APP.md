@@ -81,8 +81,9 @@ Decorative continuous animation pauses under Reduce Motion.
 Malformed or over-budget input is reported in the control window. Safety is independent of
 compatibility: both modes enforce a 16 MiB encoded-document limit, a bounded document size,
 20,000 nodes, 256 levels of nesting, 50,000 draw commands, 100,000 path elements, 128 KiB of text,
-and 200,000 work units per frame. A string counts at most 48 KiB of that text, the longest a
-document can make by itself, so a longer host string renders whatever its length. A resolved value
+and 200,000 work units per frame. A document's own string counts at every place it is shown; a
+host's string counts once per frame, however many texts show it, and at most 48 KiB, the longest a
+document can make by itself, so a host's string renders whatever its length. A resolved value
 never fails the frame by itself, as AndroidX takes every host value: layout floats are normalised as
 on UIKit (NaN reads 0, the rest is held within the coordinate limit, and a negative fill fraction
 lays out as no width, an infinite one as the parent's), and a non-finite draw value stops only what

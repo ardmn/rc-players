@@ -359,6 +359,12 @@ public struct NativeSwiftDocumentSnapshot: Sendable {
   let conformanceShaderUniformNames: [Int: Set<String>]
   let conformanceConditionalTraces: [NativeSwiftConditionalTraceSnapshot]
 
+  /// The strings a host wrote that the frame holds: each text variable's value while the host's
+  /// write stands. A host counts each against its frame's text budget once, however many texts,
+  /// descriptions or events show it, as AndroidX lays a host's string out wherever the document
+  /// shows it (`AndroidRemoteContext.setNamedStringOverride`).
+  public let hostStrings: Set<String>
+
   /// The wake a host should schedule: the document's own request, or the once-a-second refresh a
   /// document reading a discrete wall-clock field needs, whichever comes first.
   public var hostWakeAfter: TimeInterval? {
