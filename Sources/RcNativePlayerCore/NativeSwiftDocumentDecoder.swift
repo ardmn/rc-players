@@ -300,7 +300,9 @@ enum NativeSwiftDocumentDecoder {
       guard nodes[node.componentID] == nil else {
         throw input.malformed("Duplicate component id \(node.componentID)")
       }
-      componentOpenDepths[ObjectIdentifier(node)] = (suspendedInputs.count, modifierContainers.count)
+      componentOpenDepths[ObjectIdentifier(node)] = (
+        suspendedInputs.count, modifierContainers.count
+      )
       componentSeen = true
       if let parent = stack.last {
         node.parent = parent
@@ -765,9 +767,10 @@ enum NativeSwiftDocumentDecoder {
           guard let parentPath = path else { continue }
           let innerPath = "\(parentPath).\(nestedIndex)"
           nestedIndex += 1
-          conditionalTraces.append(NativeSwiftConditionalTraceSnapshot(
-            type: type, left: left, right: right, executed: false, executedChildOps: 0,
-            path: innerPath))
+          conditionalTraces.append(
+            NativeSwiftConditionalTraceSnapshot(
+              type: type, left: left, right: right, executed: false, executedChildOps: 0,
+              path: innerPath))
           guard suspended.count < maximumNestingDepth else {
             throw input.malformed("Conditional nesting exceeds \(maximumNestingDepth)")
           }
@@ -878,13 +881,22 @@ enum NativeSwiftDocumentDecoder {
         case NativeSwiftWireOpcode.macroArgument:
           _ = try reader.int(NativeSwiftWireField.macroArgumentIndex)
         case NativeSwiftOpcodeGroup.fourWordDraws:
-          for _ in 0..<4 { let offset = reader.offset; try remapFloatReference(at: offset) }
+          for _ in 0..<4 {
+            let offset = reader.offset
+            try remapFloatReference(at: offset)
+          }
         case NativeSwiftWireOpcode.drawBitmap:
           _ = try reader.int(NativeSwiftWireField.macroBitmapID)
-          for _ in 0..<4 { let offset = reader.offset; try remapFloatReference(at: offset) }
+          for _ in 0..<4 {
+            let offset = reader.offset
+            try remapFloatReference(at: offset)
+          }
           _ = try reader.int(NativeSwiftWireField.macroBitmapDescriptionID)
         case NativeSwiftWireOpcode.drawCircle:
-          for _ in 0..<3 { let offset = reader.offset; try remapFloatReference(at: offset) }
+          for _ in 0..<3 {
+            let offset = reader.offset
+            try remapFloatReference(at: offset)
+          }
         case NativeSwiftWireOpcode.drawToBitmap:
           // AndroidX `DrawToBitmap.read` takes the bitmap id with `readId()`, which a LOOM
           // expansion resolves through its remap context: the whole word, as a parameter names it.
@@ -895,7 +907,10 @@ enum NativeSwiftDocumentDecoder {
           _ = try reader.int(NativeSwiftWireField.macroDrawToBitmapMode)
           _ = try reader.int(NativeSwiftWireField.macroDrawToBitmapColor)
         case NativeSwiftOpcodeGroup.sixWordDraws:
-          for _ in 0..<6 { let offset = reader.offset; try remapFloatReference(at: offset) }
+          for _ in 0..<6 {
+            let offset = reader.offset
+            try remapFloatReference(at: offset)
+          }
         case NativeSwiftWireOpcode.layoutBox:
           let componentOffset = reader.offset
           try declaredID(at: componentOffset, name: "macro box component id")
@@ -909,7 +924,10 @@ enum NativeSwiftDocumentDecoder {
           // A conditional opens a container whose body follows inline; only its two condition
           // words can name a parameter (a loop conditioning on its own index is the usual case).
           _ = try reader.u8("macro conditional type")
-          for _ in 0..<2 { let offset = reader.offset; try remapFloatReference(at: offset) }
+          for _ in 0..<2 {
+            let offset = reader.offset
+            try remapFloatReference(at: offset)
+          }
         case NativeSwiftWireOpcode.canvasOperations:
           break
         case NativeSwiftWireOpcode.containerEnd:
@@ -1304,7 +1322,9 @@ enum NativeSwiftDocumentDecoder {
             kind: NativeSwiftDrawKind.textOnCircle, words: words, paint: paint, textID: textID))
       case NativeSwiftWireOpcode.drawBitmap:
         let imageID = try input.int("draw bitmap image id")
-        guard let bitmap = images[imageID] else { throw input.malformed("Missing bitmap \(imageID)") }
+        guard let bitmap = images[imageID] else {
+          throw input.malformed("Missing bitmap \(imageID)")
+        }
         let destination = try (0..<4).map { _ in try input.word("draw bitmap destination") }
         let descriptionID = try input.int("draw bitmap content description id")
         try drawingNode().commands.append(
@@ -1326,7 +1346,8 @@ enum NativeSwiftDocumentDecoder {
         let source = try (0..<4).map { _ in try input.word("scaled bitmap source") }
         let destination = try (0..<4).map { _ in try input.word("scaled bitmap destination") }
         let scaleType = try input.int("scaled bitmap scale type")
-        guard (NativeSwiftImageScaleType.none...NativeSwiftImageScaleType.fixed).contains(scaleType) else {
+        guard (NativeSwiftImageScaleType.none...NativeSwiftImageScaleType.fixed).contains(scaleType)
+        else {
           throw input.malformed("Invalid bitmap scale type")
         }
         let scaleFactor = try input.word("scaled bitmap scale factor")
@@ -1540,7 +1561,7 @@ enum NativeSwiftDocumentDecoder {
         let colorID = try input.int("background color id")
         _ = try input.int("background reserved1")
         _ = try input.int("background reserved2")
-        let usesColorID = flags & 2 != 0
+        let usesColorID = flags & NativeSwiftModifierColorFlag.colorID != 0
         let red = try input.floatWord(
           "background red", requireLiteral: !usesColorID, opcode: opcode)
         let green = try input.floatWord(
@@ -1550,7 +1571,7 @@ enum NativeSwiftDocumentDecoder {
         let alpha = try input.floatWord(
           "background alpha", requireLiteral: !usesColorID, opcode: opcode)
         let shape = try input.int("background shape")
-        guard shape == 0 else {
+        guard shape == NativeSwiftBackgroundShape.rectangle else {
           throw NativeSwiftCoreError.unsupported(
             opcode: opcode, offset: opcodeOffset, reason: "non-rectangular backgrounds")
         }
@@ -1805,7 +1826,8 @@ enum NativeSwiftDocumentDecoder {
         for index in 0..<count {
           let key = try input.utf8("data map entry \(index) key", maximum: maximumStringBytes)
           let type = try input.u8("data map entry \(index) type")
-          guard (NativeSwiftDataMapType.string...NativeSwiftDataMapType.boolean).contains(type) else {
+          guard (NativeSwiftDataMapType.string...NativeSwiftDataMapType.boolean).contains(type)
+          else {
             throw input.malformed("Unknown data map type \(type)")
           }
           guard entries[key] == nil else { throw input.malformed("Duplicate data map key \(key)") }
@@ -1828,8 +1850,10 @@ enum NativeSwiftDocumentDecoder {
           first: try input.int("color expression first value"),
           second: try input.int("color expression second value"),
           third: try input.int("color expression third value"))
-        guard (NativeSwiftColorExpressionMode.colorColorInterpolate...NativeSwiftColorExpressionMode.idARGB)
-          .contains(expression.modeAndAlpha & 0xff)
+        guard
+          (NativeSwiftColorExpressionMode
+            .colorColorInterpolate...NativeSwiftColorExpressionMode.idARGB)
+            .contains(expression.modeAndAlpha & 0xff)
         else {
           throw input.malformed("Unknown color expression mode")
         }
@@ -1840,30 +1864,30 @@ enum NativeSwiftDocumentDecoder {
         let digits = UInt32(bitPattern: Int32(try input.int("text from float digits")))
         let flags = try input.int("text from float flags")
         let conversion = ParsedTextFromFloat(
-            outputID: outputID, value: value,
-            digitsBefore: Int(Int16(bitPattern: UInt16(digits >> 16))),
-            digitsAfter: Int(Int16(bitPattern: UInt16(digits & 0xffff))), flags: flags)
+          outputID: outputID, value: value,
+          digitsBefore: Int(Int16(bitPattern: UInt16(digits >> 16))),
+          digitsAfter: Int(Int16(bitPattern: UInt16(digits & 0xffff))), flags: flags)
         textFromFloats.append(conversion)
         textOperations.append(.fromFloat(conversion))
       case NativeSwiftWireOpcode.textMerge:
         let merge = ParsedTextMerge(
-            outputID: try input.int("text merge output id"),
-            leftID: try input.int("text merge left id"),
-            rightID: try input.int("text merge right id"))
+          outputID: try input.int("text merge output id"),
+          leftID: try input.int("text merge left id"),
+          rightID: try input.int("text merge right id"))
         textMerges.append(merge)
         textOperations.append(.merge(merge))
       case NativeSwiftWireOpcode.textLookupInt:
         let lookup = ParsedTextLookupInt(
           outputID: try input.int(NativeSwiftWireField.textLookupOutputID),
           listID: try input.int(NativeSwiftWireField.textLookupListID),
-            indexID: try input.int("text lookup index id"))
+          indexID: try input.int("text lookup index id"))
         textLookups.append(lookup)
         textOperations.append(.lookupInt(lookup))
       case NativeSwiftWireOpcode.textLookup:
         let lookup = ParsedTextLookup(
           outputID: try input.int(NativeSwiftWireField.textLookupOutputID),
           listID: try input.int(NativeSwiftWireField.textLookupListID),
-            index: try input.word("text lookup index"))
+          index: try input.word("text lookup index"))
         textFloatLookups.append(lookup)
         textOperations.append(.lookup(lookup))
       case NativeSwiftWireOpcode.textTransform:
@@ -1875,8 +1899,10 @@ enum NativeSwiftDocumentDecoder {
           operation: try input.int("text transform operation"))
         // Zero is the protocol's identity transform: it still slices its source, but applies no
         // case or whitespace rewrite. The remaining values are the five AndroidX transforms.
-        guard (NativeSwiftTextTransformOperation.identity...NativeSwiftTextTransformOperation.capitalizeFirst)
-          .contains(transform.operation)
+        guard
+          (NativeSwiftTextTransformOperation
+            .identity...NativeSwiftTextTransformOperation.capitalizeFirst)
+            .contains(transform.operation)
         else {
           throw input.malformed("Unknown text transform operation")
         }
@@ -1954,7 +1980,9 @@ enum NativeSwiftDocumentDecoder {
         let id = try input.int("path append id")
         let count = try input.count("path append word count", maximum: 2_000)
         let words = try (0..<count).map { _ in try input.word("path append word") }
-        if words.first.flatMap(NativeSwiftFloatExpression.referenceID) == NativeSwiftPathCommand.reset {
+        if words.first.flatMap(NativeSwiftFloatExpression.referenceID)
+          == NativeSwiftPathCommand.reset
+        {
           paths[id] = ParsedPath(
             winding: paths[id]?.winding ?? NativeSwiftPathWinding.nonZero, words: [],
             opcode: opcode, offset: opcodeOffset)
@@ -2011,7 +2039,8 @@ enum NativeSwiftDocumentDecoder {
         let id = try input.int("named variable id")
         let type = try input.int("named variable type")
         guard
-          (NativeSwiftNamedVariableType.string...NativeSwiftNamedVariableType.floatArray).contains(type)
+          (NativeSwiftNamedVariableType.string...NativeSwiftNamedVariableType.floatArray).contains(
+            type)
         else {
           throw input.malformed("Unknown named variable type")
         }
@@ -2022,7 +2051,8 @@ enum NativeSwiftDocumentDecoder {
         let componentID = try input.int("component value component id")
         let valueID = try input.int("component value id")
         guard
-          type == NativeSwiftComponentValueType.width || type == NativeSwiftComponentValueType.height
+          type == NativeSwiftComponentValueType.width
+            || type == NativeSwiftComponentValueType.height
         else {
           throw NativeSwiftCoreError.unsupported(
             opcode: opcode, offset: opcodeOffset, reason: "component value type \(type)")
@@ -2070,8 +2100,9 @@ enum NativeSwiftDocumentDecoder {
           id: matrixID, type: matrixType, words: matrixWords)
       case NativeSwiftWireOpcode.matrixVectorMath:
         let type = Int(try input.u16("matrix vector math type"))
-        guard type == NativeSwiftMatrixVectorMathType.multiply
-          || type == NativeSwiftMatrixVectorMathType.perspective
+        guard
+          type == NativeSwiftMatrixVectorMathType.multiply
+            || type == NativeSwiftMatrixVectorMathType.perspective
         else {
           throw input.malformed("Unknown matrix vector math type")
         }
@@ -2094,9 +2125,12 @@ enum NativeSwiftDocumentDecoder {
           throw input.malformed("Too many image attribute arguments")
         }
         for _ in 0..<count { _ = try input.int(NativeSwiftWireField.imageAttributeArgument) }
-        guard let image = images[imageID] else { throw input.malformed("Missing bitmap \(imageID)") }
+        guard let image = images[imageID] else {
+          throw input.malformed("Missing bitmap \(imageID)")
+        }
         guard
-          type == NativeSwiftImageAttributeType.width || type == NativeSwiftImageAttributeType.height
+          type == NativeSwiftImageAttributeType.width
+            || type == NativeSwiftImageAttributeType.height
         else {
           throw NativeSwiftCoreError.unsupported(
             opcode: opcode, offset: opcodeOffset, reason: "image attribute type \(type)")
@@ -2265,7 +2299,8 @@ enum NativeSwiftDocumentDecoder {
             try (0..<length).map { _ in try input.word("particle loop variable word") })
         }
         if let definition = particleDefinitions.first(where: { $0.id == particleID }) {
-          let work = Int64(definition.particleCount)
+          let work =
+            Int64(definition.particleCount)
             * Int64(1 + updateEquations.reduce(0) { $0 + $1.count })
           guard work <= 20_000 else {
             throw input.malformed("Particle loop exceeds 20000 units of work per frame")
@@ -2358,9 +2393,9 @@ enum NativeSwiftDocumentDecoder {
         node.verticalPositioning = try input.int("fit box vertical positioning")
         try begin(node)
       case NativeSwiftWireOpcode.layoutState:  // State layout
-        // Component id, animation id, both positionings, then the id of the float holding the index
-        // of the child to show. Laid out as a box, which shows every child stacked rather than the
-        // one the index selects -- a real difference, tracked rather than implied.
+        // Component id, animation id, both positionings, then the id of the integer holding the
+        // index of the child to show. Decoded as a box; the session then shows the branch the index
+        // selects and marks the others gone (`stateBranches`, `stateIndex` in the snapshot).
         let node = ParsedNode(kind: .box, componentID: try input.int("state layout component id"))
         node.componentKind = "StateLayout"
         node.animationID = try input.int("state layout animation id")
@@ -2396,9 +2431,10 @@ enum NativeSwiftDocumentDecoder {
         let right = try input.word("click area right")
         let bottom = try input.word("click area bottom")
         let metadataID = try input.int("click area metadata id")
-        clickAreas.append(ParsedClickArea(
-          id: id, contentDescriptionID: descriptionID, left: left, top: top,
-          right: right, bottom: bottom, metadataID: metadataID))
+        clickAreas.append(
+          ParsedClickArea(
+            id: id, contentDescriptionID: descriptionID, left: left, top: top,
+            right: right, bottom: bottom, metadataID: metadataID))
       case NativeSwiftWireOpcode.modifierZindex:  // Z-index modifier
         try currentNode(stack, input: input).zIndexWord = try input.word("z-index")
       case NativeSwiftWireOpcode.modifierOffset:  // Offset modifier
@@ -2451,7 +2487,7 @@ enum NativeSwiftDocumentDecoder {
         _ = try input.int("border reserved 2")
         let width = try input.word(NativeSwiftWireField.borderWidth)
         _ = try input.word("border corner")
-        let usesColorID = flags & 2 != 0
+        let usesColorID = flags & NativeSwiftModifierColorFlag.colorID != 0
         let red = try input.floatWord(
           "border red", requireLiteral: !usesColorID, opcode: opcode)
         let green = try input.floatWord(
@@ -2461,7 +2497,8 @@ enum NativeSwiftDocumentDecoder {
         let alpha = try input.floatWord(
           "border alpha", requireLiteral: !usesColorID, opcode: opcode)
         _ = try input.int("border shape type")
-        node.borderARGB = !usesColorID ? argb(red: red, green: green, blue: blue, alpha: alpha) : nil
+        node.borderARGB =
+          !usesColorID ? argb(red: red, green: green, blue: blue, alpha: alpha) : nil
         node.borderColorID = usesColorID ? colorID : nil
         node.borderWidthWord = width
       case NativeSwiftWireOpcode.layoutCollapsibleRow:  // Collapsible row
@@ -2534,15 +2571,20 @@ enum NativeSwiftDocumentDecoder {
         let familyID = try input.int("text family id")
         let alignmentAndFlags = try input.int("text alignment")
         let flags = UInt32(bitPattern: Int32(alignmentAndFlags)) >> 16
-        guard flags == 0 else {
+        // The dynamic-colour flag makes `color` the id of a colour (a named colour, a theme pair, an
+        // expression) rather than ARGB, resolved like CoreText's colour id. Any other flag is a
+        // feature this player does not have.
+        let usesColorID = flags & NativeSwiftTextLayoutFlag.dynamicColor != 0
+        guard flags & ~NativeSwiftTextLayoutFlag.dynamicColor == 0 else {
           throw NativeSwiftCoreError.unsupported(
-            opcode: opcode, offset: opcodeOffset, reason: "dynamic text colors")
+            opcode: opcode, offset: opcodeOffset, reason: "text layout flags")
         }
         // An overflow outside the five AndroidX defines renders as clip there, rather than refusing
         // the document; `text_style_and_layout_text` writes 0.
         let wireOverflow = try input.int("text overflow")
         let overflow =
-          (NativeSwiftTextOverflow.clip...NativeSwiftTextOverflow.middleEllipsis).contains(wireOverflow)
+          (NativeSwiftTextOverflow.clip...NativeSwiftTextOverflow.middleEllipsis).contains(
+            wireOverflow)
           ? wireOverflow : NativeSwiftTextOverflow.clip
         let maximumLines = try input.int("text maximum lines")
         // `size` is no longer checked here: it may be a reference, and `resolvedFloat` applies the
@@ -2551,8 +2593,10 @@ enum NativeSwiftDocumentDecoder {
           let alignment = NativeSwiftTextAlignment(rawValue: alignmentAndFlags & 0xffff),
           maximumLines > 0
         else { throw input.malformed("Invalid text layout values") }
+        let colorID = usesColorID ? Int(Int32(bitPattern: color)) : nil
         node.text = ParsedText(
-          textID: textID, colorARGB: color, colorID: nil, sizeWord: size, style: style,
+          textID: textID, colorARGB: colorID.flatMap { colors[$0] } ?? color, colorID: colorID,
+          sizeWord: size, style: style,
           weightWord: weight,
           familyID: familyID, alignment: alignment, overflow: overflow,
           maximumLines: maximumLines)
@@ -2564,7 +2608,9 @@ enum NativeSwiftDocumentDecoder {
         let imageID = try input.int("image bitmap id")
         let scaleType = try input.int("image scale type")
         let alpha = try input.word("image alpha")
-        guard let bitmap = images[imageID] else { throw input.malformed("Missing bitmap \(imageID)") }
+        guard let bitmap = images[imageID] else {
+          throw input.malformed("Missing bitmap \(imageID)")
+        }
         guard (0...7).contains(scaleType) else { throw input.malformed("Invalid image scale type") }
         let source: [UInt32] = [
           0, 0, Float(bitmap.width).bitPattern, Float(bitmap.height).bitPattern,
@@ -2752,8 +2798,9 @@ enum NativeSwiftDocumentDecoder {
           throw input.malformed("Invalid time argument count \(count)")
         }
         let arguments = try (0..<count).map { _ in try input.int("time attribute argument") }
-        timeAttributes.append(ParsedTimeAttribute(
-          outputID: outputID, timeID: timeID, type: type & 0xff, argumentIDs: arguments))
+        timeAttributes.append(
+          ParsedTimeAttribute(
+            outputID: outputID, timeID: timeID, type: type & 0xff, argumentIDs: arguments))
       case NativeSwiftWireOpcode.debugMessage:
         // A diagnostic for the host's log. AndroidX prints it and changes nothing else; this core
         // has no log channel, so reading it past is the whole of its effect.
@@ -2770,9 +2817,12 @@ enum NativeSwiftDocumentDecoder {
         {
           appendAction(.playSound(id: id), to: container)
         } else {
-          frameEffects.append(ParsedFrameEffect(
-            action: .playSound(id: id),
-            impulseGate: impulseScope.map { ParsedImpulseGate(impulse: $0.impulse, segment: $0.segment) }))
+          frameEffects.append(
+            ParsedFrameEffect(
+              action: .playSound(id: id),
+              impulseGate: impulseScope.map {
+                ParsedImpulseGate(impulse: $0.impulse, segment: $0.segment)
+              }))
         }
       case NativeSwiftWireOpcode.soundExpression:
         let id = try input.int("sound expression id")
@@ -2781,9 +2831,10 @@ enum NativeSwiftDocumentDecoder {
         }
         let count = try input.count(
           "sound expression parameter count", maximum: maximumSoundParameters)
-        sounds[id] = .expression(try (0..<count).map { _ in
-          try input.word("sound expression parameter")
-        })
+        sounds[id] = .expression(
+          try (0..<count).map { _ in
+            try input.word("sound expression parameter")
+          })
       case NativeSwiftWireOpcode.impulseStart:
         // A window of time on the animation clock. Its children run once, on the first frame
         // inside the window; a trailing IMPULSE_PROCESS runs on every frame after that until the
@@ -2811,7 +2862,8 @@ enum NativeSwiftDocumentDecoder {
       case NativeSwiftWireOpcode.wakeIn:
         // Asks the host to resolve the document again after this many seconds.
         wakeWords.append(try input.word("wake in seconds"))
-      case NativeSwiftWireOpcode.valueFloatChangeAction, NativeSwiftWireOpcode.valueStringChangeAction,
+      case NativeSwiftWireOpcode.valueFloatChangeAction,
+        NativeSwiftWireOpcode.valueStringChangeAction,
         NativeSwiftWireOpcode.hostAction, NativeSwiftWireOpcode.hostMetadataAction,
         NativeSwiftWireOpcode.hapticFeedback:
         // Actions run when the click modifier that encloses them fires. Outside one there is
@@ -2833,21 +2885,26 @@ enum NativeSwiftDocumentDecoder {
           action = .hostAction(id: try input.int("host action id"))
         case NativeSwiftWireOpcode.hostMetadataAction:
           let id = try input.int("host metadata action id")
-          action = .hostMetadataAction(id: id, textID: try input.int("host metadata action text id"))
+          action = .hostMetadataAction(
+            id: id, textID: try input.int("host metadata action text id"))
         default:
           action = .haptic(type: try input.int("haptic feedback type"))
         }
         guard let container, container.gesture != nil || container.actionSink != nil else {
           if opcode == NativeSwiftWireOpcode.hapticFeedback, let action {
-            frameEffects.append(ParsedFrameEffect(
-              action: action,
-              impulseGate: impulseScope.map { ParsedImpulseGate(impulse: $0.impulse, segment: $0.segment) }))
+            frameEffects.append(
+              ParsedFrameEffect(
+                action: action,
+                impulseGate: impulseScope.map {
+                  ParsedImpulseGate(impulse: $0.impulse, segment: $0.segment)
+                }))
           }
           break
         }
         if let action {
           switch container.actionSink {
-          case .runAction where opcode == NativeSwiftWireOpcode.hostAction
+          case .runAction
+          where opcode == NativeSwiftWireOpcode.hostAction
             || opcode == NativeSwiftWireOpcode.hostMetadataAction
             || opcode == NativeSwiftWireOpcode.hapticFeedback:
             break
@@ -2906,14 +2963,16 @@ enum NativeSwiftDocumentDecoder {
         }
         textStyles[styleID] = style
       case NativeSwiftWireOpcode.idLookup:
-        idLookups.append(ParsedIdLookup(
-          outputID: try input.int("id lookup output id"),
-          listID: try input.int("id lookup list id"),
-          index: try input.word("id lookup index")))
+        idLookups.append(
+          ParsedIdLookup(
+            outputID: try input.int("id lookup output id"),
+            listID: try input.int("id lookup list id"),
+            index: try input.word("id lookup index")))
       case NativeSwiftWireOpcode.textLength:
-        textLengths.append(ParsedTextLength(
-          outputID: try input.int("text length output id"),
-          textID: try input.int("text length text id")))
+        textLengths.append(
+          ParsedTextLength(
+            outputID: try input.int("text length output id"),
+            textID: try input.int("text length text id")))
       case NativeSwiftWireOpcode.textSubtext:
         let subtext = ParsedTextTransform(
           outputID: try input.int("text subtext output id"),
@@ -3093,7 +3152,8 @@ enum NativeSwiftDocumentDecoder {
       NativeSwiftTimeAttributeType.fromNowSeconds, NativeSwiftTimeAttributeType.fromNowMinutes,
       NativeSwiftTimeAttributeType.fromNowHours, NativeSwiftTimeAttributeType.fromLoadSeconds,
     ]
-    let needsContinuousFrames = references(continuousClockIDs)
+    let needsContinuousFrames =
+      references(continuousClockIDs)
       || timeAttributes.contains { continuousTimeTypes.contains($0.type & 0xFF) }
     // The discrete wall-clock fields are constant within a second, so a document that reads one has
     // to be re-resolved at least once a second or its clock freezes on the first frame.
@@ -3104,7 +3164,8 @@ enum NativeSwiftDocumentDecoder {
       NativeSwiftSystemVariables.dayOfMonth, NativeSwiftSystemVariables.dayOfYear,
       NativeSwiftSystemVariables.year, NativeSwiftSystemVariables.epochSecond,
     ]
-    let needsWallClockRefresh = references(discreteWallClockIDs)
+    let needsWallClockRefresh =
+      references(discreteWallClockIDs)
       || timeAttributes.contains { longConstants[$0.timeID] == nil }
     // Which draw commands read a component-value binding is fixed by now; settle it once here
     // rather than on every frame. The walk is iterative: the tree is up to `maximumNestingDepth`
@@ -3147,7 +3208,8 @@ enum NativeSwiftDocumentDecoder {
       frameEffects: frameEffects,
       textOperations: textOperations,
       textFromFloats: textFromFloats,
-      textMerges: textMerges, textTransforms: textTransforms, idLists: idLists, floatLists: floatLists,
+      textMerges: textMerges, textTransforms: textTransforms, idLists: idLists,
+      floatLists: floatLists,
       floatListUpdates: floatListUpdates, dynamicFloatLists: dynamicFloatLists,
       textLookups: textLookups, textFloatLookups: textFloatLookups,
       dataMaps: dataMaps, dataMapLookups: dataMapLookups,
@@ -3197,29 +3259,30 @@ enum NativeSwiftDocumentDecoder {
         }
         argumentCount =
           1 + colorCount + 1 + stopCount
-            + (highBits == NativeSwiftPaintGradientKind.linear
-              ? 5
-              : (highBits == NativeSwiftPaintGradientKind.radial ? 4 : 2))
+          + (highBits == NativeSwiftPaintGradientKind.linear
+            ? 5
+            : (highBits == NativeSwiftPaintGradientKind.radial ? 4 : 2))
       } else {
         switch type {
-      case NativeSwiftPaintCommand.textSize, NativeSwiftPaintCommand.color,
-        NativeSwiftPaintCommand.strokeWidth, NativeSwiftPaintCommand.shader,
-        NativeSwiftPaintCommand.alpha, NativeSwiftPaintCommand.colorFilter,
-        NativeSwiftPaintCommand.typeface, NativeSwiftPaintCommand.colorID,
-        NativeSwiftPaintCommand.colorFilterID, NativeSwiftPaintCommand.shaderMatrix,
-        NativeSwiftPaintCommand.strokeMiter, NativeSwiftPaintCommand.fallbackTypeface:
-        argumentCount = 1
-      case NativeSwiftPaintCommand.texture: argumentCount = 3
-      case NativeSwiftPaintCommand.strokeCap, NativeSwiftPaintCommand.style,
-        NativeSwiftPaintCommand.imageFilterQuality, NativeSwiftPaintCommand.antiAlias,
-        NativeSwiftPaintCommand.strokeJoin, NativeSwiftPaintCommand.filterBitmap,
-        NativeSwiftPaintCommand.blendMode, NativeSwiftPaintCommand.clearColorFilter:
-        argumentCount = 0
-      case NativeSwiftPaintCommand.fontAxis: argumentCount = highBits * 2
-      case NativeSwiftPaintCommand.pathEffect: argumentCount = highBits
-      default:
-        throw NativeSwiftCoreError.unsupported(
-          opcode: NativeSwiftWireOpcode.paintValues, offset: input.offset, reason: "paint command \(type)")
+        case NativeSwiftPaintCommand.textSize, NativeSwiftPaintCommand.color,
+          NativeSwiftPaintCommand.strokeWidth, NativeSwiftPaintCommand.shader,
+          NativeSwiftPaintCommand.alpha, NativeSwiftPaintCommand.colorFilter,
+          NativeSwiftPaintCommand.typeface, NativeSwiftPaintCommand.colorID,
+          NativeSwiftPaintCommand.colorFilterID, NativeSwiftPaintCommand.shaderMatrix,
+          NativeSwiftPaintCommand.strokeMiter, NativeSwiftPaintCommand.fallbackTypeface:
+          argumentCount = 1
+        case NativeSwiftPaintCommand.texture: argumentCount = 3
+        case NativeSwiftPaintCommand.strokeCap, NativeSwiftPaintCommand.style,
+          NativeSwiftPaintCommand.imageFilterQuality, NativeSwiftPaintCommand.antiAlias,
+          NativeSwiftPaintCommand.strokeJoin, NativeSwiftPaintCommand.filterBitmap,
+          NativeSwiftPaintCommand.blendMode, NativeSwiftPaintCommand.clearColorFilter:
+          argumentCount = 0
+        case NativeSwiftPaintCommand.fontAxis: argumentCount = highBits * 2
+        case NativeSwiftPaintCommand.pathEffect: argumentCount = highBits
+        default:
+          throw NativeSwiftCoreError.unsupported(
+            opcode: NativeSwiftWireOpcode.paintValues, offset: input.offset,
+            reason: "paint command \(type)")
         }
       }
       guard index + argumentCount <= words.count else { throw input.malformed("Truncated paint") }
@@ -3245,7 +3308,8 @@ enum NativeSwiftDocumentDecoder {
         // Image filter quality: 0 none, 1 low, 2 medium, 3 high. Anything else is the reference's
         // low fallback.
         paint.filterQuality =
-          (NativeSwiftPaintFilterQuality.none...NativeSwiftPaintFilterQuality.high).contains(highBits)
+          (NativeSwiftPaintFilterQuality.none...NativeSwiftPaintFilterQuality.high).contains(
+            highBits)
           ? highBits : NativeSwiftPaintFilterQuality.low
       case NativeSwiftPaintCommand.filterBitmap:
         // The legacy filter-bitmap flag: non-zero asks for filtering, which is low quality.
@@ -3305,7 +3369,7 @@ enum NativeSwiftDocumentDecoder {
           // sized like a sweep, so reading one past its coordinates would index past the words.
           tileMode:
             highBits == NativeSwiftPaintGradientKind.linear
-              || highBits == NativeSwiftPaintGradientKind.radial
+            || highBits == NativeSwiftPaintGradientKind.radial
             ? words[coordinateStart + coordinateCount] : 0)
         paint.textureImageID = nil
         paint.textureTileModeX = 0
