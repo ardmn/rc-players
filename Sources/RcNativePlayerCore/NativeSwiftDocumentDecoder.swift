@@ -18,6 +18,8 @@ enum NativeSwiftDocumentDecoder {
   /// The most passes one loop runs: the Kotlin player's `MAX_LOOP_ITERATIONS`, where it stops a
   /// loop AndroidX would never leave.
   private static let maximumLoopPasses = 10_000
+  /// The refusal when a for-each or a loop needs more generated ids than the macro range holds.
+  private static let macroIDsExhausted = "LOOM macro generated-id range is exhausted"
   /// The bytes every LOOM loop and for-each expansion in one document may unroll to, together.
   /// Their bodies are small drawing and structural operations, so this is far above anything a real
   /// template produces; it exists because an unrolled body is held in memory before it runs, and a
@@ -832,7 +834,7 @@ enum NativeSwiftDocumentDecoder {
         // distinct ID for every declaration read while expanding a macro (including regular IDs).
         guard id > NativeSwiftLoomID.lastSystemGlobal, id != -1 else { return }
         guard nextMacroGeneratedID <= 0x003f_ffff else {
-          throw input.malformed("LOOM macro generated-id range is exhausted")
+          throw input.malformed(macroIDsExhausted)
         }
         let replacement = nextMacroGeneratedID
         nextMacroGeneratedID += 1
@@ -1149,7 +1151,7 @@ enum NativeSwiftDocumentDecoder {
             expanded.append(body)
           } else {
             guard nextMacroGeneratedID <= 0x003f_ffff else {
-              throw input.malformed("LOOM macro generated-id range is exhausted")
+              throw input.malformed(macroIDsExhausted)
             }
             let passID = nextMacroGeneratedID
             nextMacroGeneratedID += 1
