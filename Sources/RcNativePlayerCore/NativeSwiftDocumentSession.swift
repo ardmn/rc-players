@@ -518,8 +518,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// Dispatches every legacy document-space click area containing the point, in wire order, with
   /// the bounds the last resolution left (`RcPlayerState.executeClickAreasAt`).
   ///
-  /// - Parameter timeSeconds: unused since input stopped resolving the document; kept so the call
-  ///   sites that pass the presented frame's time need no change.
+  /// - Parameter timeSeconds: unused: input acts on the values the last resolution left, and the
+  ///   presented frame's time the call sites pass is not needed.
   public func clickAreas(x: Float, y: Float, timeSeconds: TimeInterval) throws -> [NativeSwiftEvent]? {
     stateLock.lock()
     defer { stateLock.unlock() }
@@ -542,8 +542,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// derived from an earlier action's write in the same list reads as the last frame left it, and
   /// a float expression an action evaluates eases at the last resolution's instant.
   ///
-  /// - Parameter timeSeconds: unused since input stopped resolving the document; kept so the call
-  ///   sites that pass the presented frame's time need no change.
+  /// - Parameter timeSeconds: unused: input acts on the values the last resolution left, and the
+  ///   presented frame's time the call sites pass is not needed.
   public func gesture(
     _ kind: NativeSwiftGestureKind, componentID: Int,
     sample: NativeSwiftPointerSample? = nil, timeSeconds: TimeInterval
