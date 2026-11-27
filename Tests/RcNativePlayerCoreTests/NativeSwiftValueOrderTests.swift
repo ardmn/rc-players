@@ -90,6 +90,119 @@ import Testing
     #expect(later.widthValue == 6.5, "Kotlin 6.5; Swift later frame \(later.widthValue)")
   }
 
+  /// float 80 = [81]; int 81 = [TIME_IN_HR]. One Kotlin pass in wire order: 80 reads 81 before
+  /// 81 has read the clock, so 80 is 0 on the first pass and the hour on the next.
+  @Test func aFloatBeforeAnIntegerOverTheClockSeesItOnTheNextPass() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(80).int(1).int(Writer.nanReference(81))
+    document.u8(Op.integerExpression).int(81).int(1).int(1).int(
+      NativeSwiftSystemVariables.timeInHours)
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
+    let hour = Int(clock.fields.hour)
+    let first = try session.probeValues(timeSeconds: 0, wallClock: clock)
+    #expect(first.integers[81] == hour)
+    #expect(first.floats[80] == 0, "first pass: \(String(describing: first.floats[80]))")
+    let second = try session.probeValues(timeSeconds: 0.1, wallClock: clock)
+    #expect(second.floats[80] == Float(hour), "\(String(describing: second.floats[80]))")
+  }
+
+  /// float 78 = 0; int 79 = [78] + [81]; int 81 = [83]; int 83 = [85]; int 85 = 5. In one Kotlin
+  /// pass in wire order 79 reads 81 before 81 has its value, so 79 is 0 on the first pass, as it
+  /// is in a document whose integers read no float.
+  @Test func anIntegerReadsALaterIntegerAsThePreviousPassLeftIt() throws {
+    func open(readingAFloat: Bool) throws -> NativeSwiftDocumentSession {
+      let document = Writer()
+      document.header(width: 100, height: 100)
+      document.u8(Op.animatedFloat).int(78).int(1).int(Writer.literal(0))
+      if readingAFloat {
+        document.u8(Op.integerExpression).int(79).int(0b111).int(3).int(78).int(81)
+          .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
+      } else {
+        document.u8(Op.integerExpression).int(79).int(0b110).int(3).int(0).int(81)
+          .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
+      }
+      document.u8(Op.integerExpression).int(81).int(1).int(1).int(83)
+      document.u8(Op.integerExpression).int(83).int(1).int(1).int(85)
+      document.u8(Op.integerExpression).int(85).int(0).int(1).int(5)
+      return try NativeSwiftDocumentSession.open(
+        data: document.data, toleratingRootlessData: true)
+    }
+    let reading = try open(readingAFloat: true).probeValues(timeSeconds: 0)
+    let plain = try open(readingAFloat: false).probeValues(timeSeconds: 0)
+    #expect(reading.integers[79] == plain.integers[79], "\(reading.integers[79] as Any)")
+    #expect(reading.integers[79] == 0)
+  }
+
+  /// float 80 = [82]; float 82 = [84]; float 84 = 5; int 81 = [TIME_IN_HR]. The integer moving
+  /// replays the floats, but none of them reads it, so the pass gives the floats the same document
+  /// without the integer gives: the replay starts where the first evaluation did, and advances no
+  /// forward reference a step further.
+  @Test func aReplayDoesNotAdvanceUnrelatedForwardFloats() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(80).int(1).int(Writer.nanReference(82))
+    document.u8(Op.animatedFloat).int(82).int(1).int(Writer.nanReference(84))
+    document.u8(Op.animatedFloat).int(84).int(1).int(Writer.literal(5))
+    document.u8(Op.integerExpression).int(81).int(1).int(1).int(
+      NativeSwiftSystemVariables.timeInHours)
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
+    try #require(clock.fields.hour != 0)
+    let first = try session.probeValues(timeSeconds: 0, wallClock: clock)
+    #expect(first.integers[81] == Int(clock.fields.hour))
+    #expect(first.floats[80] == 0, "\(String(describing: first.floats[80]))")
+    // Without a replay the same document gives the same floats: the integer changes nothing.
+    let unrelated = Writer()
+    unrelated.header(width: 100, height: 100)
+    unrelated.u8(Op.animatedFloat).int(80).int(1).int(Writer.nanReference(82))
+    unrelated.u8(Op.animatedFloat).int(82).int(1).int(Writer.nanReference(84))
+    unrelated.u8(Op.animatedFloat).int(84).int(1).int(Writer.literal(5))
+    let plain = try NativeSwiftDocumentSession.open(
+      data: unrelated.data, toleratingRootlessData: true
+    ).probeValues(timeSeconds: 0, wallClock: clock)
+    #expect(first.floats[80] == plain.floats[80] && first.floats[82] == plain.floats[82])
+  }
+
+  /// float 80 = 2; int 81 = [80] + [82]; float 82 = 5, both floats expressions. One Kotlin pass in
+  /// wire order: 81 reads 80's view and 82's from the pass before (none yet), so 2, then 7.
+  @Test func anIntegerReadsEachFloatViewInWireOrder() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(80).int(1).int(Writer.literal(2))
+    document.u8(Op.integerExpression).int(81).int(0b111).int(3).int(80).int(82)
+      .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
+    document.u8(Op.animatedFloat).int(82).int(1).int(Writer.literal(5))
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    let first = try session.probeValues(timeSeconds: 0)
+    #expect(first.integers[81] == 2, "first pass: \(String(describing: first.integers[81]))")
+    let second = try session.probeValues(timeSeconds: 0.1)
+    #expect(second.integers[81] == 7, "\(String(describing: second.integers[81]))")
+  }
+
+  /// float 82 = [TIME_IN_HR] + 0; int 83 = [82]; float 84 = [83]. The float and the integer both
+  /// come before the float that reads the integer, so all three are the hour in one pass.
+  @Test func aFloatAfterAnIntegerOverAFloatSeesItInTheSamePass() throws {
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.animatedFloat).int(82).int(3)
+      .int(Writer.nanReference(NativeSwiftSystemVariables.timeInHours)).int(Writer.literal(0))
+      .int(Writer.floatOperator(NativeSwiftFloatOperator.add))
+    document.u8(Op.integerExpression).int(83).int(1).int(1).int(82)
+    document.u8(Op.animatedFloat).int(84).int(1).int(Writer.nanReference(83))
+    let session = try NativeSwiftDocumentSession.open(
+      data: document.data, toleratingRootlessData: true)
+    let clock = NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis)
+    let hour = Int(clock.fields.hour)
+    let values = try session.probeValues(timeSeconds: 0, wallClock: clock)
+    #expect(values.integers[83] == hour)
+    #expect(values.floats[84] == Float(hour), "\(String(describing: values.floats[84]))")
+  }
+
   /// int 60 = [TIME_IN_SEC]; animated float 51 = [60] over 1 s. Kotlin: target = seconds into the
   /// hour from the first frame, never animating (first target sets the initial value too).
   @Test func animatedFloatOverAClockIntegerShowsTheClock() throws {
