@@ -153,8 +153,8 @@ name it resolves to), and are kept while the fallback is not showing a document.
 `setBoolean` both target an integer variable: a Remote Compose boolean is an integer holding 1 or 0,
 as AndroidX's `setNamedBooleanOverride` stores it, and an integer outside the 32-bit range is
 refused. `setLong` takes an instant in epoch milliseconds, which the document's time attributes
-read, and `setFloatArray` replaces the list a float-array variable holds; both players check every
-element and refuse an array with a non-finite value anywhere in it, or with more values than a float
+read, and `setFloatArray` replaces the list a float-array variable holds; both players take NaN and
+the infinities as elements, as AndroidX does, and refuse an array with more values than a float
 list holds (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000). `clear` is the inverse of the setters,
 as removing a key from the Kotlin player's named values is: the stored value is removed and the
 variable shows the value the document recorded again (a named system variable, or a long with no

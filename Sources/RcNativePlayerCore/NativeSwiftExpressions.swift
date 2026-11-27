@@ -354,8 +354,12 @@ enum NativeSwiftFloatExpression {
         let list = arrayOperand(try pop1(), arrays) ?? []
         let sum: Float = list.reduce(0, +)
         switch operation {
-        case NativeSwiftFloatOperator.arrayMax: stack.append(list.max() ?? 0)
-        case NativeSwiftFloatOperator.arrayMin: stack.append(list.min() ?? 0)
+        // AndroidX folds with `Math.max` / `Math.min` (AnimatedFloatExpression.java:1009, :1025),
+        // so one NaN element makes the result NaN; Swift's `max()` / `min()` would skip it.
+        case NativeSwiftFloatOperator.arrayMax:
+          stack.append(list.first.map { list.dropFirst().reduce($0, javaMax) } ?? 0)
+        case NativeSwiftFloatOperator.arrayMin:
+          stack.append(list.first.map { list.dropFirst().reduce($0, javaMin) } ?? 0)
         case NativeSwiftFloatOperator.arraySum: stack.append(sum)
         case NativeSwiftFloatOperator.arrayAverage:
           stack.append(list.isEmpty ? 0 : sum / Float(list.count))

@@ -150,7 +150,7 @@ public enum NativeSwiftTextFormatter {
   private static func fractionDigits(_ value: Float, digits: Int, keep: Int) -> String {
     var fraction = value.truncatingRemainder(dividingBy: 1)
     for _ in 0..<max(digits, 0) { fraction *= 10 }
-    fraction = Float(javaRound(fraction))
+    fraction = Float(nativeSwiftJavaRound(fraction))
     for _ in 0..<max(digits, 0) { fraction *= 0.1 }
     let text = Array(javaFloatString(fraction))
     let end = min(text.count, keep + 2)
@@ -218,9 +218,6 @@ public enum NativeSwiftTextFormatter {
     }
     return integerText + "." + String(digits)
   }
-
-  /// Java's `Math.round`-style `floor(x + 0.5)`, as the reference writes it.
-  private static func javaRound(_ value: Float) -> Int { javaInt((value + 0.5).rounded(.down)) }
 
   /// Java's float-to-int conversion: truncating, saturating to `Int32` (`Float(Int32.max)` is
   /// 2^31, one past it), NaN to 0.
@@ -1035,6 +1032,9 @@ public struct NativeSwiftTextSnapshot: Sendable {
   /// size that is a variable is the pixels it evaluates to and is never scaled, and neither is any
   /// font size in a LEGACY or PIXELS document. See `isDensityTypedFontSize(_:densityBehavior:)`.
   public let sizeIsDensityTyped: Bool
+  /// The size text takes when its own is below 0 or NaN: a reset Android paint's, Skia's
+  /// `SkPaintDefaults_TextSize` (12 pixels), which `Paint.setTextSize` then leaves in place.
+  static let androidDefaultSize: Float = 12
   public let style: Int
   public let weight: Float
   public let familyID: Int

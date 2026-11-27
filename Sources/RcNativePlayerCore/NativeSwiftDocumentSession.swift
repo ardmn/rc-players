@@ -566,8 +566,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     var events: [NativeSwiftEvent] = []
     for handler in document.eventHandlers where handler.type == type && handler.filter == metadata {
       try resolveIntegerExpressions()
-      // The reference's `overrideFloat`, which publishes both numeric views as `storeFloat` does.
-      for (id, value) in zip(handler.dataIDs, data) where id != 0 && value.isFinite {
+      // The reference's `overrideFloat`, which publishes both numeric views as `storeFloat` does,
+      // for any float the host sent (EventHandlerModifierOperation.java:112).
+      for (id, value) in zip(handler.dataIDs, data) where id != 0 {
         staticSnapshotCache = nil
         storeFloat(id, value)
       }
@@ -657,8 +658,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       case .integerValue(let targetID, let value):
         storeActionInteger(targetID, value)
       case .floatValue(let targetID, let value):
-        let resolved = NativeSwiftFloatExpression.resolve(value, values: values)
-        if resolved.isFinite { storeActionFloat(targetID, resolved) }
+        // Any float, as AndroidX's `overrideFloat` (ValueFloatChangeActionOperation.java:85) and
+        // Kotlin's `RcValueFloatChangeAction` write it.
+        storeActionFloat(targetID, NativeSwiftFloatExpression.resolve(value, values: values))
       case .textValue(let targetID, let textID):
         if let text = texts[textID] {
           texts[targetID] = text
@@ -910,12 +912,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   }
 
   /// Writes one float slot by id, for a gesture that moves a document's own value — a scroll's
-  /// offset is addressed by id rather than by name.
+  /// offset is addressed by id rather than by name. Any float is written, as AndroidX's
+  /// `touchDrag` loads a touch position (CoreDocument.java:2076) and a host's write by name is.
   @discardableResult
   public func setFloat(_ value: Float, forID id: Int) -> Bool {
     stateLock.lock()
     defer { stateLock.unlock() }
-    guard value.isFinite else { return false }
     storeFloat(id, value)
     staticSnapshotCache = nil
     return true
@@ -1052,10 +1054,19 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   ) throws -> NativeSwiftNodeSnapshot {
     let text: NativeSwiftTextSnapshot?
     if let source = node.text {
-      // `size > 0` used to be a parse-time guard. It still holds, but a computed size has no value
-      // to check until here, so the check moved with it rather than being dropped.
-      let size = try resolvedFloat(
-        source.sizeWord, NativeSwiftWireField.textSize, values: values, positive: true)
+      // Any float a host writes reaches a size. Android's `Paint.setTextSize` ignores one below 0
+      // or NaN (hwui `jni/Paint.cpp:1001`, `if (textSize >= 0)`) on a paint AndroidX's
+      // `replacePaint` has just reset (`AndroidPaintContext.java:533`), so such text draws at
+      // Skia's default size in pixels (`SkPaintDefaults.h:20`); an infinity saturates.
+      let requestedSize = NativeSwiftFloatExpression.resolve(source.sizeWord, values: values)
+      let takesRequestedSize = requestedSize >= 0
+      let size =
+        takesRequestedSize
+        ? nativeSwiftSaturated(requestedSize) : NativeSwiftTextSnapshot.androidDefaultSize
+      let sizeIsDensityTyped =
+        takesRequestedSize
+        && NativeSwiftTextSnapshot.isDensityTypedFontSize(
+          source.sizeWord, densityBehavior: document.densityBehavior)
       let weight = resolveOptionalFloat(source.weightWord, values: values) ?? 400
       text = NativeSwiftTextSnapshot(
         value: texts[source.textID] ?? "",
@@ -1085,8 +1096,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
             maximumFontSize: resolvedMaximum)
         },
         fontSettings: fontSettings(source, values: values),
-        sizeIsDensityTyped: NativeSwiftTextSnapshot.isDensityTypedFontSize(
-          source.sizeWord, densityBehavior: document.densityBehavior))
+        sizeIsDensityTyped: sizeIsDensityTyped)
     } else {
       text = nil
     }
@@ -1150,10 +1160,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         })
     }
 
-    let maximumWidth = try resolvedFloat(
-      node.maximumWidthWord, NativeSwiftWireField.maximumWidth, values: values)
-    let maximumHeight = try resolvedFloat(
-      node.maximumHeightWord, NativeSwiftWireField.maximumHeight, values: values)
+    let maximumWidth = resolvedMaximum(node.maximumWidthWord, values: values)
+    let maximumHeight = resolvedMaximum(node.maximumHeightWord, values: values)
     let cornerRadii = try node.cornerRadiusWords.map {
       try resolvedFloat($0, NativeSwiftWireField.cornerRadius, values: values)
     }
@@ -1443,12 +1451,6 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
   }
 
-  /// Resolves a float field that a document may either state outright or compute.
-  ///
-  /// A literal word is its own bit pattern, so `resolve` is a strict generalisation of the eager
-  /// `Float` these fields used to hold; a NaN-boxed word is a reference into `values`. Validation
-  /// that used to run while parsing runs here, because a computed field has nothing to validate
-  /// until it resolves — and failing here is what keeps a garbage value from reaching UIKit.
   /// A `CoreText`'s font settings with their tags and values resolved. A tag with no text, or a
   /// value that does not resolve to a number, is dropped, as the Compose player drops it.
   private func fontSettings(
@@ -1465,8 +1467,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 
   /// A layout or text field's float, which may be any value a host wrote: NaN reads 0, as Java's
   /// `Math.round` and `(int)` read it where the Kotlin player rounds a padding or offset, and an
-  /// infinity saturates to the largest finite float, as those casts saturate. A `positive` field
-  /// (a font size, a marquee velocity) must still be above 0.
+  /// infinity saturates to the largest finite float, as those casts saturate. A `positive`
+  /// field (a marquee velocity) must still be above 0.
   private func resolvedFloat(
     _ word: UInt32, _ field: String, values: [Int: Float], positive: Bool = false
   ) throws -> Float {
@@ -1478,6 +1480,14 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     return value
   }
 
+  /// A `widthIn` / `heightIn` maximum: NaN is no bound (-1), as the Kotlin player passes `NaN.dp`,
+  /// `Dp.Unspecified`, to `widthIn(max =)` (`RcComposePlayer.kt` `applyWidthRange`); any other
+  /// value saturates as a layout float does.
+  private func resolvedMaximum(_ word: UInt32, values: [Int: Float]) -> Float {
+    let value = NativeSwiftFloatExpression.resolve(word, values: values)
+    return value.isNaN ? -1 : nativeSwiftSaturated(value)
+  }
+
   /// A float write: the float view, and the integer view under the same id, truncated toward zero
   /// and clamped to 32 bits — `RcPlayerState.storeFloat`, as AndroidX
   /// `RemoteComposeState.updateFloat` / `overrideFloat` publish both. Integer expressions, a state
@@ -1487,7 +1497,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// written over a zero keeps the sign already there, as Kotlin's `storeFloat` keeps it; NaN is
   /// never equal to itself and is always written.
   private func storeFloat(_ id: Int, _ value: Float) {
-    let previous = floatOverrides[id] ?? floats[id] ?? 0
+    // The float view the id shows, which after an integer write with no document float is the
+    // integer's projection, as Kotlin's `setInteger` stores it in `floats`.
+    let previous = floatOverrides[id] ?? floats[id] ?? integers[id].map(Float.init) ?? 0
     floatOverrides[id] = value == previous ? previous : value
     integers[id] = nativeSwiftIntegerView(value)
   }
@@ -1751,10 +1763,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // expression that reads a measured value see it. Evaluation is pure, so repeating it is safe.
     //
     // This first pass is deliberately tolerant. An expression that reads a binding the measurement
-    // below has not produced yet resolves that reference to zero, which can divide to a non-finite
-    // result that `evaluate` rejects — correctly, but not yet. Dropping it here leaves the id
-    // unset, exactly as it was before this pass existed; the authoritative pass after the
-    // measurement evaluates it for real and throws if it is still bad.
+    // below has not produced yet resolves that reference to zero; a NaN or an infinity from that is
+    // a value like any other, but an expression that fails (a list read past its end) is dropped
+    // here, which leaves the id unset, exactly as it was before this pass existed. The
+    // authoritative pass after the measurement evaluates it for real and throws if it still fails.
     //
     // The first pass only changes what the second computes when something sits between them to
     // read it -- a component-value binding -- or when an expression reads an id that the same or a

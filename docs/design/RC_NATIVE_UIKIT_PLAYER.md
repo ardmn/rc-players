@@ -179,7 +179,8 @@ existing demand-driven `CADisplayLink` only while that moving system value is re
 
 Safety rules are part of the boundary: byte reads are checked, UTF-8 is strict, strings,
 collections, and operation counts are capped, component identifiers are unique, nesting must
-balance, dimensions and paint values must be finite, and malformed supported input fails closed.
+balance, dimensions and paint values the document writes must be finite, and malformed supported
+input fails closed. A host's value may be any float and is read as AndroidX reads it.
 `NativeSwiftCoreError` distinguishes unsupported operation families from malformed bytes, and both
 fail closed at the public player boundary.
 
@@ -455,11 +456,12 @@ The Swift core resolves those deferred values rather than declining them. Text s
 width and height, padding, corner radius, min/max constraints and row/column spacing are all kept as
 the raw wire word and resolved with `NativeSwiftFloatExpression.resolve` at snapshot time — the same
 path draw commands have always taken — so a `RemoteDensity.Host` capture renders at whatever
-`setHostDensity` supplied. The validation those fields used to get while parsing moved with them: a
-size that resolves non-positive, or a dimension that resolves non-finite, throws a typed
-`NativeSwiftCoreError` instead of reaching UIKit. The explicit refusal survives where a field
-genuinely cannot resolve later — `floatWord(_:requireLiteral: true)`, which is what a background
-written as colour channels rather than a colour id still uses.
+`setHostDensity` supplied. A value that resolves non-finite no longer fails the frame, since a host
+may write any float: a dimension reads NaN as 0 and an infinity as the largest finite float, a text
+size below 0 or NaN is the 12 pixels an Android paint keeps, and a NaN `widthIn` / `heightIn`
+maximum is no bound, the Kotlin player's `Dp.Unspecified`. The explicit refusal survives where
+a field genuinely cannot resolve later — `floatWord(_:requireLiteral: true)`, which is what a
+background written as colour channels rather than a colour id still uses.
 
 This also closed a quieter bug on the way. A Row read its spacing with `requireLiteral: false` and
 stored the reference word's raw bits into a plain `Float`, so a computed `spacedBy` laid out at

@@ -99,8 +99,9 @@ import Testing
     #expect(
       updatedDataOnlyValues.floats[99] == 24,
       "a float slot update did not survive resolution")
-    #expect(
-      !dataOnly.setFloat(.nan, forID: 99), "a non-finite float slot update was accepted")
+    // As AndroidX loads a touch position unchecked (CoreDocument.java:2076).
+    #expect(dataOnly.setFloat(.nan, forID: 99), "a non-finite float slot update was refused")
+    #expect(try dataOnly.probeValues(timeSeconds: 0).floats[99]?.isNaN == true)
   }
 
   @Test func dataMapsParticlesAndAnimationDescriptors() throws {
@@ -192,24 +193,19 @@ import Testing
       spacingSnapshot.root.children[0].spacing == 12,
       "computed row spacing resolved to \(spacingSnapshot.root.children[0].spacing)")
 
-    // The other half of moving validation to resolution time: a size that resolves to something
-    // unusable has to fail closed with a typed error rather than reach UIKit.
-    let poisonedSize = Writer()
-    poisonedSize.header(width: 100, height: 100)
-    poisonedSize.text(id: 20, "Zero")
-    poisonedSize.u8(80).int(60).float(0)
-    poisonedSize.u8(200).int(1).u8(201).int(2)
-    poisonedSize.u8(208).int(3).int(0).int(20).int(Int(Int32(bitPattern: UInt32(0xff00_0000))))
+    // A size that resolves to 0 is taken, as Android's `Paint.setTextSize(0)` takes it; the
+    // renderers draw it at their smallest size. Sizes below 0 are
+    // `NativeSwiftHostValueEdgeTests.aHostTextSizeBelowZeroIsAndroidsDefaultSize`.
+    let zeroSize = Writer()
+    zeroSize.header(width: 100, height: 100)
+    zeroSize.text(id: 20, "Zero")
+    zeroSize.u8(80).int(60).float(0)
+    zeroSize.u8(200).int(1).u8(201).int(2)
+    zeroSize.u8(208).int(3).int(0).int(20).int(Int(Int32(bitPattern: UInt32(0xff00_0000))))
       .int(Writer.nanReference(60)).int(0).float(400).int(-1).int(1).int(1).int(1)
-    poisonedSize.u8(214).u8(214).u8(214)
-    do {
-      _ = try NativeSwiftDocumentSession.open(data: poisonedSize.data).snapshot()
-      Issue.record("a text size resolving to zero was accepted")
-    } catch let error as NativeSwiftCoreError {
-      #expect(
-        error.description.contains("text size"),
-        "expected the failure to name the text size, got \(error.description)")
-    }
+    zeroSize.u8(214).u8(214).u8(214)
+    let zeroSnapshot = try NativeSwiftDocumentSession.open(data: zeroSize.data).snapshot()
+    #expect(zeroSnapshot.root.firstTextSnapshot?.size == 0)
 
     // A component-value binding on a structural content node inside a fill canvas inside a fixed
     // box. The pre-layout estimate used to resolve the fill to the whole document, so an icon's

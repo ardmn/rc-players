@@ -31,6 +31,11 @@ import Testing
     (-7.5, -7), (7.5, 7),
   ]
 
+  /// Non-finite writes and their integer view, Java's `(int)`: NaN reads 0, an infinity saturates.
+  static let nonFiniteCases: [(Float, Int)] = [
+    (.nan, 0), (.infinity, Int(Int32.max)), (-.infinity, Int(Int32.min)),
+  ]
+
   /// Float 51 (named "page"), int 52 named "count", integer expression 53 = view of 51.
   static func valuesDocument(clickActions: ((Writer) -> Void)? = nil) -> Data {
     let document = Writer()
@@ -90,17 +95,18 @@ import Testing
     }
   }
 
-  /// `setFloat(_:forID:)` is not a host API: the player writes a gesture's own value through it
-  /// (touch position, scroll offset), which is always finite, and it keeps refusing a non-finite
-  /// one, leaving both views untouched.
-  @Test func aNonFiniteGestureWriteByIDLeavesBothViews() throws {
+  /// `setFloat(_:forID:)`, the gesture path, writes any float with both views, as AndroidX's
+  /// `touchDrag` loads a touch position unchecked (CoreDocument.java:2076) and as a host's write by
+  /// name is written: one rule for every float write.
+  @Test func aNonFiniteGestureWriteByIDReachesBothViews() throws {
     let session = try NativeSwiftDocumentSession.open(data: Self.valuesDocument())
-    #expect(session.setFloat(-2.75, forID: 51))
-    for value in [Float.nan, .infinity, -.infinity] {
-      #expect(!session.setFloat(value, forID: 51), "\(value) accepted")
+    for (value, expected) in Self.nonFiniteCases {
+      #expect(session.setFloat(-2.75, forID: 51))
+      #expect(session.setFloat(value, forID: 51), "\(value) refused")
       let values = try session.probeValues(timeSeconds: 0)
-      #expect(values.integers[51] == -2 && values.integers[53] == -2, "\(value)")
-      #expect(values.floats[51] == -2.75, "\(value)")
+      #expect(values.integers[51] == expected && values.integers[53] == expected, "\(value)")
+      let stored = values.floats[51]
+      #expect(value.isNaN ? stored?.isNaN == true : stored == value, "\(value)")
     }
   }
 
@@ -170,6 +176,26 @@ import Testing
     }
   }
 
+  /// A `ValueFloatChange` whose value reads a host's non-finite float writes it, as AndroidX's
+  /// `overrideFloat` does (ValueFloatChangeActionOperation.java:85) and Kotlin's
+  /// `RcValueFloatChangeAction` resolves and writes it.
+  @Test func clickFloatValueActionWritesNonFiniteValues() throws {
+    let data = Self.valuesDocument { document in
+      document.u8(Op.valueFloatChangeAction).int(54).int(Writer.nanReference(51))
+    }
+    for (value, expected) in Self.nonFiniteCases {
+      let session = try NativeSwiftDocumentSession.open(data: data)
+      #expect(session.setFloat(value, for: "page"))
+      _ = try session.click(componentID: 3, timeSeconds: 0)
+      let values = try session.probeValues(timeSeconds: 0)
+      let stored = values.floats[54]
+      #expect(
+        value.isNaN ? stored?.isNaN == true : stored == value,
+        "action \(value): \(String(describing: stored))")
+      #expect(values.integers[54] == expected, "action \(value)")
+    }
+  }
+
   /// A float action onto the *integer* variable: Kotlin `overrideFloat` -> integers = trunc.
   @Test func clickFloatActionOntoAnIntegerVariable() throws {
     let data = Self.valuesDocument { document in
@@ -209,7 +235,7 @@ import Testing
 
   // MARK: - Event data
 
-  @Test func eventDataEdgeValuesAndRefusedNonFinite() throws {
+  @Test func eventDataEdgeValuesAndNonFiniteValues() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
     document.u8(Op.dataFloat).int(40).float(1)
@@ -225,12 +251,15 @@ import Testing
       let values = try session.probeValues(timeSeconds: 0)
       #expect(values.integers[40] == expected && values.integers[41] == expected, "event \(value)")
     }
-    _ = try session.dispatchEvent(type: 5, metadata: 7, data: [-2.5], timeSeconds: 0)
-    for value in [Float.nan, .infinity, -.infinity] {
+    // AndroidX's `EventHandlerModifierOperation.onEvent` writes each slot with `overrideFloat`,
+    // unchecked (EventHandlerModifierOperation.java:112).
+    for (value, expected) in Self.nonFiniteCases {
+      _ = try session.dispatchEvent(type: 5, metadata: 7, data: [-2.5], timeSeconds: 0)
       _ = try session.dispatchEvent(type: 5, metadata: 7, data: [value], timeSeconds: 0)
       let values = try session.probeValues(timeSeconds: 0)
-      #expect(
-        values.integers[40] == -2 && values.floats[40] == -2.5, "event \(value) changed state")
+      #expect(values.integers[40] == expected && values.integers[41] == expected, "event \(value)")
+      let stored = values.floats[40]
+      #expect(value.isNaN ? stored?.isNaN == true : stored == value, "event \(value)")
     }
   }
 

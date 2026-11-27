@@ -142,10 +142,6 @@
     static let size = CGSize(width: 100, height: 60)
     /// The fixtures' canvas component.
     static let canvasID = 3
-    /// The fixture the native Swift player cannot open at all: a background colour channel read
-    /// from a float is not decoded (opcode 55), a gap of the core that predates host values.
-    nonisolated static let notDecoded: Set<String> = ["background-alpha"]
-
     nonisolated static var directory: URL {
       URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("RcNativePlayerCoreTests/Fixtures/host-value-edges")
@@ -155,7 +151,7 @@
       let index = try String(
         contentsOf: directory.appendingPathComponent("index.tsv"), encoding: .utf8)
       let rows = index.split(separator: "\n").map { $0.split(separator: "\t").map(String.init) }
-      return rows.filter { $0.count == 2 && $0[1] == kind && !notDecoded.contains($0[0]) }
+      return rows.filter { $0.count == 2 && $0[1] == kind }
         .map { $0[0] }
     }
 

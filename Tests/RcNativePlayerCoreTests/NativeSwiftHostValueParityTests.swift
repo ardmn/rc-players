@@ -123,6 +123,40 @@ import Testing
     #expect(mismatches.isEmpty, "\(mismatches.count) mismatches:\n\(mismatches.prefix(40).joined(separator: "\n"))")
   }
 
+  /// `StringUtils.floatToString` rounds the scaled fraction with Java's `Math.round(float)`
+  /// (StringUtils.java:91), which is exact: 0.049999997 to one place scales to 0.49999997, which
+  /// rounds to 0, where `floor(x + 0.5)` taken in Float reads 1.
+  @Test func textFromFloatRoundsTheFractionAsJavaMathRoundDoes() {
+    let text = NativeSwiftTextFormatter.format(
+      0.049_999_997, digitsBefore: 2, digitsAfter: 1, flags: 0)
+    #expect(text == " 0.0", "'\(text)'")
+  }
+
+  /// AndroidX's `A_MAX` and `A_MIN` fold a list with `Math.max` and `Math.min`
+  /// (AnimatedFloatExpression.java:1009, :1025): a NaN element anywhere makes the result NaN, and
+  /// 0 is above -0. The fixture's operands are not lists, so it does not reach these.
+  @Test func arrayMaxAndMinFoldAsJavaMathDoes() throws {
+    let arrayID = NativeSwiftIDRegion.array | 5
+    let cases: [([Float], max: Float, min: Float)] = [
+      ([1, .nan, 2], .nan, .nan), ([.nan, 1], .nan, .nan), ([1, 2, .nan], .nan, .nan),
+      ([-0.0, 0], 0, -0.0), ([0, -0.0], 0, -0.0),
+      ([-.infinity, 3, .infinity], .infinity, -.infinity), ([], 0, 0),
+    ]
+    for (list, expectedMax, expectedMin) in cases {
+      for (operation, expected) in [
+        (NativeSwiftFloatOperator.arrayMax, expectedMax),
+        (NativeSwiftFloatOperator.arrayMin, expectedMin),
+      ] {
+        let actual = try NativeSwiftFloatExpression.evaluate(
+          [0xff80_0000 | UInt32(arrayID), NativeSwiftFloatExpression.operatorWord(operation)],
+          values: [:], arrays: [arrayID: list], opcode: 0, offset: 0)
+        #expect(
+          HostValueParityFixture.same(actual, expected),
+          "operator \(operation) over \(list): \(actual), AndroidX \(expected)")
+      }
+    }
+  }
+
   /// The merge limit the fixture carries is the one the session applies.
   @Test func theMergeLimitIsAndroidXs() throws {
     let fixture = try HostValueParityFixture.load()
