@@ -52,9 +52,9 @@ enum ControllerNamedValue: Equatable {
   /// `==` says the opposite of both. The backend's skip of an equal write then matches Kotlin's.
   static func == (lhs: Self, rhs: Self) -> Bool {
     switch (lhs, rhs) {
-    case (.float(let lhs), .float(let rhs)): sameKotlinFloat(lhs, rhs)
+    case (.float(let lhs), .float(let rhs)): NativeSwiftKotlinFloat.equals(lhs, rhs)
     case (.floatArray(let lhs), .floatArray(let rhs)):
-      lhs.count == rhs.count && zip(lhs, rhs).allSatisfy(sameKotlinFloat)
+      lhs.count == rhs.count && zip(lhs, rhs).allSatisfy(NativeSwiftKotlinFloat.equals)
     case (.text(let lhs), .text(let rhs)): lhs == rhs
     case (.color(let lhs), .color(let rhs)): lhs == rhs
     case (.integer(let lhs), .integer(let rhs)): lhs == rhs
@@ -64,11 +64,6 @@ enum ControllerNamedValue: Equatable {
       (.long, _):
       false
     }
-  }
-
-  /// Kotlin's `Float.equals`: the same bits, with every NaN one value (`floatToIntBits`).
-  private static func sameKotlinFloat(_ lhs: Float, _ rhs: Float) -> Bool {
-    lhs.bitPattern == rhs.bitPattern || (lhs.isNaN && rhs.isNaN)
   }
 }
 

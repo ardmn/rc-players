@@ -1975,20 +1975,15 @@
     /// write that failed the session and was handed to the next one.
     func isSameValue(as other: Self) -> Bool {
       switch (self, other) {
-      case (.float(let lhs), .float(let rhs)): return Self.sameBits(lhs, rhs)
+      case (.float(let lhs), .float(let rhs)): return NativeSwiftKotlinFloat.equals(lhs, rhs)
       case (.integer(let lhs, let lhsFloat), .integer(let rhs, let rhsFloat)):
         guard lhs == rhs else { return false }
         guard let lhsFloat, let rhsFloat else { return lhsFloat == nil && rhsFloat == nil }
-        return Self.sameBits(lhsFloat, rhsFloat)
+        return NativeSwiftKotlinFloat.equals(lhsFloat, rhsFloat)
       case (.floatArray(let lhs), .floatArray(let rhs)):
-        return lhs.count == rhs.count && zip(lhs, rhs).allSatisfy(Self.sameBits)
+        return lhs.count == rhs.count && zip(lhs, rhs).allSatisfy(NativeSwiftKotlinFloat.equals)
       default: return self == other
       }
-    }
-
-    /// `floatToIntBits` equality: every NaN is the one canonical NaN.
-    private static func sameBits(_ lhs: Float, _ rhs: Float) -> Bool {
-      lhs.isNaN ? rhs.isNaN : !rhs.isNaN && lhs.bitPattern == rhs.bitPattern
     }
   }
 #endif

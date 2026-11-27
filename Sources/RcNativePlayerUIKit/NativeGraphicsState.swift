@@ -462,16 +462,21 @@ enum NativeGradientRenderer {
 ///   (`SkRegion::setPath` reads a non-finite path as empty); a difference clip of one is ignored.
 /// - Any other command with non-finite geometry or paint draws nothing (`isDrawable`).
 ///
-/// Saves and restores are always kept. A `DrawToBitmap` redirect draws into another canvas, whose
-/// matrix the commands before it did not touch (`AndroidPaintContext.drawToBitmap` swaps
-/// `mCanvas`), so it ends what they suppressed.
+/// Saves and restores are always kept. A `DrawToBitmap` redirect draws into another canvas
+/// (`AndroidPaintContext.drawToBitmap` swaps `mCanvas`): the bitmap's own, which it keeps for the
+/// next redirect to that bitmap (`mCCache`), or the main canvas (`mMainCanvas`) for bitmap 0. Each
+/// canvas has its own matrix and save stack, so a redirect ends what the commands before it
+/// suppressed, and drawing that returns to a canvas is suppressed again as that canvas left it.
 enum NativeCanvasCommands {
   static func drawable(
     _ commands: [NativeSwiftDrawCommandSnapshot],
     limits: RemoteComposeNativeExecutionLimits = .default
   ) -> [NativeSwiftDrawCommandSnapshot] {
-    // Whether each open save scope draws nothing, its own node's scope at the bottom.
+    // Whether each open save scope of the canvas being drawn draws nothing, its own node's scope at
+    // the bottom; the other canvases' stacks, by bitmap id, while drawing is redirected elsewhere.
     var suppressed = [false]
+    var canvas = NativeSwiftDrawToBitmapID.mainCanvas
+    var otherCanvases: [Int: [Bool]] = [:]
     var kept: [NativeSwiftDrawCommandSnapshot] = []
     kept.reserveCapacity(commands.count)
     for command in commands {
@@ -483,7 +488,12 @@ enum NativeCanvasCommands {
         if suppressed.count > 1 { suppressed.removeLast() }
         kept.append(command)
       case NativeSwiftDrawKind.drawToBitmap:
-        suppressed = [false]
+        let target = command.offscreenTarget?.bitmapID ?? NativeSwiftDrawToBitmapID.mainCanvas
+        if target != canvas {
+          otherCanvases[canvas] = suppressed
+          suppressed = otherCanvases.removeValue(forKey: target) ?? [false]
+          canvas = target
+        }
         kept.append(command)
       default:
         guard !suppressed[suppressed.count - 1] else { continue }

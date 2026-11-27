@@ -65,11 +65,12 @@ import Testing
   /// Android's `Paint.setTextSize` ignores a size below 0 or NaN (hwui `jni/Paint.cpp:1001`,
   /// `if (textSize >= 0)`), and AndroidX's `replacePaint` has just reset the paint
   /// (`AndroidPaintContext.java:533`), so such text draws at Skia's default of 12 pixels
-  /// (`SkPaintDefaults.h:20`). An infinity saturates as any layout float does.
+  /// (`SkPaintDefaults.h:20`). A size past 1e6, an infinity included, is 1e6, as the Kotlin
+  /// player's `rcTextSizePixels` caps it (`RC_MAX_TEXT_SIZE_PX`).
   @Test func aHostTextSizeBelowZeroIsAndroidsDefaultSize() throws {
     let cases: [(Float, Float)] = [
-      (.nan, 12), (-.infinity, 12), (-1e30, 12), (-1, 12), (0, 0), (1e30, 1e30),
-      (.infinity, .greatestFiniteMagnitude), (18, 18),
+      (.nan, 12), (-.infinity, 12), (-1e30, 12), (-1, 12), (0, 0), (1e30, 1e6),
+      (.infinity, 1e6), (1e6, 1e6), (18, 18),
     ]
     for (value, expected) in cases {
       let session = try NativeSwiftDocumentSession.open(data: Self.hostTextSizeDocument())
@@ -100,11 +101,8 @@ import Testing
   /// refuse a NaN size or weight: `NativeSwiftTextSnapshot.init` owns it.
   @Test func aTextSnapshotNormalisesItsSizeAndWeight() {
     let cases: [(size: Float, weight: Float, expectedSize: Float, expectedWeight: Float)] = [
-      (.nan, .nan, 12, 400), (-1, -.infinity, 12, 1),
-      (
-        .infinity, .infinity,
-        .greatestFiniteMagnitude, 1_000
-      ), (18, 700, 18, 700),
+      (.nan, .nan, 12, 400), (-1, -.infinity, 12, 1), (.infinity, .infinity, 1e6, 1_000),
+      (18, 700, 18, 700),
     ]
     for entry in cases {
       let text = NativeSwiftTextSnapshot(
@@ -113,6 +111,18 @@ import Testing
       #expect(text.size == entry.expectedSize, "\(entry)")
       #expect(text.weight == entry.expectedWeight, "\(entry)")
       #expect(text.sizeIsDensityTyped == (entry.size >= 0), "\(entry): Android's 12 is pixels")
+    }
+  }
+
+  /// A canvas paint's text size, as the AppKit player draws it, follows the same rule with the
+  /// paint's default for a size Android ignores: the Kotlin player's `rcTextSizePixels`.
+  @Test func aPaintTextSizeTakesAndroidsRule() {
+    let unset = NativeSwiftTextSnapshot.paintDefaultSize
+    let cases: [(Float, Float)] = [
+      (.nan, 16), (-1, 16), (-.infinity, 16), (0, 0), (18, 18), (1e30, 1e6), (.infinity, 1e6),
+    ]
+    for (size, expected) in cases {
+      #expect(NativeSwiftTextSnapshot.androidSize(size, unset: unset) == expected, "\(size)")
     }
   }
 
@@ -200,13 +210,14 @@ import Testing
     #expect(!(try session.snapshot(timeSeconds: time)).needsContinuousFrames)
   }
 
-  /// The Kotlin player runs AndroidX's loop, `for (i = from; i < until; i += step)`
-  /// (`LoopOperation.java:125`), and stops a loop that would not end after 10 000 passes
-  /// (`RcPlayerState.forEachLoopValue`): `RcPlayerStateTest.loopOperationHonorsTheIterationCap`'s
-  /// cases. This player unrolls the loop when it opens the document, with the same cap. It reads
-  /// the bounds then, from literals and document constants, which cannot be NaN, so Kotlin's NaN
-  /// cases have no counterpart here.
-  @Test func aLoopStopsAtKotlinsCap() throws {
+  /// AndroidX runs `for (i = from; i < until; i += step)` (`LoopOperation.java:125`) and counts
+  /// each pass and each operation of its body, failing the frame past 20 000 in one paint
+  /// (`RemoteContext.incrementOpCount`); here a loop stops at that budget instead
+  /// (`maximumLoopOperationsPerFrame`), so a one-operation body runs 10 000 passes:
+  /// `RcPlayerStateTest.loopOperationHonorsTheIterationCap`'s cases. This player unrolls the loop
+  /// when it opens the document, reading the bounds from literals and document constants, which
+  /// cannot be NaN, so Kotlin's NaN cases have no counterpart here.
+  @Test func aLoopStopsAtTheFramesOperationBudget() throws {
     let cases: [(from: Float, until: Float, step: Float, passes: Int)] = [
       (0, 1, 0.000_01, 10_000), (0, .infinity, 1, 10_000), (0, 1, 0, 10_000),
       (1e9, 2e9, 1, 10_000), (-.infinity, 0, 1, 10_000), (.infinity, .infinity, 1, 0),
@@ -225,6 +236,40 @@ import Testing
         .commands
       #expect(commands.count == passes + 1, "\(label): \(commands.count - 1) passes")
     }
+  }
+
+  /// The budget is the frame's, every loop's passes and body operations together, charged in the
+  /// order AndroidX runs them: a pass and each operation directly in its body.
+  @Test func everyLoopInTheFrameSharesOneOperationBudget() throws {
+    typealias Op = NativeSwiftWireOpcode
+    func rects(_ count: Int, _ document: Writer) {
+      for _ in 0..<count { document.u8(Op.drawRect).float(0).float(0).float(1).float(1) }
+    }
+    func drawn(_ build: (Writer) -> Void) throws -> Int {
+      let document = Writer()
+      document.header(width: 100, height: 100)
+      build(document)
+      return try NativeSwiftDocumentSession.open(data: document.data).snapshot().root.commands
+        .count
+    }
+    let budget = NativeSwiftDocumentDecoder.maximumLoopOperationsPerFrame
+    #expect(budget == 20_000)
+    // Three operations a pass: 4 each.
+    let threeEach = try drawn { document in
+      document.u8(Op.loopStart).int(0).float(0).float(1).float(.infinity)
+      rects(3, document)
+      document.u8(Op.containerEnd)
+    }
+    #expect(threeEach == budget / 4 * 3)
+    // Two loops of 15 000 passes: the first takes the whole budget.
+    let twoLoops = try drawn { document in
+      for _ in 0..<2 {
+        document.u8(Op.loopStart).int(0).float(0).float(1).float(15_000)
+        rects(1, document)
+        document.u8(Op.containerEnd)
+      }
+    }
+    #expect(twoLoops == budget / 2)
   }
 
   /// After the loop its index holds the last value it took, as the Kotlin player's `setFloat` of

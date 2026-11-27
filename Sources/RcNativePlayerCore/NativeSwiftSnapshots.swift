@@ -359,6 +359,12 @@ public struct NativeSwiftDocumentSnapshot: Sendable {
   let conformanceShaderUniformNames: [Int: Set<String>]
   let conformanceConditionalTraces: [NativeSwiftConditionalTraceSnapshot]
 
+  /// The strings a host wrote that the frame holds: each text variable's value while the host's
+  /// write stands. A host counts each against its frame's text budget once, however many texts,
+  /// descriptions or events show it, as AndroidX lays a host's string out wherever the document
+  /// shows it (`AndroidRemoteContext.setNamedStringOverride`).
+  public let hostStrings: Set<String>
+
   /// The wake a host should schedule: the document's own request, or the once-a-second refresh a
   /// document reading a discrete wall-clock field needs, whichever comes first.
   public var hostWakeAfter: TimeInterval? {
@@ -1035,6 +1041,13 @@ public struct NativeSwiftTextSnapshot: Sendable {
   /// The size text takes when its own is below 0 or NaN: a reset Android paint's, Skia's
   /// `SkPaintDefaults_TextSize` (12 pixels), which `Paint.setTextSize` then leaves in place.
   static let androidDefaultSize: Float = 12
+  /// The largest text size the players lay out: the Kotlin player's `RC_MAX_TEXT_SIZE_PX`. A glyph
+  /// a million pixels tall is past any screen, and far inside the range text metrics stay finite
+  /// in.
+  public static let maximumSize: Float = 1_000_000
+  /// The text size a canvas paint holds until the document sets one: the Kotlin player's
+  /// `RcPaintState.textSize`.
+  public static let paintDefaultSize: Float = 16
   /// The weight a NaN weight, or a weight variable with no value yet, takes: `FontWeight.Normal`.
   static let normalWeight: Float = 400
   public let style: Int
@@ -1065,10 +1078,10 @@ public struct NativeSwiftTextSnapshot: Sendable {
     // Any float a host writes reaches a size. Android's `Paint.setTextSize` ignores one below 0
     // or NaN (hwui `jni/Paint.cpp:1001`, `if (textSize >= 0)`) on a paint AndroidX's
     // `replacePaint` has just reset (`AndroidPaintContext.java:533`), so such text draws at
-    // Skia's default size in pixels (`SkPaintDefaults.h:20`); an infinity saturates. Every host
-    // renders the size it is given, so this init is the one owner of the rule.
+    // Skia's default size in pixels (`SkPaintDefaults.h:20`). Every host renders the size it is
+    // given, so this init is the one owner of the rule.
     let takesSize = size >= 0
-    self.size = takesSize ? nativeSwiftSaturated(size) : Self.androidDefaultSize
+    self.size = Self.androidSize(size, unset: Self.androidDefaultSize)
     self.sizeIsDensityTyped = takesSize && sizeIsDensityTyped
     self.style = style
     self.weight = weight.isNaN ? Self.normalWeight : min(max(weight, 1), 1_000)
@@ -1079,6 +1092,14 @@ public struct NativeSwiftTextSnapshot: Sendable {
     self.maximumLines = maximumLines
     self.autosize = autosize
     self.fontSettings = fontSettings
+  }
+
+  /// A text size as Android's `Paint.setTextSize` takes it, as the Kotlin player's
+  /// `rcTextSizePixels` does: `unset`, the size the paint already holds, for one below 0 or NaN,
+  /// and at most `maximumSize`, an infinity included. The Kotlin player caps the size in pixels,
+  /// after the density; this is in document units, before it.
+  public static func androidSize(_ size: Float, unset: Float) -> Float {
+    size >= 0 ? min(size, maximumSize) : unset
   }
 
   /// Whether a `CoreText` / `TextLayout` font-size word is dp-typed, as remote-core 1.0.0-alpha22's

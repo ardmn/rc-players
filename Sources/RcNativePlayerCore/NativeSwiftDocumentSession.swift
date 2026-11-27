@@ -49,6 +49,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// of the document's own actions — as opposed to ones only the document's computations fill (a
   /// text operation's output, an integer expression). A float write is in `floatOverrides`.
   private var writtenIntegerAndTextIDs: Set<Int> = []
+  /// The text slots holding a host's string: written by name or returned by a custom component,
+  /// and not since overwritten by a document action or cleared. Their values are the snapshot's
+  /// `hostStrings`.
+  private var hostTextIDs: Set<Int> = []
   private var floatAnimationRuntimes: [Int: NativeSwiftFloatAnimationRuntime] = [:]
   private var particleSystems: [Int: NativeSwiftParticleSystemRuntime] = [:]
   /// AndroidX's per-impulse "first frame in the window" bit, and each impulse's phase at the frame
@@ -206,6 +210,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     documentClaimsEpochSecond = other.documentClaimsEpochSecond
     hostSetColors = other.hostSetColors
     writtenIntegerAndTextIDs = other.writtenIntegerAndTextIDs
+    hostTextIDs = other.hostTextIDs
     hostDensity = other.hostDensity
     hostFontScale = other.hostFontScale
     floatAnimationRuntimes = other.floatAnimationRuntimes.mapValues { $0.detachedCopy() }
@@ -418,7 +423,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       conformanceAnimationSpecOrder: document.animationSpecOrder,
       conformancePathIDs: document.pathIDs, conformancePathTweenIDs: document.pathTweenIDs,
       conformanceShaderUniformNames: document.shaderUniformNames,
-      conformanceConditionalTraces: document.conditionalTraces)
+      conformanceConditionalTraces: document.conditionalTraces,
+      hostStrings: Set(hostTextIDs.compactMap { texts[$0] }))
     if canReuseStaticSnapshot(timeSeconds: timeSeconds, wallClock: wallClock) {
       staticSnapshotCache = StaticSnapshotCache(
         measuredComponents: measuredComponents, snapshot: snapshot)
@@ -665,6 +671,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         if let text = texts[textID] {
           texts[targetID] = text
           writtenIntegerAndTextIDs.insert(targetID)
+          // The document's write now: a host's string it copied is still named by its own slot.
+          hostTextIDs.remove(targetID)
         }
       case .hostAction(let id):
         events.append(.action(id: id))
@@ -884,6 +892,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case .text(let value):
       texts[id] = value
       writtenIntegerAndTextIDs.insert(id)
+      hostTextIDs.insert(id)
     case .color(let argb):
       colors[id] = argb
       hostSetColors.insert(id)
@@ -978,6 +987,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case NativeSwiftNamedVariableType.string:
       texts[id] = document.texts[id]
       writtenIntegerAndTextIDs.remove(id)
+      hostTextIDs.remove(id)
     case NativeSwiftNamedVariableType.color:
       // No longer the host's, so the document's dark palette applies to it again.
       colors[id] = document.colors[id]
@@ -1012,6 +1022,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     else { return false }
     texts[property.valueBits] = value
     writtenIntegerAndTextIDs.insert(property.valueBits)
+    hostTextIDs.insert(property.valueBits)
     staticSnapshotCache = nil
     return true
   }

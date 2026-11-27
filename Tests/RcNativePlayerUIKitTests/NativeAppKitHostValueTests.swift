@@ -73,6 +73,38 @@
       #expect(width.isFinite && width >= 0 && width <= 100, "\(fraction): \(box)")
     }
 
+    /// A `DrawBitmapScaled` whose destination a host's value made non-finite or past `Int`'s
+    /// range draws nothing, as Skia rejects a non-finite rectangle (`SkCanvas::quickReject`), and
+    /// one merely huge scales in floating point: neither may trap converting to `Int`, and 4e18
+    /// wide by 2 high fits an `Int` but overflows the scaling's products.
+    @Test(arguments: values + [4e18])
+    func aNonFiniteOrHugeBitmapDestinationDoesNotTrap(_ value: Float) throws {
+      typealias Op = NativeSwiftWireOpcode
+      let pixels = try #require(
+        NSBitmapImageRep(
+          bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 4, bitsPerSample: 8,
+          samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+          bytesPerRow: 0, bitsPerPixel: 0))
+      let png = try #require(pixels.representation(using: .png, properties: [:]))
+      for scaleType in NativeSwiftImageScaleType.none...NativeSwiftImageScaleType.fixed {
+        for height in [value, 2] {
+          let wire = NativeTestWire()
+          wire.header(width: 100, height: 100)
+          // Bitmap 90, an 8×4 PNG: id, type and width, encoding and height, then its bytes.
+          wire.u8(Op.dataBitmap).int(90).int(NativeSwiftBitmapType.pngARGB8888 << 16 | 8)
+          wire.int(NativeSwiftBitmapEncoding.inline << 16 | 4).int(png.count)
+          for byte in png { wire.u8(Int(byte)) }
+          wire.u8(Op.layoutRoot).int(1).u8(Op.layoutCanvas).int(2).int(-1)
+          // Image, source, destination, scale type, scale factor, content description.
+          wire.u8(Op.drawBitmapScaled).int(90).float(0).float(0).float(8).float(4)
+            .float(0).float(0).float(value).float(height).int(scaleType).float(value).int(0)
+          wire.u8(Op.containerEnd).u8(Op.containerEnd)
+          let frame = try NativeAppKitWindowController.renderFrame(data: wire.data)
+          #expect(!frame.png.isEmpty, "\(value)×\(height), scale type \(scaleType)")
+        }
+      }
+    }
+
     /// The comparison batch writes a frame's tree, values and records with `JSONSerialization`,
     /// which raises on a non-finite number. A float the document computes as NaN or an infinity
     /// (`0/0`, `±1/0`, as Java's float division gives them) is reported as Java's

@@ -12,10 +12,12 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   public var maximumDrawCommandCount: Int
   public var maximumPathElementCount: Int
   /// The UTF-8 bytes of text one frame may lay out; each byte also counts one unit of
-  /// `maximumFrameWork`. A string counts at most `longestDocumentTextBytes`, the longest a
-  /// document can make by itself, so the limit bounds what a document's own content costs — a
-  /// document that repeats its text to stall the frame is refused — while a longer string, which
-  /// only a host can write, renders whatever its length, as AndroidX takes it
+  /// `maximumFrameWork`. The limit bounds what a document's own text costs: each place a document
+  /// shows its own string counts it in full, so a document that repeats its text to stall the
+  /// frame is refused. A host's string — one `NativeSwiftDocumentSnapshot.hostStrings` names, or
+  /// one longer than `longestDocumentTextBytes`, which only a host can write — counts once per
+  /// frame however many texts show it, and at most `longestDocumentTextBytes`, so it renders
+  /// whatever its length and wherever it is shown, as AndroidX takes it
   /// (`AndroidRemoteContext.setNamedStringOverride`). The default, 128 KiB, is well over what a
   /// document shows by itself and holds two full-length strings.
   public var maximumTextBytes: Int
@@ -56,7 +58,7 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   /// most 16K UTF-16 units (AndroidX `TextMerge.MAX_TEXT_LENGTH`, the core's
   /// `maximumTextMergeLength`), each at most 3 bytes, and a string on the wire at most 4000 bytes
   /// (`Limits.MAX_STRING_SIZE`). Any longer string is a host's, and counts against
-  /// `maximumTextBytes` as this many bytes.
+  /// `maximumTextBytes` as this many bytes, once per frame.
   static let longestDocumentTextBytes = 3 * 16 * 1024
 
   /// A resolved layout float (a padding, spacing, offset, constraint or z-index) as UIKit can take
@@ -141,7 +143,10 @@ public enum RemoteComposeNativeLimitError: Error, Equatable, LocalizedError, Sen
   case canvasTooLarge(actual: Double, maximum: Double)
   case nonFiniteValue(componentID: Int, field: String)
   case coordinateTooLarge(componentID: Int, field: String, actual: Double, maximum: Double)
+  /// No player throws it any more: every resolved width and height renders. Kept because the
+  /// enum is public API.
   case invalidDimensionValue(componentID: Int, field: String, actual: Double)
+  /// No player throws it any more. Kept because the enum is public API.
   case invalidGradientStop(componentID: Int, actual: Double)
   case frameWorkExceeded(actual: Int, maximum: Int)
 
@@ -184,6 +189,14 @@ struct NativeFrameBudget: Equatable, Sendable {
   private(set) var pathElements = 0
   private(set) var textBytes = 0
   private(set) var work = 0
+  /// The frame's host strings (`NativeSwiftDocumentSnapshot.hostStrings`), and those of them, or
+  /// of the strings longer than a document can make, already counted.
+  let hostStrings: Set<String>
+  private var countedHostStrings: Set<String> = []
+
+  init(hostStrings: Set<String> = []) {
+    self.hostStrings = hostStrings
+  }
 
   static func validate(_ limits: RemoteComposeNativeExecutionLimits) throws {
     guard
@@ -239,8 +252,18 @@ struct NativeFrameBudget: Equatable, Sendable {
   mutating func recordStrings(
     _ strings: [String?], limits: RemoteComposeNativeExecutionLimits
   ) throws {
-    let addedBytes = strings.compactMap { $0 }.reduce(0) {
-      $0 + min($1.utf8.count, RemoteComposeNativeExecutionLimits.longestDocumentTextBytes)
+    let longest = RemoteComposeNativeExecutionLimits.longestDocumentTextBytes
+    var addedBytes = 0
+    for string in strings.compactMap({ $0 }) {
+      let bytes = string.utf8.count
+      // A host's string — one the snapshot names, or one longer than a document can make — counts
+      // once per frame, at most `longest`: AndroidX lays it out wherever the document shows it.
+      // Membership hashes the string, O(its length), once per place it is shown.
+      if bytes > longest || hostStrings.contains(string) {
+        if countedHostStrings.insert(string).inserted { addedBytes += min(bytes, longest) }
+      } else {
+        addedBytes += bytes
+      }
     }
     textBytes += addedBytes
     work += addedBytes
@@ -281,21 +304,6 @@ struct NativeFrameBudget: Equatable, Sendable {
           componentID: componentID, field: field, actual: value,
           maximum: limits.maximumCoordinateMagnitude)
       }
-    }
-  }
-
-  func validateFinite(_ values: [Double], componentID: Int, field: String) throws {
-    for value in values where !value.isFinite {
-      throw RemoteComposeNativeLimitError.nonFiniteValue(
-        componentID: componentID, field: field)
-    }
-  }
-
-  func validateGradientStops(_ values: [Double], componentID: Int) throws {
-    try validateFinite(values, componentID: componentID, field: "gradient stop")
-    for value in values where !(0...1).contains(value) {
-      throw RemoteComposeNativeLimitError.invalidGradientStop(
-        componentID: componentID, actual: value)
     }
   }
 
