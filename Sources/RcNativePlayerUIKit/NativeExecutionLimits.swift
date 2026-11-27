@@ -143,7 +143,10 @@ public enum RemoteComposeNativeLimitError: Error, Equatable, LocalizedError, Sen
   case canvasTooLarge(actual: Double, maximum: Double)
   case nonFiniteValue(componentID: Int, field: String)
   case coordinateTooLarge(componentID: Int, field: String, actual: Double, maximum: Double)
+  /// No player throws it any more: every resolved width and height renders. Kept because the
+  /// enum is public API.
   case invalidDimensionValue(componentID: Int, field: String, actual: Double)
+  /// No player throws it any more. Kept because the enum is public API.
   case invalidGradientStop(componentID: Int, actual: Double)
   case frameWorkExceeded(actual: Int, maximum: Int)
 
@@ -301,21 +304,6 @@ struct NativeFrameBudget: Equatable, Sendable {
           componentID: componentID, field: field, actual: value,
           maximum: limits.maximumCoordinateMagnitude)
       }
-    }
-  }
-
-  func validateFinite(_ values: [Double], componentID: Int, field: String) throws {
-    for value in values where !value.isFinite {
-      throw RemoteComposeNativeLimitError.nonFiniteValue(
-        componentID: componentID, field: field)
-    }
-  }
-
-  func validateGradientStops(_ values: [Double], componentID: Int) throws {
-    try validateFinite(values, componentID: componentID, field: "gradient stop")
-    for value in values where !(0...1).contains(value) {
-      throw RemoteComposeNativeLimitError.invalidGradientStop(
-        componentID: componentID, actual: value)
     }
   }
 

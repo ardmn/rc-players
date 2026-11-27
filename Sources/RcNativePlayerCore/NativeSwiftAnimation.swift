@@ -377,9 +377,11 @@ final class NativeSwiftFloatAnimationRuntime {
   }
 
   /// Whether the spring's target or state is not a finite number: a host's NaN or infinity as the
-  /// target, or a state that overflowed integrating towards one. AndroidX's `SpringStopEngine` and
-  /// the Kotlin `RcSpringAnimation` never report such a spring stopped, so it repaints forever;
-  /// here it is final, at its target, and requests no frames.
+  /// target, or a state that overflowed integrating towards one. AndroidX's
+  /// `SpringStopEngine.isStopped` (SpringStopEngine.java:207) is then false on every frame, since a
+  /// NaN or infinite energy never compares at or under the stop threshold, so its player repaints
+  /// for ever. Here such a spring is stopped: `evaluate` returns its target, whatever that is, and
+  /// `isAnimating` requests no frames.
   private var springHasDiverged: Bool {
     !springTarget.isFinite || !springPosition.isFinite || !springVelocity.isFinite
   }

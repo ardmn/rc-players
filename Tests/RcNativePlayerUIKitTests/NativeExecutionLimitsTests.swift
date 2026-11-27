@@ -73,17 +73,12 @@ import Testing
         [11], componentID: 7, field: "draw",
         limits: RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10))
     }
-    try numbers.validateFinite(
-      [400], componentID: 7, field: "paint")
     expect(.canvasTooLarge(actual: 101, maximum: 100)) {
       try numbers.validateCanvasDimensions(
         [101], limits: RemoteComposeNativeExecutionLimits(maximumCanvasDimension: 100))
     }
     expect(.invalidCanvasDimension(actual: 0)) {
       try numbers.validateDocumentDimensions([0, 100], limits: .default)
-    }
-    expect(.invalidGradientStop(componentID: 9, actual: -0.1)) {
-      try numbers.validateGradientStops([-0.1, 1], componentID: 9)
     }
     var work = NativeFrameBudget()
     expect(.frameWorkExceeded(actual: 3, maximum: 2)) {

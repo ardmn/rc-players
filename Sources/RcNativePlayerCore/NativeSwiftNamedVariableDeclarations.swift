@@ -133,3 +133,13 @@ public enum NativeSwiftNamedValue: Equatable, Sendable {
   /// A float array, which replaces the list the document keeps at that name's id.
   case floatArray([Float])
 }
+
+/// Kotlin's float equality, which the controllers compare a host's writes by.
+public enum NativeSwiftKotlinFloat {
+  /// Whether two floats are one value as Kotlin's `Float.equals` compares them, by
+  /// `Float.floatToIntBits`: every NaN is the one canonical NaN, and 0 is not -0. Swift's `==` says
+  /// the opposite of both. The one owner of the rule for the UIKit player and the SwiftUI overlay.
+  public static func equals(_ lhs: Float, _ rhs: Float) -> Bool {
+    lhs.isNaN ? rhs.isNaN : !rhs.isNaN && lhs.bitPattern == rhs.bitPattern
+  }
+}
