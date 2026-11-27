@@ -73,6 +73,11 @@ import ee.schimke.composeai.rcplayer.protocol.RcWakeIn
 import ee.schimke.composeai.rcplayer.trace.RcTraceCategory
 import ee.schimke.composeai.rcplayer.trace.rcTrace
 
+/**
+ * The passes a loop nest runs in all ([RcPlayerState.forEachLoopValue]): AndroidX has no bound, so
+ * this one is the player's own: the bound AndroidX holds `A_SUM_TILL` to
+ * (`Limits.MAX_SUM_TILL_ITERATIONS`), and far past any loop a document draws on purpose.
+ */
 private const val MAX_LOOP_ITERATIONS = 10_000
 
 /**
@@ -971,24 +976,39 @@ private constructor(
    * Runs AndroidX's loop, `for (i = from; i < until; i += step)`, with a hard resource bound.
    *
    * Every bound may be a host's value, so any float reaches here: a NaN bound or step runs what
-   * Java's loop runs (none, or a single pass for a NaN step), and a loop AndroidX would never leave
-   * (an infinite bound, a step that does not advance the index) stops after [MAX_LOOP_ITERATIONS]
-   * passes instead of hanging the player.
+   * Java's loop runs (none, or a single pass for a NaN step). AndroidX's `LoopOperation.paint` has
+   * no bound at all (LoopOperation.java:125 and :133, androidx-main 4cd983e99fe), so a loop it
+   * would never leave (an infinite bound, a step that does not advance the index) hangs its player.
+   * Here a loop and every loop nested in it run at most [MAX_LOOP_ITERATIONS] passes **in all**,
+   * counting each pass at every depth in the order they run: two nested loops to a host's infinity
+   * ran 10 000 x 10 000 passes otherwise. Each outermost loop starts a fresh budget, so what a nest
+   * draws does not depend on what ran before it, and a frame runs at most that many passes per
+   * outermost loop in the document.
    */
   public fun forEachLoopValue(operation: RcLoopOperation, block: (Float) -> Unit) {
     val until = resolve(operation.until)
     val step = resolve(operation.step)
     var value = resolve(operation.from)
-    var iterations = 0
-    while (value < until && iterations++ < MAX_LOOP_ITERATIONS) {
-      if (operation.indexVariableId != 0) {
-        setFloat(operation.indexVariableId, value)
-        loopDependents(operation.indexVariableId).forEach(::applyFloatExpression)
+    if (loopDepth == 0) loopPassesLeft = MAX_LOOP_ITERATIONS
+    loopDepth++
+    try {
+      while (value < until && loopPassesLeft > 0) {
+        loopPassesLeft--
+        if (operation.indexVariableId != 0) {
+          setFloat(operation.indexVariableId, value)
+          loopDependents(operation.indexVariableId).forEach(::applyFloatExpression)
+        }
+        block(value)
+        value += step
       }
-      block(value)
-      value += step
+    } finally {
+      loopDepth--
     }
   }
+
+  /** How deep [forEachLoopValue] is nested, and the passes its outermost loop has left. */
+  private var loopDepth = 0
+  private var loopPassesLeft = 0
 
   private val loopDependentExpressions = mutableMapOf<Int, List<RcFloatExpression>>()
 
@@ -1374,10 +1394,9 @@ private constructor(
             // AndroidX's flat stream runs where it stands; skipping the body left that colour
             // unset. Only that shape is replayed here (see [isThemedColorLoop]): colours that come
             // out the same however often the loop runs. Any other
-            // loop is the draw pass's alone, so nothing stateful in it runs twice. A loop whose
-            // bounds do not resolve to a finite, advancing range is left to the draw pass to
-            // report, and one under the other theme's marker does not run, as the draw pass skips
-            // it.
+            // loop is the draw pass's alone, so nothing stateful in it runs twice. Whatever its
+            // bounds, a loop here runs under the draw pass's cap ([forEachLoopValue]), and one
+            // under the other theme's marker does not run, as the draw pass skips it.
             val theme = currentTheme
             val visible =
               requestedTheme == RcTheme.UNSPECIFIED ||

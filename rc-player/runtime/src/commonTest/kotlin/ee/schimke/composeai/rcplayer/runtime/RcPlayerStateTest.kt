@@ -383,6 +383,43 @@ class RcPlayerStateTest {
     assertTrue(zeroIterations.isEmpty())
   }
 
+  /**
+   * The cap holds for a whole loop nest, not each loop in it: two loops to a host's infinity ran 10
+   * 000 x 10 000 passes, about 16 s a frame. The nest's outer and inner passes together stop at 10
+   * 000, and the next loop the frame reaches has its own 10 000, whatever ran before it.
+   */
+  @Test
+  fun aLoopNestRunsTheCapInAllAndTheNextLoopItsOwn() {
+    val state = RcPlayerState(RcDocument(RcHeader(RcVersion(1, 0, 0)), emptyList()))
+    state.setFloat(30, Float.POSITIVE_INFINITY)
+    state.setFloat(31, 3f)
+    fun loop(until: Int) =
+      RcLoopOperation(
+        0,
+        RcFloatWord.literal(0f),
+        RcFloatWord.literal(1f),
+        RcFloatWord(0x7fc00000 or until),
+      )
+
+    var outer = 0
+    var inner = 0
+    state.forEachLoopValue(loop(30)) {
+      outer++
+      state.forEachLoopValue(loop(30)) { inner++ }
+    }
+    assertEquals(1, outer)
+    assertEquals(9_999, inner)
+
+    var after = 0
+    state.forEachLoopValue(loop(30)) { after++ }
+    assertEquals(10_000, after)
+
+    // A finite nest runs every pass, as AndroidX does.
+    var cells = 0
+    state.forEachLoopValue(loop(31)) { state.forEachLoopValue(loop(31)) { cells++ } }
+    assertEquals(9, cells)
+  }
+
   /** AndroidX `TextMerge` throws past 16K UTF-16 units; the player keeps the text it had. */
   @Test
   fun aMergeLongerThanAndroidXsLimitLeavesTheTextUnchanged() {
