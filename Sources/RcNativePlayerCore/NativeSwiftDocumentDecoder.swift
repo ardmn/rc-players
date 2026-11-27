@@ -149,8 +149,9 @@ enum NativeSwiftDocumentDecoder {
     var resolutionSteps: [ParsedResolutionStep] = []
     var namedVariables: [String: ParsedNamedVariable] = [:]
     var expressions: [ParsedFloatExpression] = []
-    // The IDs in `expressions`, so a click action's existence check is not a scan per operation.
-    var expressionIDs: Set<Int> = []
+    // The last of `expressions` declared at each id, built as they are declared: a click action's
+    // existence check is a lookup rather than a scan, and the document needs no second pass.
+    var floatExpressions: [Int: ParsedFloatExpression] = [:]
     var componentValues: [ParsedComponentValue] = []
     var longConstants: [Int: Int64] = [:]
     var booleanConstants: [Int: Bool] = [:]
@@ -1595,7 +1596,7 @@ enum NativeSwiftDocumentDecoder {
             functionScope?.expressionPositions.append(position)
           } else {
             expressions.append(alias)
-            expressionIDs.insert(floatID)
+            floatExpressions[floatID] = alias
             resolutionSteps.append(.floatExpression(alias))
           }
         } else {
@@ -1674,7 +1675,7 @@ enum NativeSwiftDocumentDecoder {
           functionScope?.expressionPositions.append(position)
         } else {
           expressions.append(expression)
-          expressionIDs.insert(id)
+          floatExpressions[id] = expression
           resolutionSteps.append(.floatExpression(expression))
         }
       case NativeSwiftWireOpcode.layoutCustom:  // Custom
@@ -2609,7 +2610,7 @@ enum NativeSwiftDocumentDecoder {
         guard let container = actionContainer() else {
           throw input.malformed("Float action is outside a click modifier")
         }
-        guard expressionIDs.contains(expressionID) else {
+        guard floatExpressions[expressionID] != nil else {
           throw input.malformed("Missing float action expression \(expressionID)")
         }
         appendAction(
@@ -3126,15 +3127,21 @@ enum NativeSwiftDocumentDecoder {
         pending.append(contentsOf: node.children)
       }
     }
-    var lastWriter: [Int: Int] = [:]
-    for (index, step) in resolutionSteps.enumerated() {
-      for id in step.numericOutputIDs { lastWriter[id] = index }
-    }
-    let floatExpressionsReadForward = resolutionSteps.enumerated().contains { index, step in
-      guard case .floatExpression(let expression) = step else { return false }
-      return expression.words.contains { word in
-        NativeSwiftFloatExpression.referenceID(word).flatMap { lastWriter[$0] }.map { $0 >= index }
-          ?? false
+    // Whether a float expression reads an id that it, or a step after it, writes last: the first
+    // pass then saw a value the pass itself replaces. Without float expressions nothing can.
+    var floatExpressionsReadForward = false
+    if !expressions.isEmpty {
+      var lastWriter: [Int: Int] = [:]
+      lastWriter.reserveCapacity(resolutionSteps.count)
+      for (index, step) in resolutionSteps.enumerated() {
+        step.forEachNumericOutputID { lastWriter[$0] = index }
+      }
+      floatExpressionsReadForward = resolutionSteps.enumerated().contains { index, step in
+        guard case .floatExpression(let expression) = step else { return false }
+        return expression.words.contains { word in
+          NativeSwiftFloatExpression.referenceID(word).flatMap { lastWriter[$0] }
+            .map { $0 >= index } ?? false
+        }
       }
     }
     return ParsedDocument(
@@ -3143,7 +3150,7 @@ enum NativeSwiftDocumentDecoder {
       colors: colors, integers: integers, numericConstants: numericConstants,
       resolutionSteps: resolutionSteps, integerExpressions: integerExpressions,
       namedVariables: namedVariables, expressions: expressions,
-      floatExpressions: Dictionary(expressions.map { ($0.id, $0) }) { _, last in last },
+      floatExpressions: floatExpressions,
       componentValues: componentValues, longConstants: longConstants,
       booleanConstants: booleanConstants, timeAttributes: timeAttributes, images: images,
       sounds: sounds, clickAreas: clickAreas,

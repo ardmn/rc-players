@@ -1798,7 +1798,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case .floatExpression(let expression):
       try applyFloatExpression(expression)
     case .integerExpression(let id, let expression):
-      guard overriddenIntegers.isEmpty || !overriddenIntegers.contains(id) else { return }
+      guard !overriddenIntegers.contains(id) else { return }
       setInteger(id, try evaluateInteger(expression))
     case .colorExpression(let expression):
       if let color = color(of: expression) { setColor(expression.outputID, color) }
@@ -1832,8 +1832,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   }
 
   /// A `TIME_ATTRIBUTE` step. Kept out of `applyStep`, and never inlined into it: the wall clock
-  /// holds a `TimeZone`, whose size is only known at run time, so reading it here sizes the stack
-  /// frame dynamically, and inlined that cost would be paid by every step of every resolution.
+  /// holds a `TimeZone`. On Apple platforms Foundation is built with library evolution, so its
+  /// size is only known at run time and reading it here sizes the stack frame dynamically; inlined,
+  /// that cost would be paid by every step of every resolution. Elsewhere Foundation is built
+  /// without library evolution, the size is fixed at compile time, and the split costs a call.
   @inline(never)
   private func applyTimeAttribute(_ attribute: ParsedTimeAttribute) {
     if let value = timeAttribute(
@@ -1850,7 +1852,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// `RcPlayerState.applyFloatExpression`: an id a document action wrote is left as written;
   /// otherwise the expression, eased by its animation when it has one, is the id's value.
   private func applyFloatExpression(_ expression: ParsedFloatExpression) throws {
-    guard overriddenFloats.isEmpty || !overriddenFloats.contains(expression.id) else { return }
+    guard !overriddenFloats.contains(expression.id) else { return }
     setFloat(expression.id, try evaluatedFloat(expression))
   }
 

@@ -35,18 +35,20 @@ enum ParsedResolutionStep {
   case timeAttribute(ParsedTimeAttribute)
   case matrixVectorMath(ParsedMatrixVectorMath)
 
-  /// The numeric ids the step writes.
-  var numericOutputIDs: [Int] {
+  /// Calls `body` with each numeric id the step writes. A visitor rather than an array, so the
+  /// decode-time pass over every step allocates nothing: only matrix-vector math writes more than
+  /// one id.
+  func forEachNumericOutputID(_ body: (Int) -> Void) {
     switch self {
-    case .floatExpression(let expression): [expression.id]
-    case .integerExpression(let id, _), .imageSize(let id, _): [id]
-    case .colorAttribute(let attribute): [attribute.outputID]
-    case .idLookup(let lookup): [lookup.outputID]
-    case .dataMapLookup(let lookup): [lookup.outputID]
-    case .textLength(let length): [length.outputID]
-    case .timeAttribute(let attribute): [attribute.outputID]
-    case .matrixVectorMath(let operation): operation.outputIDs
-    case .colorExpression, .colorTheme, .text: []
+    case .floatExpression(let expression): body(expression.id)
+    case .integerExpression(let id, _), .imageSize(let id, _): body(id)
+    case .colorAttribute(let attribute): body(attribute.outputID)
+    case .idLookup(let lookup): body(lookup.outputID)
+    case .dataMapLookup(let lookup): body(lookup.outputID)
+    case .textLength(let length): body(length.outputID)
+    case .timeAttribute(let attribute): body(attribute.outputID)
+    case .matrixVectorMath(let operation): operation.outputIDs.forEach(body)
+    case .colorExpression, .colorTheme, .text: break
     }
   }
 }
