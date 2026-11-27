@@ -1798,7 +1798,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case .floatExpression(let expression):
       try applyFloatExpression(expression)
     case .integerExpression(let id, let expression):
-      guard !overriddenIntegers.contains(id) else { return }
+      guard overriddenIntegers.isEmpty || !overriddenIntegers.contains(id) else { return }
       setInteger(id, try evaluateInteger(expression))
     case .colorExpression(let expression):
       if let color = color(of: expression) { setColor(expression.outputID, color) }
@@ -1825,24 +1825,32 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       // A text nothing produced reads as empty, as the reference's text operations read it.
       setFloat(length.outputID, Float(texts[length.textID]?.utf16.count ?? 0))
     case .timeAttribute(let attribute):
-      if let value = timeAttribute(
-        attribute, timeSeconds: frameTimeSeconds, wallClock: frameWallClock)
-      {
-        setFloat(attribute.outputID, value)
-      } else if frameWallClock == nil {
-        // Nothing to measure from without a wall clock: unset, as the calendar is then.
-        floats[attribute.outputID] = nil
-        integers[attribute.outputID] = nil
-      }
+      applyTimeAttribute(attribute)
     case .matrixVectorMath(let operation):
       applyMatrixVectorMath(operation)
+    }
+  }
+
+  /// A `TIME_ATTRIBUTE` step. Kept out of `applyStep`, and never inlined into it: the wall clock
+  /// holds a `TimeZone`, whose size is only known at run time, so reading it here sizes the stack
+  /// frame dynamically, and inlined that cost would be paid by every step of every resolution.
+  @inline(never)
+  private func applyTimeAttribute(_ attribute: ParsedTimeAttribute) {
+    if let value = timeAttribute(
+      attribute, timeSeconds: frameTimeSeconds, wallClock: frameWallClock)
+    {
+      setFloat(attribute.outputID, value)
+    } else if frameWallClock == nil {
+      // Nothing to measure from without a wall clock: unset, as the calendar is then.
+      floats[attribute.outputID] = nil
+      integers[attribute.outputID] = nil
     }
   }
 
   /// `RcPlayerState.applyFloatExpression`: an id a document action wrote is left as written;
   /// otherwise the expression, eased by its animation when it has one, is the id's value.
   private func applyFloatExpression(_ expression: ParsedFloatExpression) throws {
-    guard !overriddenFloats.contains(expression.id) else { return }
+    guard overriddenFloats.isEmpty || !overriddenFloats.contains(expression.id) else { return }
     setFloat(expression.id, try evaluatedFloat(expression))
   }
 
