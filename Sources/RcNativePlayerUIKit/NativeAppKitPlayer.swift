@@ -3878,19 +3878,23 @@ private final class NativeMacCanvasView: NSView {
     return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
   }
 
+  /// Where an image lands in `destination`, as AndroidX's `ImageScaling` places it. That class
+  /// computes in `int`s; the arithmetic here is in `CGFloat`, each step truncated toward zero as
+  /// Java's `(int)` cast and integer division truncate, so a host's huge value (a 1e30 edge, a
+  /// product past `Int.max`) scales instead of trapping. Exact for every value under 2^53, which
+  /// covers every size a screen shows. A non-finite rectangle or factor gives `.zero`, which draws
+  /// nothing, as Skia rejects a non-finite rectangle (`SkCanvas::quickReject`).
   private func scaledImageDestination(
     source: NSRect, destination: NSRect, scaleType: Int, scaleFactor: CGFloat
   ) -> NSRect {
-    guard source.width > 0, source.height > 0, destination.width >= 0, destination.height >= 0,
-      scaleFactor.isFinite
+    func truncated(_ value: CGFloat) -> CGFloat { value.rounded(.towardZero) }
+    let sourceWidth = truncated(source.width)
+    let sourceHeight = truncated(source.height)
+    let destinationWidth = truncated(destination.width)
+    let destinationHeight = truncated(destination.height)
+    guard Self.isFinite(source), Self.isFinite(destination), scaleFactor.isFinite,
+      sourceWidth > 0, sourceHeight > 0, destinationWidth >= 0, destinationHeight >= 0
     else { return .zero }
-    let sourceWidth = Int(source.width)
-    let sourceHeight = Int(source.height)
-    let destinationWidth = Int(destination.width)
-    let destinationHeight = Int(destination.height)
-    guard sourceWidth > 0, sourceHeight > 0, destinationWidth >= 0, destinationHeight >= 0 else {
-      return .zero
-    }
     var width = destinationWidth
     var height = destinationHeight
     switch scaleType {
@@ -3898,29 +3902,35 @@ private final class NativeMacCanvasView: NSView {
     case NativeSwiftImageScaleType.inside:
       if !(destinationHeight > sourceHeight && destinationWidth > sourceWidth) {
         if sourceWidth * destinationHeight > destinationWidth * sourceHeight {
-          height = destinationWidth * sourceHeight / sourceWidth
-        } else { width = destinationHeight * sourceWidth / sourceHeight }
+          height = truncated(destinationWidth * sourceHeight / sourceWidth)
+        } else { width = truncated(destinationHeight * sourceWidth / sourceHeight) }
       } else { width = sourceWidth; height = sourceHeight }
-    case NativeSwiftImageScaleType.fitWidth: height = destinationWidth * sourceHeight / sourceWidth
-    case NativeSwiftImageScaleType.fitHeight: width = destinationHeight * sourceWidth / sourceHeight
+    case NativeSwiftImageScaleType.fitWidth:
+      height = truncated(destinationWidth * sourceHeight / sourceWidth)
+    case NativeSwiftImageScaleType.fitHeight:
+      width = truncated(destinationHeight * sourceWidth / sourceHeight)
     case NativeSwiftImageScaleType.fit:
       if sourceWidth * destinationHeight > destinationWidth * sourceHeight {
-        height = destinationWidth * sourceHeight / sourceWidth
-      } else { width = destinationHeight * sourceWidth / sourceHeight }
+        height = truncated(destinationWidth * sourceHeight / sourceWidth)
+      } else { width = truncated(destinationHeight * sourceWidth / sourceHeight) }
     case NativeSwiftImageScaleType.crop:
       if sourceWidth * destinationHeight < destinationWidth * sourceHeight {
-        height = destinationWidth * sourceHeight / sourceWidth
-      } else { width = destinationHeight * sourceWidth / sourceHeight }
+        height = truncated(destinationWidth * sourceHeight / sourceWidth)
+      } else { width = truncated(destinationHeight * sourceWidth / sourceHeight) }
     case NativeSwiftImageScaleType.fillBounds: break
     case NativeSwiftImageScaleType.fixed:
-      width = Int(CGFloat(sourceWidth) * scaleFactor)
-      height = Int(CGFloat(sourceHeight) * scaleFactor)
+      width = truncated(sourceWidth * scaleFactor)
+      height = truncated(sourceHeight * scaleFactor)
     default: return .zero
     }
     return NSRect(
-      x: destination.minX + CGFloat((destinationWidth - width) / 2),
-      y: destination.minY + CGFloat((destinationHeight - height) / 2), width: CGFloat(width),
-      height: CGFloat(height))
+      x: destination.minX + truncated((destinationWidth - width) / 2),
+      y: destination.minY + truncated((destinationHeight - height) / 2), width: width,
+      height: height)
+  }
+
+  private static func isFinite(_ rect: NSRect) -> Bool {
+    rect.minX.isFinite && rect.minY.isFinite && rect.width.isFinite && rect.height.isFinite
   }
 
   private func path(_ commands: [NativeMacPathCommand]) -> CGPath {
