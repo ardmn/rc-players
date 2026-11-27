@@ -85,7 +85,9 @@ import Testing
     }
     #expect(
       compared == (fixture.operators.count - Self.unimplementedOperators.count) * triples.count)
-    #expect(mismatches.isEmpty, "\(mismatches.count) mismatches:\n\(mismatches.prefix(40).joined(separator: "\n"))")
+    #expect(
+      mismatches.isEmpty,
+      "\(mismatches.count) mismatches:\n\(mismatches.prefix(40).joined(separator: "\n"))")
   }
 
   /// Each unimplemented operator is in the fixture (so the list cannot go stale) and refuses the
@@ -117,10 +119,14 @@ import Testing
       let actual = NativeSwiftTextFormatter.format(
         row.value, digitsBefore: row.before, digitsAfter: row.after, flags: row.flags)
       if actual != row.text {
-        mismatches.append("\(row.value) \(row.before).\(row.after) \(row.flags): '\(actual)', AndroidX '\(row.text)'")
+        mismatches.append(
+          "\(row.value) \(row.before).\(row.after) \(row.flags): "
+            + "'\(actual)', AndroidX '\(row.text)'")
       }
     }
-    #expect(mismatches.isEmpty, "\(mismatches.count) mismatches:\n\(mismatches.prefix(40).joined(separator: "\n"))")
+    #expect(
+      mismatches.isEmpty,
+      "\(mismatches.count) mismatches:\n\(mismatches.prefix(40).joined(separator: "\n"))")
   }
 
   /// `StringUtils.floatToString` rounds the scaled fraction with Java's `Math.round(float)`
