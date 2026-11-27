@@ -81,10 +81,15 @@ Decorative continuous animation pauses under Reduce Motion.
 Malformed or over-budget input is reported in the control window. Safety is independent of
 compatibility: both modes enforce a 16 MiB encoded-document limit, a bounded document size,
 20,000 nodes, 256 levels of nesting, 50,000 draw commands, 100,000 path elements, 128 KiB of text,
-and 200,000 work units per frame. A resolved value never fails the frame by itself, as AndroidX
-takes every host value: layout floats are normalised as on UIKit (NaN reads 0, the rest is held
-within the coordinate limit) and a draw command with non-finite geometry is dropped. Validation runs before the initial AppKit hierarchy is created and again before animated
-or event-driven snapshots replace the current frame. Host events share that frame budget and are
+and 200,000 work units per frame. A string counts at most 48 KiB of that text, the longest a
+document can make by itself, so a longer host string renders whatever its length. A resolved value
+never fails the frame by itself, as AndroidX takes every host value: layout floats are normalised as
+on UIKit (NaN reads 0, the rest is held within the coordinate limit, and a negative fill fraction
+lays out as no width, an infinite one as the parent's), and a non-finite draw value stops only what
+it stops on AndroidX's Skia canvas: a non-finite transform or intersecting clip path draws nothing
+until its restore, a non-finite clip rectangle is ignored, and any other non-finite draw is dropped.
+Validation runs before the initial AppKit hierarchy is created and again before animated or
+event-driven snapshots replace the current frame. Host events share that frame budget and are
 validated before delivery.
 
 The pure-Swift decoder rejects unsupported or malformed operation families instead of silently

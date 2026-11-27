@@ -254,6 +254,16 @@
     /// The player's count of the host's writes to the name when this one reached it
     /// (`hostWriteCounts`).
     let writeNumber: UInt64
+
+    /// The same write: a NaN equals a NaN (`NativeSwiftNamedValue.isSameValue(as:)`).
+    static func == (lhs: Self, rhs: Self) -> Bool {
+      guard lhs.writeNumber == rhs.writeNumber else { return false }
+      switch (lhs.value, rhs.value) {
+      case (nil, nil): return true
+      case (let lhsValue?, let rhsValue?): return lhsValue.isSameValue(as: rhsValue)
+      default: return false
+      }
+    }
   }
 
   /// What a session over the same bytes starts from.
@@ -837,7 +847,7 @@
         // a left-out value that failed the session is handed on.
         return NativeCarriedValues(
           values: NativeStartingValue.merging(presentation.leftOut, with: written).filter {
-            failedWrites[$0.name] != $0.value
+            failedWrites[$0.name]?.isSameValue(as: $0.value) != true
           },
           takenHostWrites: presentation.takenHostWrites)
       }
@@ -1955,6 +1965,30 @@
       }
       // Input refused for the background may be taken now, or deferred to the reopen.
       inputAvailability.signal()
+    }
+  }
+
+  extension NativeSwiftNamedValue {
+    /// Whether `other` is this value, as Kotlin's `==` compares a boxed float: by
+    /// `Float.floatToIntBits`, so a NaN equals a NaN and 0 is not -0. The synthesized `==` is
+    /// IEEE's, under which a NaN is never itself, so a failed NaN write was not recognised as the
+    /// write that failed the session and was handed to the next one.
+    func isSameValue(as other: Self) -> Bool {
+      switch (self, other) {
+      case (.float(let lhs), .float(let rhs)): return Self.sameBits(lhs, rhs)
+      case (.integer(let lhs, let lhsFloat), .integer(let rhs, let rhsFloat)):
+        guard lhs == rhs else { return false }
+        guard let lhsFloat, let rhsFloat else { return lhsFloat == nil && rhsFloat == nil }
+        return Self.sameBits(lhsFloat, rhsFloat)
+      case (.floatArray(let lhs), .floatArray(let rhs)):
+        return lhs.count == rhs.count && zip(lhs, rhs).allSatisfy(Self.sameBits)
+      default: return self == other
+      }
+    }
+
+    /// `floatToIntBits` equality: every NaN is the one canonical NaN.
+    private static func sameBits(_ lhs: Float, _ rhs: Float) -> Bool {
+      lhs.isNaN ? rhs.isNaN : !rhs.isNaN && lhs.bitPattern == rhs.bitPattern
     }
   }
 #endif
