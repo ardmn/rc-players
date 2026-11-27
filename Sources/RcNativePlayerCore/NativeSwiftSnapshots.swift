@@ -1035,6 +1035,9 @@ public struct NativeSwiftTextSnapshot: Sendable {
   /// size that is a variable is the pixels it evaluates to and is never scaled, and neither is any
   /// font size in a LEGACY or PIXELS document. See `isDensityTypedFontSize(_:densityBehavior:)`.
   public let sizeIsDensityTyped: Bool
+  /// The size text takes when its own is below 0 or NaN: a reset Android paint's, Skia's
+  /// `SkPaintDefaults_TextSize` (12 pixels), which `Paint.setTextSize` then leaves in place.
+  static let androidDefaultSize: Float = 12
   public let style: Int
   public let weight: Float
   public let familyID: Int

@@ -1052,10 +1052,19 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   ) throws -> NativeSwiftNodeSnapshot {
     let text: NativeSwiftTextSnapshot?
     if let source = node.text {
-      // `size > 0` used to be a parse-time guard. It still holds, but a computed size has no value
-      // to check until here, so the check moved with it rather than being dropped.
-      let size = try resolvedFloat(
-        source.sizeWord, NativeSwiftWireField.textSize, values: values, positive: true)
+      // Any float a host writes reaches a size. Android's `Paint.setTextSize` ignores one below 0
+      // or NaN (hwui `jni/Paint.cpp:1001`, `if (textSize >= 0)`) on a paint AndroidX's
+      // `replacePaint` has just reset (`AndroidPaintContext.java:533`), so such text draws at
+      // Skia's default size in pixels (`SkPaintDefaults.h:20`); an infinity saturates.
+      let requestedSize = NativeSwiftFloatExpression.resolve(source.sizeWord, values: values)
+      let takesRequestedSize = requestedSize >= 0
+      let size =
+        takesRequestedSize
+        ? nativeSwiftSaturated(requestedSize) : NativeSwiftTextSnapshot.androidDefaultSize
+      let sizeIsDensityTyped =
+        takesRequestedSize
+        && NativeSwiftTextSnapshot.isDensityTypedFontSize(
+          source.sizeWord, densityBehavior: document.densityBehavior)
       let weight = resolveOptionalFloat(source.weightWord, values: values) ?? 400
       text = NativeSwiftTextSnapshot(
         value: texts[source.textID] ?? "",
@@ -1085,8 +1094,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
             maximumFontSize: resolvedMaximum)
         },
         fontSettings: fontSettings(source, values: values),
-        sizeIsDensityTyped: NativeSwiftTextSnapshot.isDensityTypedFontSize(
-          source.sizeWord, densityBehavior: document.densityBehavior))
+        sizeIsDensityTyped: sizeIsDensityTyped)
     } else {
       text = nil
     }
@@ -1150,10 +1158,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         })
     }
 
-    let maximumWidth = try resolvedFloat(
-      node.maximumWidthWord, NativeSwiftWireField.maximumWidth, values: values)
-    let maximumHeight = try resolvedFloat(
-      node.maximumHeightWord, NativeSwiftWireField.maximumHeight, values: values)
+    let maximumWidth = resolvedMaximum(node.maximumWidthWord, values: values)
+    let maximumHeight = resolvedMaximum(node.maximumHeightWord, values: values)
     let cornerRadii = try node.cornerRadiusWords.map {
       try resolvedFloat($0, NativeSwiftWireField.cornerRadius, values: values)
     }
@@ -1465,8 +1471,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 
   /// A layout or text field's float, which may be any value a host wrote: NaN reads 0, as Java's
   /// `Math.round` and `(int)` read it where the Kotlin player rounds a padding or offset, and an
-  /// infinity saturates to the largest finite float, as those casts saturate. A `positive` field
-  /// (a font size, a marquee velocity) must still be above 0.
+  /// infinity saturates to the largest finite float, as those casts saturate. A `positive`
+  /// field (a marquee velocity) must still be above 0.
   private func resolvedFloat(
     _ word: UInt32, _ field: String, values: [Int: Float], positive: Bool = false
   ) throws -> Float {
@@ -1476,6 +1482,14 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         offset: 0, reason: "\(field) resolved to \(value), which is not positive")
     }
     return value
+  }
+
+  /// A `widthIn` / `heightIn` maximum: NaN is no bound (-1), as the Kotlin player passes `NaN.dp`,
+  /// `Dp.Unspecified`, to `widthIn(max =)` (`RcComposePlayer.kt` `applyWidthRange`); any other
+  /// value saturates as a layout float does.
+  private func resolvedMaximum(_ word: UInt32, values: [Int: Float]) -> Float {
+    let value = NativeSwiftFloatExpression.resolve(word, values: values)
+    return value.isNaN ? -1 : nativeSwiftSaturated(value)
   }
 
   /// A float write: the float view, and the integer view under the same id, truncated toward zero

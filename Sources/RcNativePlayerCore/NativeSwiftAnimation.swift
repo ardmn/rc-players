@@ -294,6 +294,13 @@ final class NativeSwiftFloatAnimationRuntime {
   func evaluate(target: Float, at time: Float) -> Float {
     if let springStiffness {
       if target != lastTarget {
+        if springHasDiverged {
+          // Kotlin's `settleAt`: at rest on the new target. AndroidX's `setInitialValue` moves
+          // only the position and keeps the NaN velocity, so its spring stays NaN for good.
+          springPosition = target
+          springVelocity = 0
+          springLastTime = time
+        }
         springTarget = Double(target)
         lastTarget = target
         lastChange = time
@@ -369,7 +376,16 @@ final class NativeSwiftFloatAnimationRuntime {
     return delta
   }
 
+  /// Whether the spring's target or state is not a finite number: a host's NaN or infinity as the
+  /// target, or a state that overflowed integrating towards one. AndroidX's `SpringStopEngine` and
+  /// the Kotlin `RcSpringAnimation` never report such a spring stopped, so it repaints forever;
+  /// here it is final, at its target, and requests no frames.
+  private var springHasDiverged: Bool {
+    !springTarget.isFinite || !springPosition.isFinite || !springVelocity.isFinite
+  }
+
   private func springIsStopped(stiffness: Double) -> Bool {
+    if springHasDiverged { return true }
     let displacement = Double(springPosition) - springTarget
     let velocity = Double(springVelocity)
     let energy = velocity * velocity + stiffness * displacement * displacement

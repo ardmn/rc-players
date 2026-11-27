@@ -15,7 +15,8 @@ enum NativeSwiftDocumentDecoder {
   static let maximumFloatListValues = 2_000
   private static let maximumNodes = 20_000
   private static let maximumNestingDepth = 256
-  /// AndroidX's own bound on one loop's passes.
+  /// The most passes one loop runs: the Kotlin player's `MAX_LOOP_ITERATIONS`, where it stops a
+  /// loop AndroidX would never leave.
   private static let maximumLoopPasses = 10_000
   /// The bytes every LOOM loop and for-each expansion in one document may unroll to, together.
   /// Their bodies are small drawing and structural operations, so this is far above anything a real
@@ -1126,9 +1127,6 @@ enum NativeSwiftDocumentDecoder {
           return NativeSwiftFloatExpression.resolve(word, values: floats)
         }
         let (from, step, until) = (bounds[0], bounds[1], bounds[2])
-        guard from.isFinite, step.isFinite, until.isFinite else {
-          throw input.malformed("Loop bounds and step must be finite")
-        }
         var expanded = Data()
         func appendConstant(_ id: Int, _ value: Float) {
           var bytes = [UInt8(NativeSwiftWireOpcode.dataFloat)]
@@ -1137,36 +1135,35 @@ enum NativeSwiftDocumentDecoder {
           }
           expanded.append(contentsOf: bytes)
         }
-        if from < until {
-          guard step > 0 else { throw input.malformed("Loop step must be positive") }
-          var value = from
-          var passes = 0
-          var expandedOperations = 0
-          while value < until {
-            passes += 1
-            guard passes <= maximumLoopPasses else {
-              throw input.malformed("Loop exceeds \(maximumLoopPasses) passes")
+        // Java's `for (i = from; i < until; i += step)` over any bounds (LoopOperation.java:125):
+        // a NaN bound runs no pass and a NaN step one. A loop that would not end (an infinite
+        // bound, a step that is 0, negative or too small to move the index) stops after
+        // `maximumLoopPasses`, as the Kotlin player's `forEachLoopValue` stops it.
+        var value = from
+        var passes = 0
+        var expandedOperations = 0
+        while value < until, passes < maximumLoopPasses {
+          passes += 1
+          let passStart = expanded.count
+          if indexID == 0 {
+            expanded.append(body)
+          } else {
+            guard nextMacroGeneratedID <= 0x003f_ffff else {
+              throw input.malformed("LOOM macro generated-id range is exhausted")
             }
-            let passStart = expanded.count
-            if indexID == 0 {
-              expanded.append(body)
-            } else {
-              guard nextMacroGeneratedID <= 0x003f_ffff else {
-                throw input.malformed("LOOM macro generated-id range is exhausted")
-              }
-              let passID = nextMacroGeneratedID
-              nextMacroGeneratedID += 1
-              appendConstant(passID, value)
-              expanded.append(try remappedMacroBody(body, mappings: [indexID: passID]))
-            }
-            let next = value + step
-            guard next > value else { throw input.malformed("Loop step does not advance") }
-            // After the loop the index holds the last value it was given, as in the reference.
-            if indexID != 0, next >= until { appendConstant(indexID, value) }
-            if expanded.count > passStart { expandedOperations += 1 }
-            try chargeExpansion(operations: expandedOperations, bytes: expanded.count)
-            value = next
+            let passID = nextMacroGeneratedID
+            nextMacroGeneratedID += 1
+            appendConstant(passID, value)
+            expanded.append(try remappedMacroBody(body, mappings: [indexID: passID]))
           }
+          let next = value + step
+          // After the loop the index holds the last value it was given, as in the reference.
+          if indexID != 0, !(next < until) || passes == maximumLoopPasses {
+            appendConstant(indexID, value)
+          }
+          if expanded.count > passStart { expandedOperations += 1 }
+          try chargeExpansion(operations: expandedOperations, bytes: expanded.count)
+          value = next
         }
         expandedBytes += expanded.count
         guard suspendedInputs.count < maximumNestingDepth else {
