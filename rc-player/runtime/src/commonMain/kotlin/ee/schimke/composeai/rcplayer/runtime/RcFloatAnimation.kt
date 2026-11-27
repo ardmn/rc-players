@@ -276,6 +276,10 @@ internal class RcSpringAnimation(description: List<RcFloatWord>) {
    * AndroidX `FloatExpression.updateVariables`' handling of the same case.
    */
   fun retarget(value: Float, time: Float) {
+    // A spring that diverged has no state to carry to the new target: it starts at rest there, as
+    // the Swift player's spring does. AndroidX's `SpringStopEngine.setInitialValue` moves only the
+    // position and keeps the NaN velocity, so its spring stays NaN for good.
+    if (hasDiverged()) return settleAt(value, time)
     if (isStopped()) value(time)
     setTarget(value)
   }
@@ -291,7 +295,17 @@ internal class RcSpringAnimation(description: List<RcFloatWord>) {
 
   fun isRunning(): Boolean = !isStopped()
 
+  /**
+   * Whether the target or the state is not a finite number: a host's NaN or infinity as the target,
+   * or a state that overflowed integrating towards one. Such a spring is stopped, at its target,
+   * and requests no frames; its energy is NaN, which no threshold is above, so it repainted
+   * forever.
+   */
+  private fun hasDiverged(): Boolean =
+    !target.isFinite() || !position.isFinite() || !velocity.isFinite()
+
   private fun isStopped(): Boolean {
+    if (hasDiverged()) return true
     val displacement = position - target
     val energy = velocity * velocity * mass + stiffness * displacement * displacement
     return kotlin.math.sqrt(energy / stiffness) <= stopThreshold
