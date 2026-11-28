@@ -21,6 +21,9 @@ package final class RemoteWriter {
   private var stringIDs: [RemoteString.Node: Int32] = [:]
   private var intIDs: [Int32: Int32] = [:]
   private var colorIDs: [RemoteColor.Storage: Int32] = [:]
+  /// Each scroll position's ids, and the positions a scroll view has been written with.
+  private var scrollPositions: [RemoteScrollPosition: ScrollIDs] = [:]
+  private var scrolledPositions: Set<RemoteScrollPosition> = []
   /// Each variable's declared id, by name, and the type and value it was declared with.
   private var variables: [String: (id: Int32, declaration: VariableDeclaration)] = [:]
 
@@ -168,6 +171,19 @@ package final class RemoteWriter {
       return declared
     case .canvasSize, .canvasPixels:
       throw RemoteEncodingError.canvasSizeOutsideCanvas
+    case .scroll(let position, let value):
+      let pixels = RemoteFloat.Node.declared(scrollIDs(position).id(value))
+      id = try floatID(
+        displayScale == 1 ? pixels : .binary(.divide, pixels, .constant(displayScale)))
+    case .integerView(let integer):
+      // The integer's own id: the players publish its value as a float too. A float read as an
+      // integer shares the float's id, so it is copied by an `IntegerExpression` first, whose
+      // output holds the truncated value.
+      if case .floatView = integer {
+        id = try intID(.binary(.add, integer, .constant(0)))
+      } else {
+        id = try intID(integer)
+      }
     case .constant(let literal):
       id = newDataID()
       declare(.floatConstant(FloatConstant(id: id, value: literal)))
@@ -195,7 +211,7 @@ package final class RemoteWriter {
   {
     switch node {
     case .constant(let literal): words.append(try Self.finite(literal))
-    case .variable, .declared, .system, .canvasSize, .canvasPixels:
+    case .variable, .declared, .system, .canvasSize, .canvasPixels, .scroll, .integerView:
       words.append(Self.reference(try floatID(node)))
     case .unary(let operation, let operand):
       try appendRPN(operand, to: &words)
@@ -220,7 +236,21 @@ package final class RemoteWriter {
     case .canvasPixels(let axis): return .declared(try axisID(axis))
     case .canvasSize(let axis):
       return .binary(.divide, .declared(try axisID(axis)), .constant(displayScale))
-    case .constant, .variable, .system, .declared: return node
+    case .constant, .variable, .system, .declared, .scroll: return node
+    case .integerView(let integer): return .integerView(try resolvingCanvasSize(integer))
+    case .unary(let operation, let operand):
+      return .unary(operation, try resolvingCanvasSize(operand))
+    case .binary(let operation, let lhs, let rhs):
+      return .binary(operation, try resolvingCanvasSize(lhs), try resolvingCanvasSize(rhs))
+    }
+  }
+  /// `node` with each float it truncates resolved against the canvas being drawn.
+  private func resolvingCanvasSize(_ node: RemoteInt.Node) throws(RemoteEncodingError)
+    -> RemoteInt.Node
+  {
+    switch node {
+    case .constant, .variable: return node
+    case .floatView(let float): return .floatView(try resolvingCanvasSize(float))
     case .unary(let operation, let operand):
       return .unary(operation, try resolvingCanvasSize(operand))
     case .binary(let operation, let lhs, let rhs):
@@ -286,6 +316,8 @@ package final class RemoteWriter {
   /// The id of an integer holding `node`: a constant, a variable, or an `IntegerExpression`.
   func intID(_ node: RemoteInt.Node) throws(RemoteEncodingError) -> Int32 {
     if case .constant(let value) = node { return intID(try Self.int32(value)) }
+    // A canvas size is this canvas's: resolved before the cache, as `floatID` resolves it.
+    let node = node.readsCanvasSize ? try resolvingCanvasSize(node) : node
     if let id = intNodeIDs[node] { return id }
     let id: Int32
     switch node {
@@ -309,13 +341,13 @@ package final class RemoteWriter {
       id = try floatID(float)
     case .unary(let operation, let operand):
       id = try declareIntegerExpression(node) { () throws(RemoteEncodingError) in
-        [(try intID(operand), true), (IntegerExpressionOperator.offset + operation.code, true)]
+        [(try intID(operand), true), (operation.code, true)]
       }
     case .binary(let operation, let lhs, let rhs):
       id = try declareIntegerExpression(node) { () throws(RemoteEncodingError) in
         [
           (try intID(lhs), true), (try intID(rhs), true),
-          (IntegerExpressionOperator.offset + operation.code, true),
+          (operation.code, true),
         ]
       }
     }
@@ -357,11 +389,11 @@ package final class RemoteWriter {
     case .variable, .floatView: words.append((try intID(node), true))
     case .unary(let operation, let operand):
       try appendIntegerRPN(operand, to: &words)
-      words.append((IntegerExpressionOperator.offset + operation.code, true))
+      words.append((operation.code, true))
     case .binary(let operation, let lhs, let rhs):
       try appendIntegerRPN(lhs, to: &words)
       try appendIntegerRPN(rhs, to: &words)
-      words.append((IntegerExpressionOperator.offset + operation.code, true))
+      words.append((operation.code, true))
     }
   }
 
@@ -378,8 +410,8 @@ package final class RemoteWriter {
 
   /// The visibility a condition gives: `visible` while it holds, `gone` while it does not.
   private func visibilityID(_ condition: RemoteBool) throws(RemoteEncodingError) -> Int32 {
-    let visible = Int32(WireExpressionConstants.visibilityVisible)
-    let gone = Int32(WireExpressionConstants.visibilityGone)
+    let visible = ComponentVisibility.visible
+    let gone = ComponentVisibility.gone
     // The condition is 1 or 0; scaled onto the two visibility values. With today's values (1 and
     // 0) that is the condition itself.
     var visibility = condition.int
@@ -399,6 +431,41 @@ package final class RemoteWriter {
   /// `value` as a literal ARGB word, or the id of the colour the player resolves.
   func color(_ value: RemoteColor) throws(RemoteEncodingError) -> ResolvedColor {
     switch value.storage {
+    case .hierarchical:
+      // A hierarchical style used other than as the foreground (a background, a stroke) is the
+      // foreground the view is drawn under.
+      return try color(value.resolved(against: environment.foregroundStyle))
+    case .variableWithOpacity(let variable, let factor):
+      if let id = colorIDs[value.storage] { return .id(id) }
+      guard case .id(let source) = try color(RemoteColor(variable)) else {
+        preconditionFailure("a variable colour is an id")
+      }
+      // The variable's channels, and its alpha times `factor`, rebuilt as an ARGB colour whose
+      // alpha is a float id (`ColorExpression`'s ID-ARGB mode), as the value changes.
+      func channel(_ type: Int32) -> Int32 {
+        let id = newDataID()
+        declare(.colorAttribute(ColorAttribute(id: id, colorId: source, type: Int16(type))))
+        return id
+      }
+      let red = channel(ColorAttribute.colorRed)
+      let green = channel(ColorAttribute.colorGreen)
+      let blue = channel(ColorAttribute.colorBlue)
+      let alpha = try floatID(
+        (RemoteFloat(node: .declared(channel(ColorAttribute.colorAlpha)))
+          * RemoteFloat(factor)).node)
+      // The alpha's id is written in the mode word's upper 16 bits.
+      guard alpha <= Int32(UInt16.max) else {
+        throw RemoteEncodingError.integerOutOfRange(Int(alpha))
+      }
+      func word(_ id: Int32) -> Int32 { Int32(bitPattern: Self.reference(id).bitPattern) }
+      let id = newDataID()
+      declare(
+        .colorExpression(
+          ColorExpression(
+            id: id, flagsAndMode: ColorExpression.idargbMode | alpha << 16, arg1: word(red),
+            arg2: word(green), arg3: word(blue))))
+      colorIDs[value.storage] = id
+      return .id(id)
     case .fixed(let literal): return .literal(literal.argb)
     case .adaptive(let light, let dark):
       if let id = colorIDs[value.storage] { return .id(id) }
@@ -587,6 +654,138 @@ package final class RemoteWriter {
     try withModifier(
       .frame(
         width: widthFixed ? nil : .fill(1), height: heightFixed ? nil : .fill(1)), body)
+  }
+
+  /// A scroll view: a column or row that fills the space it is offered, clipped and scrolled by
+  /// the scroll modifier, as AndroidX's `verticalScroll` and `horizontalScroll` write it.
+  func writeScrollView(
+    _ scroll: RemoteScrollConfiguration, content: some RemoteStackContent
+  ) throws(RemoteEncodingError) {
+    try withFillOnFreeAxes { () throws(RemoteEncodingError) in
+      try withModifier(.scroll(scroll)) { () throws(RemoteEncodingError) in
+        switch scroll.axis {
+        case .vertical:
+          let layout = ColumnLayout(
+            componentId: newComponentID(), animationId: IdEncoding.noId,
+            horizontalPositioning: scroll.alignment.wire, verticalPositioning: ColumnLayout.top,
+            spacedBy: try pixels(scroll.spacing))
+          try writeLayout(.columnLayout(layout), kind: .verticalStack, content: content)
+        case .horizontal:
+          let layout = RowLayout(
+            componentId: newComponentID(), animationId: IdEncoding.noId,
+            horizontalPositioning: RowLayout.start, verticalPositioning: RowLayout.center,
+            spacedBy: 0)
+          try writeLayout(.rowLayout(layout), kind: .horizontalStack, content: content)
+        }
+      }
+    }
+  }
+
+  /// The float ids of a scroll: its position, how far it can travel, and the extent its notches
+  /// divide (the content's length), all in pixels and written by the player.
+  struct ScrollIDs {
+    let position: Int32
+    let maximum: Int32
+    let notchMaximum: Int32
+
+    func id(_ value: RemoteScrollPosition.Value) -> Int32 {
+      switch value {
+      case .offset: position
+      case .maximumOffset: maximum
+      case .contentLength: notchMaximum
+      }
+    }
+  }
+
+  /// The ids of `position`'s scroll, made on first use: by the scroll view, or by a view that
+  /// reads the position, whichever is written first.
+  func scrollIDs(_ position: RemoteScrollPosition) -> ScrollIDs {
+    if let ids = scrollPositions[position] { return ids }
+    let ids = ScrollIDs(position: newDataID(), maximum: newDataID(), notchMaximum: newDataID())
+    scrollPositions[position] = ids
+    return ids
+  }
+
+  /// A scroll modifier, as AndroidX's writer shapes it: a clip, `ScrollModifierOperation` with
+  /// the ids of the position and of the extents the player measures, and the position as a touch
+  /// expression, the only child of the scroll's container.
+  private func writeScroll(_ scroll: RemoteScrollConfiguration) throws(RemoteEncodingError) {
+    let ids: ScrollIDs
+    if let position = scroll.position {
+      guard scrolledPositions.insert(position).inserted else {
+        throw RemoteEncodingError.scrollPositionReused
+      }
+      ids = scrollIDs(position)
+    } else {
+      ids = ScrollIDs(position: newDataID(), maximum: newDataID(), notchMaximum: newDataID())
+    }
+    guard scroll.initialOffset >= 0, scroll.initialOffset.isFinite else {
+      throw RemoteEncodingError.invalidScrollOffset(scroll.initialOffset)
+    }
+    if let pageCount = scroll.pageCount, !(1...WireLimits.maxTouchStops).contains(pageCount) {
+      throw RemoteEncodingError.invalidPageCount(pageCount)
+    }
+    let start = try pixels(scroll.initialOffset)
+    if start > 0 {
+      declare(.floatConstant(FloatConstant(id: ids.position, value: start)))
+    }
+    emit(.clipRectModifierOperation(ClipRectModifierOperation()))
+    emit(
+      .scrollModifierOperation(
+        ScrollModifierOperation(
+          direction: scroll.axis == .vertical ? Scroll.vertical : Scroll.horizontal,
+          position: Self.reference(ids.position), max: Self.reference(ids.maximum),
+          notchMax: Self.reference(ids.notchMaximum))))
+    // The touch expression starts at the offset too: a player that applies it before the first
+    // touch writes its value over the declared one.
+    // The position follows the drag along the axis, the opposite way: dragging up scrolls down.
+    let touch =
+      scroll.axis == .vertical ? RemoteContextIds.idTouchPosY : RemoteContextIds.idTouchPosX
+    // Paging snaps to evenly spaced notches over the content's length, one per page.
+    let (stopMode, stopSpec): (Int32, [Float]) =
+      if let pageCount = scroll.pageCount {
+        (TouchStopMode.notchesEven, [Float(pageCount), Self.reference(ids.notchMaximum)])
+      } else {
+        (TouchStopMode.gently, [])
+      }
+    emit(
+      .touchExpression(
+        TouchExpression(
+          id: ids.position, value: start, min: 0, max: Self.reference(ids.maximum),
+          velocityId: 0, touchEffects: Scroll.touchEffects,
+          expression: [Self.reference(touch), -1, Self.operatorWord(.multiply)],
+          stopMode: stopMode, stopSpec: stopSpec)))
+    emit(.containerEnd(ContainerEnd()))
+  }
+
+  /// The scroll modifier's wire values, as AndroidX's writer has them.
+  private enum Scroll {
+    /// `ScrollModifierOperation`'s directions.
+    static let vertical: Int32 = 0
+    static let horizontal: Int32 = 1
+    /// The touch effects AndroidX's scroll writes.
+    static let touchEffects: Int32 = 3
+  }
+
+  /// `TouchExpression`'s stop modes, every value AndroidX's `TouchExpression` defines: how the
+  /// value settles when the touch ends.
+  enum TouchStopMode {
+    /// Decelerates after a fling (`STOP_GENTLY`): a scroll's.
+    static let gently: Int32 = 0
+    /// `STOP_INSTANTLY`.
+    static let instantly: Int32 = 1
+    /// `STOP_ENDS`.
+    static let ends: Int32 = 2
+    /// `STOP_NOTCHES_EVEN`: evenly spaced notches.
+    static let notchesEven: Int32 = 3
+    /// `STOP_NOTCHES_PERCENTS`.
+    static let notchesPercents: Int32 = 4
+    /// `STOP_NOTCHES_ABSOLUTE`.
+    static let notchesAbsolute: Int32 = 5
+    /// `STOP_ABSOLUTE_POS`.
+    static let absolutePosition: Int32 = 6
+    /// `STOP_NOTCHES_SINGLE_EVEN`.
+    static let notchesSingleEven: Int32 = 7
   }
 
   /// A spacer: flexible space along the enclosing stack, or a fixed gap.
@@ -868,9 +1067,7 @@ package final class RemoteWriter {
       if shape != .rectangle { try write(.clip(shape)) }
       let (flags, colorID, channels) = try colorFields(
         color,
-        colorRefFlag: Int32(
-          BackgroundModifierOperation.BitLayout.flagsColorRefMask
-            << BackgroundModifierOperation.BitLayout.flagsColorRefShift))
+        colorRefFlag: BackgroundModifierOperation.colorRef)
       emit(
         .backgroundModifierOperation(
           BackgroundModifierOperation(
@@ -879,9 +1076,7 @@ package final class RemoteWriter {
     case .border(let color, let width, let cornerRadius):
       let (flags, colorID, channels) = try colorFields(
         color,
-        colorRefFlag: Int32(
-          BorderModifierOperation.BitLayout.flagsColorRefMask
-            << BorderModifierOperation.BitLayout.flagsColorRefShift))
+        colorRefFlag: BorderModifierOperation.colorRef)
       emit(
         .borderModifierOperation(
           BorderModifierOperation(
@@ -931,6 +1126,8 @@ package final class RemoteWriter {
       emit(.clickModifier(ClickModifier()))
       for operation in resolved { emit(operation) }
       emit(.containerEnd(ContainerEnd()))
+    case .scroll(let scroll):
+      try writeScroll(scroll)
     case .accessibilityLabel, .accessibilityValue, .accessibilityRole, .accessibilityChildren:
       preconditionFailure("accessibility modifiers merge into one CoreSemantics")
     }
@@ -944,6 +1141,9 @@ package final class RemoteWriter {
       channels: (red: Float, green: Float, blue: Float, alpha: Float)
     )
   {
+    // A hierarchical style is the foreground it is drawn under: resolved first, so a literal
+    // keeps its exact components.
+    let color = color.resolved(against: environment.foregroundStyle)
     switch try self.color(color) {
     case .literal:
       guard case .fixed(let value) = color.storage else { preconditionFailure() }
