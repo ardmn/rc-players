@@ -278,7 +278,7 @@ import Testing
   /// `RcPlayerStateTest.loopOperationHonorsTheIterationCap`'s cases: AndroidX counts a pass and each
   /// body operation (`LoopOperation.java:126-140`) and fails the frame past 20 000; here the loop
   /// stops there, so a one-operation body runs 10 000. Bounds are literals here, never NaN.
-  @Test func aLoopStopsAtTheFramesOperationBudget() throws {
+  @Test func aLoopStopsAtTheDocumentsOperationBudget() throws {
     let cases: [(from: Float, until: Float, step: Float, passes: Int)] = [
       (0, 1, 0.000_01, 10_000), (0, .infinity, 1, 10_000), (0, 1, 0, 10_000),
       (1e9, 2e9, 1, 10_000), (-.infinity, 0, 1, 10_000), (.infinity, .infinity, 1, 0),
@@ -299,9 +299,9 @@ import Testing
     }
   }
 
-  /// The budget is the frame's, every loop's passes and body operations together, charged in the
-  /// order AndroidX runs them: a pass and each operation directly in its body.
-  @Test func everyLoopInTheFrameSharesOneOperationBudget() throws {
+  /// The budget is the document's, every loop's passes and body operations together, charged in
+  /// the order AndroidX runs them: a pass and each operation directly in its body.
+  @Test func everyLoopInTheDocumentSharesOneOperationBudget() throws {
     typealias Op = NativeSwiftWireOpcode
     func rects(_ count: Int, _ document: Writer) {
       for _ in 0..<count { document.u8(Op.drawRect).float(0).float(0).float(1).float(1) }
@@ -313,7 +313,7 @@ import Testing
       let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
       return root.commands.count
     }
-    let budget = NativeSwiftDocumentDecoder.maximumLoopOperationsPerFrame
+    let budget = NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument
     #expect(budget == 20_000)
     // Three operations a pass: 4 each.
     let threeEach = try drawn { document in
@@ -331,6 +331,34 @@ import Testing
       }
     }
     #expect(twoLoops == budget / 2)
+  }
+
+  /// The budget is spent once per document, when the loops are unrolled at decode: a loop in a
+  /// component that is GONE still uses its share. AndroidX counts per paint
+  /// (RemoteContext.java:1146) and paints no GONE component, so there the shown canvas draws its
+  /// 5,000 passes; here it draws none. A known difference (`maximumLoopOperationsPerDocument`).
+  @Test func aLoopInAGoneCanvasStillUsesItsShareOfTheBudget() throws {
+    typealias Op = NativeSwiftWireOpcode
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataInt).int(70).int(NativeSwiftVisibility.gone)
+    document.u8(Op.layoutRoot).int(1)
+    for (canvas, visibility, passes) in [(2, Optional(70), Float(15_000)), (3, nil, 5_000)] {
+      document.u8(Op.layoutCanvas).int(canvas).int(-1)
+      if let visibility { document.u8(Op.modifierVisibility).int(visibility) }
+      document.u8(Op.loopStart).int(0).float(0).float(1).float(passes)
+      document.u8(Op.drawRect).float(0).float(0).float(1).float(1)
+      document.u8(Op.containerEnd)
+      document.u8(Op.containerEnd)
+    }
+    document.u8(Op.containerEnd)
+    let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
+    let budget = NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument
+    let gone = try #require(Self.nodes(root).first { $0.componentID == 2 })
+    let shown = try #require(Self.nodes(root).first { $0.componentID == 3 })
+    // Two operations a pass: the GONE canvas's loop took the whole budget.
+    #expect(gone.visibility == NativeSwiftVisibility.gone && gone.commands.count == budget / 2)
+    #expect(shown.commands.isEmpty)
   }
 
   /// After the loop its index holds the last value it took, as the Kotlin player's `setFloat` of

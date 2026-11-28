@@ -35,7 +35,7 @@ import Testing
 
   @Test func theLoopBudgetMatchesTheKotlinPlayer() throws {
     let kotlin = try Self.kotlinConstant("MAX_LOOP_OPERATIONS_PER_FRAME", in: Self.kotlinState)
-    #expect(kotlin == Double(NativeSwiftDocumentDecoder.maximumLoopOperationsPerFrame))
+    #expect(kotlin == Double(NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument))
   }
 
   @Test func theTextSizeBoundsMatchTheKotlinPlayer() throws {
