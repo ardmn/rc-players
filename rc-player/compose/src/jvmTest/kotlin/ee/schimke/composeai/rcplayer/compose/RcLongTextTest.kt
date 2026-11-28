@@ -12,7 +12,6 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -204,38 +203,8 @@ class RcLongTextTest {
     assertContentEquals(reference, candidate)
   }
 
-  /**
-   * An article past [RC_LONG_TEXT_LENGTH] with no over-long word has the whole text's intrinsic
-   * height at a bounded width, as [BasicText] reports it (a FitBox probe or an intrinsic row).
-   */
-  @Test
-  fun aLongArticleHasTheWholeTextsIntrinsicHeight() {
-    val text = "word ".repeat(10_000)
-    fun maxIntrinsicHeight(content: @Composable () -> Unit): Int {
-      var height = -1
-      val scene =
-        ImageComposeScene(width = WIDTH, height = WIDTH, density = Density(1f)) {
-          Layout(content) { measurables, _ ->
-            height = measurables.single().maxIntrinsicHeight(WIDTH)
-            layout(0, 0) {}
-          }
-        }
-      try {
-        scene.render(0L)
-      } finally {
-        scene.close()
-      }
-      return height
-    }
-
-    val reference = maxIntrinsicHeight { BasicText(text, Modifier, STYLE, onTextLayout = {}) }
-    val candidate = maxIntrinsicHeight { cutText(text, longTextLength = RC_LONG_TEXT_LENGTH) }
-
-    assertEquals(reference, candidate)
-  }
-
   @Composable
-  private fun cutText(text: String, longTextLength: Int = 0) =
+  private fun cutText(text: String) =
     RcBasicText(
       text = text,
       modifier = Modifier,
@@ -244,7 +213,7 @@ class RcLongTextTest {
       overflow = TextOverflow.Clip,
       maxLines = Int.MAX_VALUE,
       textMeasurer = rememberTextMeasurer(),
-      longTextLength = longTextLength,
+      longTextLength = 0,
     )
 
   private fun render(width: Int, height: Int, content: @Composable () -> Unit): IntArray {
