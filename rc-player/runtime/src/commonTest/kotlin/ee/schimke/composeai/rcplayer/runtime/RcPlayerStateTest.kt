@@ -427,10 +427,9 @@ class RcPlayerStateTest {
             listOf(second, third),
         ),
       )
-    // Each loop in its own drawing, as each component's draw is one.
     fun passes(loop: RcLoopOperation): Int {
       var count = 0
-      state.inLoopPass(loop) { state.forEachLoopValue(loop, bodyOperations = 1) { count++ } }
+      state.forEachLoopValue(loop, bodyOperations = 1) { count++ }
       return count
     }
     // A pass and its one body operation: two of the budget.
@@ -486,126 +485,6 @@ class RcPlayerStateTest {
     assertEquals(0, passes(secondDrawing, second))
     state.releaseLoopPass(firstDrawing)
     assertEquals(ANDROIDX_MAX_OP_COUNT, passes(secondDrawing, second))
-  }
-
-  /**
-   * A drawing that frees budget asks for a repaint, so a later loop that drew short draws again.
-   */
-  @Test
-  fun aDrawingThatFreesLoopBudgetAsksForARepaint() {
-    val first = loop(30)
-    val state =
-      RcPlayerState(
-        RcDocument(
-          RcHeader(RcVersion(1, 0, 0)),
-          listOf(RcFloatConstant(30, RcFloatWord.literal(Float.POSITIVE_INFINITY)), first),
-        ),
-      )
-    var repaints = 0
-    state.onRepaint = { repaints++ }
-    val drawing = Any()
-
-    state.inLoopPass(drawing) { state.forEachLoopValue(first, bodyOperations = 0) {} }
-    state.inLoopPass(drawing) { state.forEachLoopValue(first, bodyOperations = 0) {} }
-    assertEquals(0, repaints, "the same count frees nothing")
-
-    state.inLoopPass(drawing) {}
-    assertEquals(1, repaints, "a loop no longer drawn frees its budget")
-  }
-
-  /**
-   * A loop run outside any drawing (an action, a host's own call) is not painted, so it records
-   * nothing and a later loop keeps the whole budget.
-   */
-  @Test
-  fun aLoopRunOutsideADrawingSpendsNoLaterLoopsBudget() {
-    val first = loop(30)
-    val second = loop(30)
-    val state =
-      RcPlayerState(
-        RcDocument(
-          RcHeader(RcVersion(1, 0, 0)),
-          listOf(RcFloatConstant(30, RcFloatWord.literal(Float.POSITIVE_INFINITY)), first, second),
-        ),
-      )
-    state.forEachLoopValue(first, bodyOperations = 0) {}
-
-    var passes = 0
-    state.inLoopPass(second) { state.forEachLoopValue(second, bodyOperations = 0) { passes++ } }
-
-    assertEquals(ANDROIDX_MAX_OP_COUNT, passes)
-  }
-
-  /** An INVISIBLE drawing is not painted (AndroidX skips it): what it recorded is freed. */
-  @Test
-  fun anUnpaintedDrawingSpendsNoLaterLoopsBudget() {
-    val first = loop(30)
-    val second = loop(30)
-    val state =
-      RcPlayerState(
-        RcDocument(
-          RcHeader(RcVersion(1, 0, 0)),
-          listOf(RcFloatConstant(30, RcFloatWord.literal(Float.POSITIVE_INFINITY)), first, second),
-        ),
-      )
-    var repaints = 0
-    state.onRepaint = { repaints++ }
-    val drawing = Any()
-    fun secondPasses(): Int {
-      var passes = 0
-      state.inLoopPass(second) { state.forEachLoopValue(second, bodyOperations = 0) { passes++ } }
-      return passes
-    }
-    state.inLoopPass(drawing) { state.forEachLoopValue(first, bodyOperations = 0) {} }
-    assertEquals(0, secondPasses())
-
-    state.inUnpaintedLoopPass(drawing) { state.forEachLoopValue(first, bodyOperations = 0) {} }
-
-    assertEquals(1, repaints)
-    assertEquals(ANDROIDX_MAX_OP_COUNT, secondPasses())
-  }
-
-  /**
-   * A child drawn inside its parent's drawing sees the same budget as when it is redrawn alone, so
-   * the output does not flicker with what Compose redraws. The order is the document's: the
-   * parent's loop, earlier in the document, counts for the child either way (a known divergence
-   * where AndroidX paints that loop after the child, after `DrawContent`).
-   */
-  @Test
-  fun aNestedDrawingSeesTheSameBudgetAsWhenRedrawnAlone() {
-    val parentLoop = loop(31)
-    val childLoop = loop(30)
-    val state =
-      RcPlayerState(
-        RcDocument(
-          RcHeader(RcVersion(1, 0, 0)),
-          listOf(
-            RcFloatConstant(30, RcFloatWord.literal(Float.POSITIVE_INFINITY)),
-            RcFloatConstant(31, RcFloatWord.literal(15_000f)),
-            parentLoop,
-            childLoop,
-          ),
-        ),
-      )
-    val parent = Any()
-    val child = Any()
-    fun childAlone(): Int {
-      var passes = 0
-      state.inLoopPass(child) { state.forEachLoopValue(childLoop, bodyOperations = 0) { passes++ } }
-      return passes
-    }
-    fun parentWithChild(): Int {
-      var passes = 0
-      state.inLoopPass(parent) {
-        passes = childAlone() // drawn by DrawContent, then the parent's loop
-        state.forEachLoopValue(parentLoop, bodyOperations = 0) {}
-      }
-      return passes
-    }
-    parentWithChild()
-
-    assertEquals(childAlone(), parentWithChild())
-    assertEquals(ANDROIDX_MAX_OP_COUNT - 15_000, childAlone())
   }
 
   /** v4.1.0 published `forEachLoopValue(operation, block)`; it still runs, a pass costing one. */

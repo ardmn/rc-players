@@ -78,9 +78,8 @@ import ee.schimke.composeai.rcplayer.trace.rcTrace
  * `Limits.MAX_OP_COUNT` (Limits.java:24, androidx-main 4cd983e99fe). AndroidX counts every pass and
  * every body operation at every depth (LoopOperation.java:126-140), from zero each paint
  * (CoreDocument.java:2357), and throws past it; here the loop stops. AndroidX also counts a frame's
- * other operations; only loops count here. The Swift player's
- * `NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument` holds the same number but spends it
- * per document, at decode.
+ * other operations; only loops count here. The Swift player's constant of the same name is its
+ * twin.
  */
 private const val MAX_LOOP_OPERATIONS_PER_FRAME = 20_000
 
@@ -988,10 +987,9 @@ private constructor(
    *
    * A host's NaN bound runs what Java's loop runs, and a loop that never ends stops when the budget
    * is spent. Compose redraws only what changed, so each outermost document loop starts with what
-   * the loops before it in document order used when a painted drawing still on screen last ran them
-   * (see [inLoopPass]), as in AndroidX's full paint, whose order differs only inside `DrawContent`.
-   * A loop run outside a painted drawing records nothing. A pass runs only if it fits whole; a loop
-   * outside the document has the whole budget.
+   * the loops before it in document order used when they last ran in a pass still drawn (see
+   * [inLoopPass]), as in AndroidX's full paint. A pass runs only if it fits whole; a loop outside
+   * the document has the whole budget.
    */
   public fun forEachLoopValue(
     operation: RcLoopOperation,
@@ -1033,32 +1031,19 @@ private constructor(
     forEachLoopValue(operation, bodyOperations = 0, block)
 
   /**
-   * Runs [block] as one painted top-level drawing of [owner]'s operations. What the previous
-   * drawing of [owner] recorded and this one does not record again is released at the end, so a
-   * loop it no longer runs (a false conditional, the other theme) stops spending later loops'
-   * budget, as in AndroidX, which counts only what paints (CoreDocument.java:2357). Later loops
-   * draw again ([onRepaint]) when that frees budget.
+   * Runs [block] as one top-level drawing of [owner]'s operations. The loop budget the previous
+   * drawing of [owner] recorded is released first, so a loop it no longer runs (a false
+   * conditional, the other theme) stops spending later loops' budget, as in AndroidX, which counts
+   * only what paints (CoreDocument.java:2357).
    */
-  public fun <T> inLoopPass(owner: Any, block: () -> T): T =
-    loopBudget.inPass(owner, ::repaintForFreedBudget, block)
-
-  /**
-   * Runs [block] as a drawing of [owner] that is not painted (an INVISIBLE component, which
-   * AndroidX skips): it releases what [owner] recorded, and its loops record nothing.
-   */
-  public fun <T> inUnpaintedLoopPass(owner: Any, block: () -> T): T =
-    loopBudget.unpainted(owner, ::repaintForFreedBudget, block)
-
-  private fun repaintForFreedBudget() {
-    onRepaint?.invoke()
-  }
+  public fun <T> inLoopPass(owner: Any, block: () -> T): T = loopBudget.inPass(owner, block)
 
   /**
    * Releases what [owner]'s drawings recorded: it is no longer drawn (GONE, or disposed). Later
    * loops draw again ([onRepaint]) when that frees budget.
    */
   public fun releaseLoopPass(owner: Any) {
-    if (loopBudget.release(owner)) repaintForFreedBudget()
+    if (loopBudget.release(owner)) onRepaint?.invoke()
   }
 
   /** How deep [forEachLoopValue] is nested, and the operations its outermost loop has left. */
