@@ -2,6 +2,9 @@ import Foundation
 
 /// The ids AndroidX's `RemoteContext` reserves for values the player supplies, not the document.
 ///
+/// Spec: the `ID_*` constants of
+/// [`RemoteContext.java`](https://github.com/androidx/androidx/blob/androidx-main/compose/remote/remote-core/src/main/java/androidx/compose/remote/core/RemoteContext.java).
+///
 /// Only the ones this core actually loads are named, matching the upstream `RcSystemVariables`
 /// contract. A reference to an id the player does not load resolves to 0 and poisons the arithmetic
 /// downstream, so naming one here without loading it would be worse than leaving it out.
@@ -11,9 +14,11 @@ import Foundation
 /// *integer* variable whose expressions are evaluated at decode time, before a host clock can be
 /// supplied.
 public enum NativeSwiftSystemVariables {
-  /// AndroidX `RemoteComposeState.START_ID`: ids below it are the player's own (or literal
-  /// constants), and a document's own variables start here. The Kotlin player's
-  /// `LITERAL_ID_LIMIT`.
+  /// The first id a document's own variables use; ids below it are the player's.
+  ///
+  /// AndroidX `START_ID` in
+  /// [`RemoteComposeState.java`](https://github.com/androidx/androidx/blob/androidx-main/compose/remote/remote-core/src/main/java/androidx/compose/remote/core/RemoteComposeState.java);
+  /// the Kotlin player's `LITERAL_ID_LIMIT`.
   public static let firstDocumentID = 42
 
   /// Device pixels per dp, as the player is playing the document.

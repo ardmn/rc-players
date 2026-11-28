@@ -10,17 +10,21 @@ import Testing
   private typealias Placement = NativeSwiftTextOnCirclePlacement
   private typealias ValueIndex = NativeSwiftTextOnCircle.ValueIndex
 
-  /// Five glyph advances laid on a circle of effective radius 80 round (120, 110), pinned at -60°.
-  private static let advances: [Float] = [10, 12, 8, 14, 9]
-  private static let textWidth = advances.reduce(0, +)
+  /// The circle: effective radius 80 round (120, 110), the string pinned at -60°.
   private static let centerX: Float = 120
   private static let centerY: Float = 110
   private static let warp: Float = 10
   private static let effectiveRadius: Float = 80
   private static let startAngle: Float = -60
   private static let degreesPerRadian: Float = 180 / .pi
-  /// The sweep `textWidth` makes at `effectiveRadius`, in degrees.
-  private static let sweepDegrees = textWidth / effectiveRadius * degreesPerRadian
+  /// The arc each of three glyphs covers on that circle, in degrees: uneven, so a walk that
+  /// spaced glyphs evenly or measured from the wrong edge lands elsewhere.
+  private static let glyphDegrees: [Float] = [20, 30, 10]
+  /// Each glyph's advance: its arc's length, `degrees / degreesPerRadian * radius`.
+  private static let advances = glyphDegrees.map { $0 / degreesPerRadian * effectiveRadius }
+  private static let textWidth = advances.reduce(0, +)
+  /// The sweep `textWidth` makes at `effectiveRadius`: 60°.
+  private static let sweepDegrees = glyphDegrees.reduce(0, +)
 
   /// A command's values in `ValueIndex` order; the radius is the operation's own, before warp.
   private static func values(
@@ -44,77 +48,50 @@ import Testing
       values: Self.values(alignment: Float(alignment), placement: Float(placement)))
   }
 
-  /// One Kotlin case: an alignment, a placement and the glyphs the Kotlin player placed.
-  struct KotlinCase: Sendable, CustomTestStringConvertible {
+  /// One alignment and placement, and the angle of each glyph's centre on the circle.
+  struct PlacementCase: Sendable, CustomTestStringConvertible {
     let alignment: Int
     let placement: Int
-    let glyphs: [(x: Float, y: Float, degrees: Float)]
+    let centerDegrees: [Float]
     var testDescription: String { "alignment \(alignment), placement \(placement)" }
   }
 
-  /// Glyph centres and rotations the Kotlin player computes for the same circle and advances:
-  /// `arcForCircleText` measured by `RcPathMeasure`, read at each glyph's centre as
-  /// `drawTextSegmentsOnPath` reads it (a temporary jvmTest printed them). Compose builds the arc
-  /// from cubics, which `RcPathMeasure` finds 0.1% short of the true arc (52.94 for 53 here), so
-  /// its later glyphs run up to 0.08 pt and 0.06° ahead of the true circle the Swift player walks;
-  /// 0.15 pt and 0.1° is that approximation, not slack in the arithmetic.
-  static let kotlinCases: [KotlinCase] = [
-    KotlinCase(
-      alignment: Alignment.start, placement: Placement.outside,
-      glyphs: [
-        (164.22662, 43.336617, 33.561558), (172.97351, 50.051617, 41.46548),
-        (180.04732, 57.13868, 48.64165), (186.73883, 65.88732, 56.53631),
-        (192.38486, 75.93489, 64.79781),
-      ]),
-    KotlinCase(
-      alignment: Alignment.center, placement: Placement.outside,
-      glyphs: [
-        (140.1417, 32.577053, 14.582335), (150.59695, 36.08229, 22.48625),
-        (159.5911, 40.483494, 29.662413), (168.76413, 46.580284, 37.557087),
-        (177.37094, 54.245396, 45.818584),
-      ]),
-    KotlinCase(
-      alignment: Alignment.end, placement: Placement.outside,
-      glyphs: [
-        (113.86682, 30.235445, -4.3968964), (124.89369, 30.149813, 3.5070307),
-        (134.83028, 31.386618, 10.683196), (145.48743, 34.168667, 18.577862),
-        (156.11923, 38.61793, 26.839375),
-      ]),
-    KotlinCase(
-      alignment: Alignment.start, placement: Placement.inside,
-      glyphs: [
-        (155.61887, 38.366932, -153.56158), (145.43007, 34.149414, -161.4655),
-        (135.75557, 31.566833, -168.64166), (124.833275, 30.14614, -176.5363),
-        (113.308815, 30.280313, 175.2022),
-      ]),
-    KotlinCase(
-      alignment: Alignment.center, placement: Placement.inside,
-      glyphs: [
-        (176.97939, 53.845314, -134.58234), (168.71613, 46.54341, -142.48625),
-        (160.4075, 40.95485, -149.6624), (150.54102, 36.059177, -157.55707),
-        (139.59943, 32.438015, -165.81857),
-      ]),
-    KotlinCase(
-      alignment: Alignment.end, placement: Placement.inside,
-      glyphs: [
-        (192.14471, 75.429214, -115.60311), (186.70544, 65.836845, -123.50703),
-        (180.66603, 57.849926, -130.6832), (172.92813, 50.011566, -138.57787),
-        (163.75906, 43.028778, -146.83937),
-      ]),
+  /// Derived by hand from `arcForCircleText` and the glyph walk. The arc starts at `startAngle`
+  /// (-60°), moved back along the direction of travel by 0, half (30°) or all (60°) of the
+  /// sweep for START, CENTER and END. A glyph's centre is the arc start plus the glyphs before it
+  /// plus half its own `glyphDegrees`, clockwise (+) OUTSIDE and counter-clockwise (-) INSIDE.
+  /// For OUTSIDE START: -60 + 10 = -50, -60 + 20 + 15 = -25, -60 + 50 + 5 = -5.
+  static let placementCases: [PlacementCase] = [
+    PlacementCase(
+      alignment: Alignment.start, placement: Placement.outside, centerDegrees: [-50, -25, -5]),
+    PlacementCase(
+      alignment: Alignment.center, placement: Placement.outside, centerDegrees: [-80, -55, -35]),
+    PlacementCase(
+      alignment: Alignment.end, placement: Placement.outside, centerDegrees: [-110, -85, -65]),
+    PlacementCase(
+      alignment: Alignment.start, placement: Placement.inside, centerDegrees: [-70, -95, -115]),
+    PlacementCase(
+      alignment: Alignment.center, placement: Placement.inside, centerDegrees: [-40, -65, -85]),
+    PlacementCase(
+      alignment: Alignment.end, placement: Placement.inside, centerDegrees: [-10, -35, -55]),
   ]
 
-  @Test(arguments: kotlinCases)
-  func glyphPlacementsMatchTheKotlinPlayer(reference: KotlinCase) throws {
+  /// Each glyph sits on the circle at its centre angle, turned to the tangent along the direction
+  /// of travel: a quarter turn on from the radius, +90° OUTSIDE and -90° INSIDE.
+  @Test(arguments: placementCases)
+  func eachGlyphSitsAtItsCentreAngleTurnedToTheTangent(reference: PlacementCase) throws {
     let circle = try #require(
       circle(alignment: reference.alignment, placement: reference.placement))
     let glyphs = circle.glyphs(advances: Self.advances)
-    #expect(glyphs.count == reference.glyphs.count)
-    for (glyph, expected) in zip(glyphs, reference.glyphs) {
-      let turn = (glyph.rotationRadians * Self.degreesPerRadian - expected.degrees)
-        .truncatingRemainder(dividingBy: 360)
-      #expect(abs(glyph.x - expected.x) < 0.15, "\(glyph) vs \(expected)")
-      #expect(abs(glyph.y - expected.y) < 0.15, "\(glyph) vs \(expected)")
-      #expect(min(abs(turn), 360 - abs(turn)) < 0.1, "\(glyph) vs \(expected)")
+    let quarterTurn: Float = reference.placement == Placement.inside ? -90 : 90
+    #expect(glyphs.count == reference.centerDegrees.count)
+    for (glyph, degrees) in zip(glyphs, reference.centerDegrees) {
+      let radians = degrees / Self.degreesPerRadian
+      #expect(abs(glyph.x - (Self.centerX + Self.effectiveRadius * cos(radians))) < 1e-3)
+      #expect(abs(glyph.y - (Self.centerY + Self.effectiveRadius * sin(radians))) < 1e-3)
+      #expect(
+        abs(glyph.rotationRadians * Self.degreesPerRadian - (degrees + quarterTurn)) < 1e-3,
+        "\(glyph) at \(degrees)°")
     }
   }
 

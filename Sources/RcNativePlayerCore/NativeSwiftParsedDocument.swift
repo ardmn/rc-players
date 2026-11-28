@@ -413,8 +413,8 @@ struct ParsedDrawCommand {
       || (path?.sourceReferences(anyOf: componentValueIDs) ?? false)
   }
 
-  /// This command against one set of values, or nil when it draws nothing at all: a
-  /// `DrawTextOnCircle` whose circle is unusable (`NativeSwiftTextOnCircle(values:)`).
+  /// This command resolved against one set of values, or nil for a `DrawTextOnCircle` whose
+  /// circle is unusable (`NativeSwiftTextOnCircle(values:)`).
   func resolve(
     values: [Int: Float], integers: [Int: Int], colors: [Int: UInt32], texts: [Int: String],
     matrices: [Int: ParsedMatrixExpression]
@@ -425,24 +425,20 @@ struct ParsedDrawCommand {
     let resolvedValues =
       staticValues
       ?? words.enumerated().map { index, word in
-        if nanSentinelIndices.contains(index) { return .nan }
-        // A document variable nothing has written is not a number on the circle, as in the
-        // Kotlin player (`RcPlayerState.resolve` falls back to the NaN word): the circle is then
-        // unusable and draws nothing, where reading it as 0 would draw round the origin. The
-        // player's own ids keep the core's rule: Kotlin always loads its clock, and a host here
-        // that supplies none still gets the circle, at 0.
-        if isTextOnCircle, let id = NativeSwiftFloatExpression.referenceID(word),
-          id >= NativeSwiftSystemVariables.firstDocumentID
-        {
-          return values[id] ?? .nan
-        }
-        return NativeSwiftFloatExpression.resolve(word, values: values)
+        // On the circle an unwritten document variable is NaN, as Kotlin's `RcPlayerState.resolve`
+        // leaves it, so the circle draws nothing rather than round the origin.
+        let isUnwrittenVariable =
+          isTextOnCircle
+          && NativeSwiftFloatExpression.referenceID(word).map {
+            $0 >= NativeSwiftSystemVariables.firstDocumentID && values[$0] == nil
+          } ?? false
+        return nanSentinelIndices.contains(index) || isUnwrittenVariable
+          ? .nan : NativeSwiftFloatExpression.resolve(word, values: values)
       }
     let resolvedPath = try path?.resolve(values: values, integers: integers) ?? []
     // MATRIX_FROM_PATH draws as the matrix measured off its path, not as the path itself.
     let isPathMatrix = kind == NativeSwiftDrawKind.matrixFromPath
-    // Resolved before the circle is checked, so a paint the player cannot draw is still reported
-    // when the circle would have drawn nothing.
+    // Before the circle check, so an unsupported paint is reported even when nothing draws.
     let colorARGB = try resolvePaintColor(colors: colors)
     if isTextOnCircle, NativeSwiftTextOnCircle(values: resolvedValues) == nil { return nil }
     return NativeSwiftDrawCommandSnapshot(

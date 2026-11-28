@@ -3941,8 +3941,7 @@ private final class NativeMacCanvasView: NSView {
     context.restoreGState()
   }
 
-  /// `DrawTextOnCircle`: the string typeset as `drawText` typesets it, then laid on the circle the
-  /// core resolved (`NativeTextOnCircle`).
+  /// Draws a `DrawTextOnCircle`: the string typeset as `drawText` does, laid on its circle.
   private func drawTextOnCircle(_ command: NativeMacDrawCommand, _ context: CGContext) {
     guard let circle = NativeSwiftTextOnCircle(drawing: command), let line = textLine(command) else {
       return
@@ -3950,7 +3949,7 @@ private final class NativeMacCanvasView: NSView {
     NativeTextOnCircle.draw(line, along: circle, in: context)
   }
 
-  /// The command's string typeset in its size and colour, or nil when it has none to draw.
+  /// The command's string typeset in its font and colour; nil when it has no text.
   private func textLine(_ command: NativeMacDrawCommand) -> CTLine? {
     guard let text = command.text, !text.isEmpty else { return nil }
     let size = max(CGFloat(command.textSize), 1)
@@ -3965,9 +3964,7 @@ private final class NativeMacCanvasView: NSView {
       string: text,
       attributes: [
         .font: font,
-        // The colour keeps its own alpha; the paint alpha is already the context's alpha (`draw`
-        // sets it), so replacing the colour's alpha with it both dropped the colour's alpha and
-        // applied the paint alpha twice.
+        // Keeps the colour's alpha: `draw` already put the paint alpha on the context.
         .foregroundColor: NativeMacComponentView.color(command.color),
         .paragraphStyle: paragraph,
       ])

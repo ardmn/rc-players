@@ -5,13 +5,11 @@ import CoreText
   import RcNativePlayerCore
 #endif
 
-/// Draws a typeset line along a `DrawTextOnCircle`'s circle, for both the UIKit and the AppKit
-/// canvas. Each host typesets the string with its own text pipeline (font, colour, fallback);
-/// this walks the line's glyphs and the core (`NativeSwiftTextOnCircle.glyphs(advances:)`) decides
-/// where each one goes.
+/// Draws a typeset line along a `DrawTextOnCircle`'s circle, on the UIKit and AppKit canvases.
+///
+/// Each host typesets the string itself; `NativeSwiftTextOnCircle.glyphs(advances:)` places it.
 enum NativeTextOnCircle {
-  /// One glyph of a typeset line: its run, its index there, where the line set it, and its
-  /// advance.
+  /// One glyph of a typeset line: its run, its index in the run, its x on the line, its advance.
   private struct LineGlyph {
     let run: CTRun
     let index: CFIndex
@@ -19,11 +17,16 @@ enum NativeTextOnCircle {
     let advance: CGFloat
   }
 
-  /// Draws `line`'s glyphs, in its visual order, each centred on its place on `circle` with its
-  /// baseline on the arc and turned to the arc's tangent. `context` is y-down. O(n) in the glyphs.
+  /// Draws a line's glyphs along a circle, each centred on its place with its baseline on the arc.
+  ///
+  /// O(n) in the glyphs.
+  ///
+  /// - Parameters:
+  ///   - line: The typeset string, drawn in its visual order.
+  ///   - circle: The circle the core resolved.
+  ///   - context: A y-down context.
   static func draw(_ line: CTLine, along circle: NativeSwiftTextOnCircle, in context: CGContext) {
-    // The arc is cut from the sum of these advances, so it is exactly as long as the walk
-    // (kerning and shaping included, as `Paint.measureText` includes them on Android).
+    // Shaped advances, kerning included, as Android's `Paint.measureText` measures them.
     var glyphs: [LineGlyph] = []
     for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
       let count = CTRunGetGlyphCount(run)
@@ -43,14 +46,19 @@ enum NativeTextOnCircle {
       context.saveGState()
       context.translateBy(x: CGFloat(placement.x), y: CGFloat(placement.y))
       context.rotate(by: CGFloat(placement.rotationRadians))
-      // CoreText draws y-up: flip so the glyph stands on the arc rather than hanging from it.
+      // CoreText draws y-up: flip so the glyph stands on the arc.
       context.scaleBy(x: 1, y: -1)
       context.textMatrix = .identity
-      // The run draws the glyph at its line position from here, so this puts its centre on the
-      // origin and its baseline on the arc.
+      // The run draws at its line x: shift so the glyph's centre is on the origin.
       context.textPosition = CGPoint(x: -(glyph.lineX + glyph.advance / 2), y: 0)
       CTRunDraw(glyph.run, context, CFRange(location: glyph.index, length: 1))
       context.restoreGState()
     }
   }
+}
+
+extension NativeSwiftDrawCommandSnapshot {
+  /// The strings a host typesets for this command every frame, which spend the frame's text
+  /// budget as a text component's string does: a `DrawTextOnCircle`'s string, none otherwise.
+  var typesetStrings: [String?] { kind == NativeSwiftDrawKind.textOnCircle ? [text] : [] }
 }

@@ -113,12 +113,8 @@
           }
         }
         for command in node.commands {
-          // The circle's string is typeset every frame, so it spends the text budget as a text
-          // component's does.
           try budget.recordCommand(
-            pathElementCount: command.path.count,
-            strings: command.kind == NativeSwiftDrawKind.textOnCircle ? [command.text] : [],
-            limits: limits)
+            pathElementCount: command.path.count, strings: command.typesetStrings, limits: limits)
           try budget.validateNumbers(
             command.geometryValues.map(Double.init)
               + [Double(command.strokeWidth), Double(command.alpha)]
@@ -421,8 +417,7 @@
     let filterQuality: Int?
     let usesComponentGeometry: Bool
     let offscreenTarget: NativeSwiftOffscreenTargetSnapshot?
-    /// The circle a `DrawTextOnCircle` lays its string on, resolved once here rather than from
-    /// `values` on every draw; nil for every other kind.
+    /// The circle a `DrawTextOnCircle` draws on, resolved once per snapshot; nil for other kinds.
     let textOnCircle: NativeSwiftTextOnCircle?
 
     init(_ snapshot: NativeSwiftDrawCommandSnapshot) {
@@ -435,14 +430,12 @@
       strokeCap = snapshot.strokeCap
       strokeJoin = snapshot.strokeJoin
       blendMode = snapshot.blendMode
-      // Only `DrawTextOnCircle` draws its string from here. A canvas `DrawText` keeps the nil it
-      // always had, so `drawText` still skips it: drawing it is a change of its own.
+      // Only the circle draws its string; canvas `DrawText` keeps nil, as before.
       textOnCircle = NativeSwiftTextOnCircle(drawing: snapshot)
-      let isTextOnCircle = textOnCircle != nil
-      textSize = isTextOnCircle ? CGFloat(snapshot.textSize) : 16
+      textSize = textOnCircle == nil ? 16 : CGFloat(snapshot.textSize)
       textSizeIsDensityTyped = false
       textWeight = 400
-      text = isTextOnCircle ? snapshot.text : nil
+      text = textOnCircle == nil ? nil : snapshot.text
       path = snapshot.path.map {
         NativePathElement(kind: $0.kind, values: $0.values.map(CGFloat.init))
       }
@@ -2196,8 +2189,7 @@
         ? .byWordWrapping : lineBreakMode(command.textStyle.overflow)
       var attributes: [NSAttributedString.Key: Any] = [
         .font: font,
-        // `keepingColorAlpha` keeps the colour's own alpha, for a caller whose context already
-        // carries the paint alpha; otherwise the paint alpha replaces it.
+        // The paint alpha replaces the colour's unless the context already carries it.
         .foregroundColor: keepingColorAlpha
           ? command.color : command.color.withAlphaComponent(command.alpha),
         .paragraphStyle: paragraph,
@@ -2671,19 +2663,17 @@
       context.restoreGState()
     }
 
-    /// `DrawTextOnCircle`: the string typeset as `drawText` typesets it, then laid on the circle
-    /// the core resolved (`NativeTextOnCircle`).
+    /// Draws a `DrawTextOnCircle`: the string typeset as `drawText` does, laid on its circle.
     private func drawTextOnCircle(_ command: NativeDrawCommand, _ context: CGContext) {
       guard command.blendMode != NativeSwiftPaintBlendMode.destination,
         let circle = command.textOnCircle, let text = command.text, !text.isEmpty
       else { return }
-      // The colour keeps its own alpha: `draw` already made the paint alpha the context's.
+      // `draw` already put the paint alpha on the context.
       NativeTextOnCircle.draw(
         textLine(command, keepingColorAlpha: true), along: circle, in: context)
     }
 
-    /// The command's string typeset with the canvas's fonts, as `drawText` and `drawTextOnCircle`
-    /// both draw it.
+    /// The command's string typeset with the canvas's fonts.
     private func textLine(_ command: NativeDrawCommand, keepingColorAlpha: Bool = false) -> CTLine {
       let font = NativeTextAttributes.font(for: command, scale: 1, fontNames: fontNames)
       return CTLineCreateWithAttributedString(

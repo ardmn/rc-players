@@ -28,6 +28,6 @@ How each picture was made:
   -Prc.textOnCircle.out=<dir>`.
 
 The glyphs are the hosts' own system fonts (SF on Apple, Skia's default on the JVM), so the
-letterforms and their widths differ. The geometry is compared in the tests: per-glyph centres and
-angles against the Kotlin player's arc and walker, and the 36-bucket ring signature of the Kotlin
-test's documents.
+letterforms and their widths differ. The geometry is compared in the tests: per-glyph centre
+angles derived from `arcForCircleText` and its glyph walk, and the 36-bucket ring signature of the
+Kotlin test's documents.

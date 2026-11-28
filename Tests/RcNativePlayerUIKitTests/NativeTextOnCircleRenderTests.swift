@@ -134,20 +134,22 @@ import Testing
   /// while the circle is empty and returns, at the new radius, once it is not — nothing about the
   /// empty frame sticks.
   @Test func aRadiusThatPassesThroughZeroDropsTheDrawAndBringsItBack() throws {
+    let radiusName = "radius"
     let session = try NativeSwiftDocumentSession.open(
       data: Documents.textOnCircle(
         radius: .variable(Self.radiusID),
         definitions: [(Self.radiusID, Self.radius - Documents.textOnCircleWarp)],
-        names: [(Self.radiusID, "radius")]))
+        names: [(Self.radiusID, radiusName)]))
     func circles() throws -> [NativeSwiftTextOnCircle] {
       try Self.drawCommands(in: session.snapshot().root)
         .compactMap(NativeSwiftTextOnCircle.init(drawing:))
     }
     #expect(try circles().map(\.radius) == [Self.radius])
-    #expect(session.setFloat(-Documents.textOnCircleWarp, for: "radius"))
+    #expect(session.setFloat(-Documents.textOnCircleWarp, for: radiusName))
     #expect(try circles().isEmpty, "an empty circle still drew")
-    #expect(session.setFloat(50, for: "radius"))
-    #expect(try circles().map(\.radius) == [50 + Documents.textOnCircleWarp])
+    let newRadius: Float = 50
+    #expect(session.setFloat(newRadius, for: radiusName))
+    #expect(try circles().map(\.radius) == [newRadius + Documents.textOnCircleWarp])
   }
 
   /// The player's own ids are not document variables: a circle pinned to the clock still draws

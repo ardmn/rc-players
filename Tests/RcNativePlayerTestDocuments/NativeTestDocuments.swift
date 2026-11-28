@@ -183,6 +183,11 @@ public enum NativeTestDocuments {
   public static let textOnCircleText = "REMOTE COMPOSE"
   public static let textOnCircleTextID = 7
   public static let textOnCircleTextSize: Float = 18
+  /// The dial scenes' paints, as `RcTextOnCircleRenderTest.dial` writes them: the grey ring's
+  /// stroke width and colour, and the blue of the label on it.
+  static let dialStrokeWidth: Float = 2
+  static let dialRingColor = Int(Int32(bitPattern: 0xff9a_a0a6))
+  static let dialLabelColor = Int(Int32(bitPattern: 0xff1a_73e8))
 
   /// A float word: a literal, or a reference to float `id` in the form the Kotlin codec writes.
   public enum FloatWord {
@@ -260,7 +265,7 @@ public enum NativeTestDocuments {
     case .dial, .labelledDial:
       paint([
         NativeTestWire.styleWord(NativeTestWire.PaintStyle.stroke), Key.strokeWidth,
-        FloatWord.literal(2).bits, Key.color, Int(Int32(bitPattern: 0xff9a_a0a6)),
+        FloatWord.literal(dialStrokeWidth).bits, Key.color, dialRingColor,
       ])
       wire.u8(Op.drawCircle)
       for value in [textOnCircleCenter, textOnCircleCenter, textOnCircleRadius] {
@@ -269,7 +274,7 @@ public enum NativeTestDocuments {
       if scene == .labelledDial {
         paint([
           NativeTestWire.styleWord(NativeTestWire.PaintStyle.fill), Key.textSize, textSize,
-          Key.color, Int(Int32(bitPattern: 0xff1a_73e8)),
+          Key.color, dialLabelColor,
         ])
         drawTextOnCircle()
       }
