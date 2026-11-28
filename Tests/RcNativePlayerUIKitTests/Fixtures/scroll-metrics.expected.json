@@ -1,0 +1,9 @@
+{
+  "_source": "RcScrollMetricsReferenceTest (Kotlin player): the readouts, in points, of renders/swift-creation/scroll-metrics-paged.rc and scroll-metrics-list.rc",
+  "paged": {
+    "rest": { "offset": 0, "maximumOffset": 720, "contentLength": 960 }
+  },
+  "list": {
+    "rest": { "offset": 0, "maximumOffset": 356, "contentLength": 528 }
+  }
+}

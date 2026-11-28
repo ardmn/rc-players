@@ -4495,13 +4495,17 @@ private fun Modifier.applyAndroidXScroll(
   val initialPosition = state.resolve(operation.position).takeIf(Float::isFinite)?.roundToInt() ?: 0
   val scrollState = rememberScrollState(initialPosition.coerceAtLeast(0))
   val touchRuntime = touch?.let { remember(it) { RcTouchExpressionRuntime(it) } }
+  val invalidate = LocalRcInvalidate.current
 
   LaunchedEffect(scrollState, operation, state) {
     // The first position is where the scroll starts, not a move across a stop; and a change to
     // the range alone (a layout change, the position unmoved) is not a move either.
     var lastPosition: Int? = null
-    snapshotFlow { scrollState.value to scrollState.maxValue }
-      .collect { (position, maximum) ->
+    // The range and viewport last published, so only a change to them re-evaluates their readers.
+    var publishedExtents: Pair<Int, Int>? = null
+    // The viewport is watched too: content that fits can change it with the range unmoved.
+    snapshotFlow { Triple(scrollState.value, scrollState.maxValue, scrollState.viewportSize) }
+      .collect { (position, maximum, viewport) ->
         operation.position.referencedId?.let { state.setFloat(it, position.toFloat()) }
         operation.max.referencedId?.let { state.setFloat(it, maximum.toFloat()) }
         // The scroll's touch expression asks for a haptic as the position crosses its stops.
@@ -4519,16 +4523,21 @@ private fun Modifier.applyAndroidXScroll(
             )
             ?.takeIf { moved }
             ?.let { state.performHapticFeedback(RcHapticFeedback(it)) }
-        operation.notchMax.referencedId?.let {
-          state.setFloat(it, (maximum + scrollState.viewportSize).toFloat())
-        }
-        val contentExtent = (maximum + scrollState.viewportSize).toFloat()
+        operation.notchMax.referencedId?.let { state.setFloat(it, (maximum + viewport).toFloat()) }
+        val contentExtent = (maximum + viewport).toFloat()
         geometryComponentIds.forEach { componentId ->
           if (operation.direction == RcScrollModifier.VERTICAL) {
             state.publishComponentContentSize(componentId, height = contentExtent)
           } else {
             state.publishComponentContentSize(componentId, width = contentExtent)
           }
+        }
+        // What reads the published range is re-evaluated only on an invalidation; a frame that
+        // only moves the position leaves it as it was.
+        val extents = maximum to viewport
+        if (extents != publishedExtents) {
+          publishedExtents = extents
+          invalidate()
         }
       }
   }

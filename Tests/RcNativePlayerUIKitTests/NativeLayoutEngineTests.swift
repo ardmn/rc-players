@@ -153,6 +153,81 @@ import Testing
     expectFrame(tree, 3, CGRect(x: 10, y: 28, width: 10, height: 10))
   }
 
+  // MARK: - Scroll measurement
+
+  /// A vertically scrolled column of three children, 50, 50 and 300 points tall, in a 100-point
+  /// viewport.
+  private func scrolledColumn(
+    _ configure: (inout NativeLayoutNode) -> Void = { _ in }
+  ) -> NativeSwiftScrollMeasurement? {
+    let root = item(
+      .column, id: 1,
+      children: [
+        fixed(2, width: 10, height: 50), fixed(3, width: 10, height: 50),
+        fixed(4, width: 10, height: 300),
+      ]
+    ) {
+      $0.scrollDirection = .vertical
+      configure(&$0)
+    }
+    return NativeLayoutEngine().arrange(root, in: CGRect(x: 0, y: 0, width: 100, height: 100))
+      .scrollMeasurement
+  }
+
+  /// AndroidX `ScrollModifierOperation.layout` caps the travel at the last child only when the
+  /// modifier holds a touch expression; otherwise it is the whole overflow.
+  @Test func onlyATouchExpressionCapsTheTravelAtTheLastChild() throws {
+    let plain = try #require(scrolledColumn())
+    #expect(plain.content == 400)
+    #expect(plain.maximumOffset == 300)
+    let touched = try #require(scrolledColumn { $0.scrollHasTouchExpression = true })
+    #expect(touched.maximumOffset == 100)
+  }
+
+  /// AndroidX caps at its last child component whatever its visibility, and its column leaves a
+  /// GONE child where the visible ones end, past any overflow: a GONE last child caps nothing.
+  @Test func aGoneLastChildDoesNotCapTheTravel() throws {
+    let root = item(
+      .column, id: 1,
+      children: [
+        fixed(2, width: 10, height: 50), fixed(3, width: 10, height: 300),
+        fixed(4, width: 10, height: 50) { $0.visibility = NativeSwiftVisibility.gone },
+      ]
+    ) {
+      $0.scrollDirection = .vertical
+      $0.scrollHasTouchExpression = true
+    }
+    let measured = try #require(
+      NativeLayoutEngine().arrange(root, in: CGRect(x: 0, y: 0, width: 100, height: 100))
+        .scrollMeasurement)
+    #expect(measured.content == 350)
+    #expect(measured.maximumOffset == 250)
+  }
+
+  /// AndroidX's host dimension is the scroll's length within its padding, and its content is the
+  /// children's: 400 points of children in 100 less 20 of padding travel 320.
+  @Test func aScrollsPaddingShortensItsViewportNotItsContent() throws {
+    let padded = try #require(
+      scrolledColumn { $0.padding = NativeLayoutInsets(top: 15, left: 0, bottom: 5, right: 0) })
+    #expect(padded.viewport == 80)
+    #expect(padded.content == 400)
+    #expect(padded.maximumOffset == 320)
+  }
+
+  /// An offset modifier moves a child's paint, not its layout, so the content keeps its length.
+  @Test func anOffsetChildDoesNotLengthenTheContent() throws {
+    let root = item(
+      .column, id: 1,
+      children: [
+        fixed(2, width: 10, height: 50), fixed(3, width: 10, height: 50) { $0.offset.y = 30 },
+      ]
+    ) { $0.scrollDirection = .vertical }
+    let measured = try #require(
+      NativeLayoutEngine().arrange(root, in: CGRect(x: 0, y: 0, width: 100, height: 60))
+        .scrollMeasurement)
+    #expect(measured.content == 100)
+  }
+
   // MARK: - Collapsible
 
   @Test func collapsibleColumnHidesTheChildrenThatDoNotFit() {

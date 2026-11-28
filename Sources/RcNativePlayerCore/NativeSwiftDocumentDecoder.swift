@@ -2235,6 +2235,9 @@ enum NativeSwiftDocumentDecoder {
           }
           for _ in 0..<count { _ = try input.word("touch expression \(array) value") }
         }
+        // AndroidX's `ScrollModifierOperation.inflate` adopts a touch expression inside the
+        // modifier, and `layout` caps the travel at the last child only when it has one.
+        modifierContainers.last?.scrollOwner?.scrollHasTouchExpression = true
       case NativeSwiftWireOpcode.particleDefine:  // Particle define
         // From AndroidX's ParticlesCreate.read: an id, the particle count, then a variable count and
         // that many variables, each an id followed by a length-prefixed expression. The bounds are
@@ -2462,8 +2465,9 @@ enum NativeSwiftDocumentDecoder {
         node.scrollDirection = direction
         node.scrollPositionWord = try input.word("scroll position")
         node.scrollMaximumWord = try input.word("scroll maximum")
-        _ = try input.word("scroll notch maximum")
-        modifierContainers.append(ParsedModifierContainer(node: nil, gesture: nil))
+        node.scrollContentLengthWord = try input.word("scroll notch maximum")
+        modifierContainers.append(
+          ParsedModifierContainer(node: nil, gesture: nil, scrollOwner: node))
       case NativeSwiftWireOpcode.modifierMarquee:  // Marquee modifier
         // INT iterations, INT animation mode, then repeat delay, initial delay, spacing and velocity
         // as float words (`MarqueeModifierOperation`). A plain modifier, not a container: it lets
@@ -3095,8 +3099,8 @@ enum NativeSwiftDocumentDecoder {
     func references(_ ids: Set<Int>, in words: [UInt32]) -> Bool {
       words.contains { NativeSwiftFloatExpression.referenceID($0).map(ids.contains) ?? false }
     }
-    func references(_ ids: Set<Int>) -> Bool {
-      if root.references(anyOf: ids) { return true }
+    func references(_ ids: Set<Int>, countingScrollExtents: Bool = true) -> Bool {
+      if root.references(anyOf: ids, countingScrollExtents: countingScrollExtents) { return true }
       if expressions.contains(where: { references(ids, in: $0.words) }) { return true }
       if integerExpressions.values.contains(where: {
         NativeSwiftIntegerExpression.references(anyOf: ids, mask: $0.mask, tokens: $0.tokens)
@@ -3194,6 +3198,14 @@ enum NativeSwiftDocumentDecoder {
         return writer >= index
       }
     }
+    // A host measures a scroll only when something reads what its layout publishes: measuring one
+    // costs the host a second resolve each frame. One scan of the document when nothing reads any
+    // extent, else one per scroll.
+    let scrolls = nodes.values.filter { !$0.scrollExtentIDs.isEmpty }
+    let measuredScrollIDs =
+      references(Set(scrolls.flatMap(\.scrollExtentIDs)), countingScrollExtents: false)
+      ? scrolls.filter { references($0.scrollExtentIDs, countingScrollExtents: false) }
+        .map(\.componentID) : []
     return ParsedDocument(
       width: width, height: height, density: density, densityBehavior: densityBehavior,
       root: root, nodes: nodes, texts: texts, floats: floats,
@@ -3230,7 +3242,7 @@ enum NativeSwiftDocumentDecoder {
       // A component offscreen buffer is not an image a host loads; it is drawn into.
       imageSnapshots: images.values.filter { !$0.isComponentOffscreenBuffer }
         .sorted { $0.id < $1.id }.map(\.snapshot),
-      boundComponentIDs: Set(componentValues.map(\.componentID)),
+      boundComponentIDs: Set(componentValues.map(\.componentID)).union(measuredScrollIDs),
       needsTolerantExpressionPass: !componentValues.isEmpty || expressionsReadForward,
       layoutReadsComponentValues: !componentValueIDs.isEmpty
         && root.references(anyOf: componentValueIDs))
@@ -3455,10 +3467,14 @@ final class ParsedNode {
   fileprivate(set) var isCanvasContent = false
   /// Set by the scroll modifier (226).
   fileprivate(set) var scrollDirection: NativeSwiftScrollDirection?
-  /// The float word holding the scroll position, and the one holding how far it may travel. The
-  /// notch maximum is consumed by the decoder and dropped: nothing here snaps a scroll yet.
+  /// The float words holding the scroll position, how far it may travel, and the content's length
+  /// (AndroidX's notch maximum). A host's layout fills the last two.
   fileprivate(set) var scrollPositionWord: UInt32?
   fileprivate(set) var scrollMaximumWord: UInt32?
+  fileprivate(set) var scrollContentLengthWord: UInt32?
+  /// Whether the scroll modifier holds a touch expression, which caps its layout's travel at the
+  /// last child (AndroidX `ScrollModifierOperation.layout`).
+  fileprivate(set) var scrollHasTouchExpression = false
   /// Set by the marquee modifier (228). The float fields stay words so a variable resolves with the
   /// frame's values; `marqueeVelocityWord` being set is what marks the node as a marquee.
   fileprivate(set) var marqueeIterations = 0

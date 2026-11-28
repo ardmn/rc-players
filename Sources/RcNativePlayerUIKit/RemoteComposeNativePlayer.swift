@@ -1329,22 +1329,25 @@
     /// Queue `input` behind the open session's pending work. `reply` is called exactly once:
     /// `.deferred` while the document is opening, the scene is in the background or the queue is
     /// full, and `.refused` when no document will open.
+    /// Returns whether the input was queued.
+    @discardableResult
     private func enqueue(
       _ input: NativePlayerEngine.Input, hostWrite: UInt64? = nil,
       reply: ((RemoteComposeNativeInputAdmission) -> Void)?
-    ) {
+    ) -> Bool {
       guard let presentation = openPresentation else {
         reply?(isOpeningDocument ? .deferred : .refused)
-        return
+        return false
       }
       guard isSceneActive,
         presentation.inputs.append(
           NativePendingInput(input: input, reply: reply, hostWrite: hostWrite))
       else {
         reply?(.deferred)
-        return
+        return false
       }
       startPump(for: presentation)
+      return true
     }
 
     private func startPump(for presentation: NativePlayerPresentation) {
@@ -1649,13 +1652,14 @@
     ) throws {
       try presentation.resources.activateFonts(replacing: installedResources)
       installedResources = presentation.resources
+      let sessionChanged = openPresentation !== presentation
       // Before the view update, so a callback it raises already finds this session.
       state = .presenting(presentation)
       // The session renders again with every value it holds, so none of them still fails it.
       presentation.failedWrites = [:]
       if documentView?.update(
-        document: model, resources: presentation.resources, customComponents: customComponents)
-        != true
+        document: model, resources: presentation.resources, customComponents: customComponents,
+        sessionChanged: sessionChanged) != true
       {
         let nextView = NativeDocumentView(
           document: model,
@@ -1674,6 +1678,9 @@
             }
             self.performCustomReturn(
               componentID: componentID, propertyID: propertyID, value: value)
+          },
+          onScrollLayout: { [weak self] measured in
+            self?.enqueue(.scrollLayout(measured), reply: nil) ?? false
           })
         replaceDocumentView(with: nextView)
       }
@@ -1953,7 +1960,9 @@
       } else {
         updateFrameDriver()
       }
-      // Input refused for the background may be taken now, or deferred to the reopen.
+      // Input refused for the background may be taken now, or deferred to the reopen; a scroll
+      // layout the document view could not hand over is offered again on its next pass.
+      documentView?.setNeedsLayout()
       inputAvailability.signal()
     }
   }

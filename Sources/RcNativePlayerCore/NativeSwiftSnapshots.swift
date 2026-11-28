@@ -307,7 +307,8 @@ public struct NativeSwiftDocumentSnapshot: Sendable {
   /// measured from now (its long argument has no value, e.g. after the host cleared it) also
   /// sets it, so this can change from one snapshot to the next.
   public let needsWallClockRefresh: Bool
-  /// Components whose measured geometry a document binds to a float.
+  /// Components whose measured geometry a document binds to a float, and the scrolls whose
+  /// published maximum offset or content length the document reads.
   ///
   /// Empty for almost every document, and that is the point: a host only has to measure and feed
   /// back what is named here, so the refinement costs nothing where nothing depends on it.
@@ -501,9 +502,16 @@ public struct NativeSwiftNodeSnapshot: Sendable {
   /// The scroll offset, resolved from the document's float at snapshot time. Zero until the document
   /// or a gesture moves it.
   public let scrollOffset: Float
-  /// How far the scroll may travel, from the modifier's own maximum. Zero means the document
-  /// has not had its measured travel written yet; a renderer can derive it from content measurement.
+  /// How far the scroll may travel, from the modifier's own maximum. Zero until a host's layout
+  /// publishes it (``NativeSwiftScrollMeasurement``).
   public let scrollMaximum: Float
+  /// The slot the maximum lives in, which the host's layout fills.
+  public let scrollMaximumID: Int?
+  /// The slot the content's length along the scroll lives in: AndroidX's notch maximum.
+  public let scrollContentLengthID: Int?
+  /// Whether the scroll modifier holds a touch expression, which caps the travel its layout
+  /// publishes at the last child.
+  public let scrollHasTouchExpression: Bool
   /// The marquee modifier this component carries, or nil. A marquee is a scroll the clock drives:
   /// like a scroll it moves the paint, not the layout, and the corpus reads its offset as `scroll_x`.
   public let marquee: NativeSwiftMarqueeSnapshot?
@@ -586,10 +594,41 @@ public struct NativeSwiftGraphicsLayerSnapshot: Sendable, Equatable {
 public struct NativeSwiftMeasuredSize: Sendable, Equatable {
   public let width: Float
   public let height: Float
+  /// Set for a scroll: what its layout measured along its axis, which publishes the scroll's
+  /// maximum offset and content length.
+  public let scroll: NativeSwiftScrollMeasurement?
 
-  public init(width: Float, height: Float) {
+  public init(width: Float, height: Float, scroll: NativeSwiftScrollMeasurement? = nil) {
     self.width = width
     self.height = height
+    self.scroll = scroll
+  }
+}
+
+/// What a host's layout measured of a scroll, along its axis, in document units: what AndroidX's
+/// measure policy hands `ScrollModifierOperation.setVertical/HorizontalScrollDimension`, plus where
+/// `ScrollModifierOperation.layout` caps the travel.
+public struct NativeSwiftScrollMeasurement: Sendable, Equatable {
+  /// The scroll's own length within its padding: AndroidX's host dimension.
+  public let viewport: Float
+  /// The length of what it scrolls: AndroidX's content dimension.
+  public let content: Float
+  /// Where the last child starts, for a scroll whose modifier holds a touch expression; nil for
+  /// any other scroll or one without children, whose travel AndroidX does not cap.
+  public let travelLimit: Float?
+
+  public init(viewport: Float, content: Float, travelLimit: Float?) {
+    self.viewport = viewport
+    self.content = content
+    self.travelLimit = travelLimit
+  }
+
+  /// How far the scroll may travel: `ScrollModifierOperation.layout`'s `max`, the overflow capped at
+  /// ``travelLimit`` when that is positive.
+  public var maximumOffset: Float {
+    let overflow = max(0, content - viewport)
+    guard let travelLimit, travelLimit > 0 else { return overflow }
+    return min(travelLimit, overflow)
   }
 }
 
