@@ -726,16 +726,7 @@ internal fun RcComposePlayerResolved(
   var hostChanges by remember(state) { mutableIntStateOf(0) }
   val layoutAnimationActivity = remember(state) { RcLayoutAnimationActivity() }
   val applyHostValues: (Map<String, RcNamedValue>) -> Unit =
-    remember(state) {
-      { current ->
-        (appliedNamedValues.keys - current.keys).forEach(state::clearNamedValue)
-        current.forEach { (name, value) ->
-          if (appliedNamedValues[name] != value) state.setNamedValue(name, value)
-        }
-        appliedNamedValues.clear()
-        appliedNamedValues.putAll(current)
-      }
-    }
+    remember(state) { { current -> state.applyHostValueChanges(appliedNamedValues, current) } }
   // Set while the collector below lays the tree out under the pass at the old values, before it
   // applies a change: the composition must not apply it first.
   val switchingOnLookahead = remember(state) { booleanArrayOf(false) }
@@ -9742,4 +9733,20 @@ private fun rcHasComposedDescendant(
         decided,
       )
     }
+}
+
+/**
+ * Brings this state from the host values it was last handed, [applied], to [current], and records
+ * [current] as applied: a removed value is cleared, and a value is set only when it differs from
+ * the one applied before, so a document action that changed the variable since keeps its value when
+ * the host hands the same map again.
+ */
+internal fun RcPlayerState.applyHostValueChanges(
+  applied: MutableMap<String, RcNamedValue>,
+  current: Map<String, RcNamedValue>,
+) {
+  (applied.keys - current.keys).forEach(::clearNamedValue)
+  current.forEach { (name, value) -> if (applied[name] != value) setNamedValue(name, value) }
+  applied.clear()
+  applied.putAll(current)
 }

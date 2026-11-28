@@ -242,6 +242,52 @@ tasks
     }
   }
 
+// RcNamedValueDifferentialTest compares the Kotlin player against this fixture, which the Swift
+// overlay's NativeControllerDifferentialTests replays. The path reaches the test as a tracked input
+// file, not a string, so the task's cache key stays relocatable; as a file collection, so a missing
+// fixture still runs the test (which says so) and the update run can create it. Both system
+// properties are set on every run, so the test fails when it reads a name this file no longer sets.
+// `-Prc.namedValueDifferential.update=true` rewrites the fixture in the same run that checks it, so
+// that run is never up to date or taken from the cache.
+val namedValueDifferentialFixtureProperty = "rc.namedValueDifferential.fixture"
+val namedValueDifferentialUpdateProperty = "rc.namedValueDifferential.update"
+
+abstract class NamedValueDifferentialFixture : CommandLineArgumentProvider {
+  @get:Input abstract val fixtureProperty: Property<String>
+
+  @get:Input abstract val updateProperty: Property<String>
+
+  @get:InputFiles
+  @get:PathSensitive(PathSensitivity.NONE)
+  abstract val fixture: ConfigurableFileCollection
+
+  @get:Input abstract val update: Property<Boolean>
+
+  override fun asArguments(): List<String> =
+    listOf(
+      "-D${fixtureProperty.get()}=${fixture.singleFile.absolutePath}",
+      "-D${updateProperty.get()}=${update.get()}",
+    )
+}
+
+tasks.named<Test>("jvmTest") {
+  val updateFixture =
+    providers.gradleProperty(namedValueDifferentialUpdateProperty).orNull == "true"
+  jvmArgumentProviders.add(
+    objects.newInstance<NamedValueDifferentialFixture>().apply {
+      fixtureProperty.set(namedValueDifferentialFixtureProperty)
+      updateProperty.set(namedValueDifferentialUpdateProperty)
+      fixture.from(
+        rootProject.layout.projectDirectory.file(
+          "Tests/RcNativePlayerCoreTests/Fixtures/named-value-differential.json",
+        ),
+      )
+      update.set(updateFixture)
+    },
+  )
+  if (updateFixture) doNotTrackState("rewrites the named-value differential fixture")
+}
+
 tasks.withType<Test>().configureEach {
   (project.findProperty("rc.textOnCircle.out") as String?)?.let {
     systemProperty("rc.textOnCircle.out", it)

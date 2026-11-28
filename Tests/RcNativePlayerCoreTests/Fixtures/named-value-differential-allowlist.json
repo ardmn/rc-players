@@ -1,0 +1,19 @@
+{
+  "allowed": [
+    {
+      "id": "native-refuses-non-finite-float",
+      "kind": "deliberate",
+      "reason": "The native controller and session refuse a NaN or infinite float (NativeSwiftNamedVariableDeclarations.accepts; RemoteComposePlayerControllerTests pins setFloat(.nan) == false). The Kotlin controller checks only the type (fitsWireType) and stores the value."
+    },
+    {
+      "id": "native-refuses-over-long-string",
+      "kind": "deliberate",
+      "reason": "The native controller and session refuse a string longer than a document string may be (NativeSwiftDocumentDecoder.maximumStringBytes, the stringLimitBytes the fixture carries; pinned by RemoteComposePlayerControllerTests). The Kotlin controller has no such check for a host string."
+    },
+    {
+      "id": "native-skips-an-equal-write-after-a-refused-one",
+      "kind": "deliberate",
+      "reason": "Follows from the two refusals above. After the native controller refuses a value the Kotlin controller stores, the two hold different last values for that name. A later write equal to the native controller's last accepted value is no change there (NativeControllerBackend.set), so a document action's value since stays; to the Kotlin controller it is a change from the refused value, and it writes."
+    }
+  ]
+}
