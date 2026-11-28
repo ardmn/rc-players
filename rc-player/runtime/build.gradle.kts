@@ -62,6 +62,37 @@ kotlin {
   }
 }
 
+// The fixture RcValueResolutionDifferentialTest checks and the Swift
+// NativeSwiftValueResolutionDifferentialTests replays. A tracked input file keeps the cache key
+// relocatable; an update run rewrites the fixture, so it is never up to date or cached.
+abstract class ValueResolutionDifferentialFixture : CommandLineArgumentProvider {
+  @get:InputFiles @get:PathSensitive(PathSensitivity.NONE) abstract val fixture: RegularFileProperty
+
+  @get:Input abstract val update: Property<Boolean>
+
+  override fun asArguments(): List<String> =
+    listOf(
+      "-Drc.valueResolutionDifferential.fixture=${fixture.get().asFile.absolutePath}",
+      "-Drc.valueResolutionDifferential.update=${update.get()}",
+    )
+}
+
+tasks.named<Test>("jvmTest") {
+  val updateFixture =
+    providers.gradleProperty("rc.valueResolutionDifferential.update").orNull == "true"
+  jvmArgumentProviders.add(
+    objects.newInstance<ValueResolutionDifferentialFixture>().apply {
+      fixture.set(
+        rootProject.layout.projectDirectory.file(
+          "Tests/RcNativePlayerCoreTests/Fixtures/value-resolution-differential.json",
+        ),
+      )
+      update.set(updateFixture)
+    },
+  )
+  if (updateFixture) doNotTrackState("rewrites the value-resolution differential fixture")
+}
+
 // `checkKotlinAbi` is not wired into `check` by the Kotlin Gradle plugin, so an unrecorded surface
 // change would pass CI silently. Wire it explicitly — the gate is only worth having if it runs.
 tasks.named("check") { dependsOn("checkKotlinAbi") }

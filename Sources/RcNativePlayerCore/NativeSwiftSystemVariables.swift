@@ -2,14 +2,12 @@ import Foundation
 
 /// The ids AndroidX's `RemoteContext` reserves for values the player supplies, not the document.
 ///
-/// Only the ones this core actually loads are named, matching the upstream `RcSystemVariables`
+/// Only the ones this core actually loads are public, matching the upstream `RcSystemVariables`
 /// contract. A reference to an id the player does not load resolves to 0 and poisons the arithmetic
 /// downstream, so naming one here without loading it would be worse than leaving it out.
 ///
-/// `ANIMATION_DELTA_TIME` (31) and `EPOCH_SECOND` (32) are deliberately absent: a delta needs the
-/// previous frame, which this core's stateless snapshot does not keep, and the epoch second is an
-/// *integer* variable whose expressions are evaluated at decode time, before a host clock can be
-/// supplied.
+/// `WINDOW_WIDTH`, `WINDOW_HEIGHT` and `ANIMATION_DELTA_TIME` are deliberately not loaded (this
+/// core supplies no window size or frame delta); they are named internally, for `unsuppliedIDs`.
 public enum NativeSwiftSystemVariables {
   /// Device pixels per dp, as the player is playing the document.
   public static let density = 27
@@ -61,6 +59,37 @@ public enum NativeSwiftSystemVariables {
 
   /// Calendar year.
   public static let year = 35
+
+  /// Every id this player loads at the start of a resolution, unless a float write, a host write
+  /// or a declaration claimed it (`RcPlayerState.claimedSystemIds`). Kotlin's
+  /// `RcSystemVariables.ALL` is this plus `unsuppliedIDs`;
+  /// `NativeSwiftValueResolutionDifferentialTests` fails when the two drift.
+  static let allIDs = [
+    continuousSeconds, timeInSeconds, timeInMinutes, timeInHours, calendarMonth, offsetToUTC,
+    weekDay, dayOfMonth, density, animationTime, epochSecond, fontSize, dayOfYear, year,
+  ]
+
+  /// `ID_WINDOW_WIDTH` (`RemoteContext.java:959`).
+  static let windowWidth = 5
+  /// `ID_WINDOW_HEIGHT` (`RemoteContext.java:960`).
+  static let windowHeight = 6
+  /// `ID_ANIMATION_DELTA_TIME` (`RemoteContext.java:999`).
+  static let animationDeltaTime = 31
+
+  /// The reference's ids this core does not load.
+  static let unsuppliedIDs: Set<Int> = [windowWidth, windowHeight, animationDeltaTime]
+
+  /// `allIDs` as bits (a test holds every id below `maskWidth`): `isSystem` runs on every write a
+  /// resolution makes, so it is a shift rather than a hash.
+  private static let allMask: UInt64 = allIDs.reduce(0) { $0 | (1 << UInt64($1)) }
+
+  /// How many ids `allMask` can hold.
+  static let maskWidth = UInt64.bitWidth
+
+  /// Whether `id` is one of `allIDs`.
+  @inline(__always) static func isSystem(_ id: Int) -> Bool {
+    id >= 0 && id < maskWidth && allMask & (1 << UInt64(id)) != 0
+  }
 }
 
 /// The host's wall clock, which is what a document's calendar and time-of-day variables read.

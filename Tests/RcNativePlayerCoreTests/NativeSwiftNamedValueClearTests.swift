@@ -123,9 +123,10 @@ import Testing
     #expect(session.writtenNamedValues().isEmpty)
   }
 
-  /// Clearing an integer variable whose id also declared a float constant restores the seeded
-  /// float view too, not only the integer slot `storeInteger` wrote.
-  @Test func clearingAnIntegerRestoresASeededFloatViewOnTheSameID() throws {
+  /// Clearing an integer variable whose id also declared a float constant writes the recorded
+  /// integer back through `setInteger`, as Kotlin's clear does: both views are 2 (Kotlin's
+  /// `RcPlayerState` gives 2 / 2.0 for this document), not the constant's 2.5.
+  @Test func clearingAnIntegerWritesTheRecordedIntegerToBothViews() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
     document.u8(Op.dataFloat).int(12).float(2.5)
@@ -142,7 +143,7 @@ import Testing
     #expect(session.clearNamedValue("count"))
     let restored = try values(session)
     #expect(restored.integers[12] == 2)
-    #expect(restored.floats[12] == 2.5)
+    #expect(restored.floats[12] == 2)
     #expect(session.writtenNamedValues().isEmpty)
   }
 
@@ -170,7 +171,7 @@ import Testing
     #expect(session.writtenNamedValues().isEmpty)
   }
 
-  /// A float variable a document action wrote as an integer (`storeInteger`, as
+  /// A float variable a document action wrote as an integer (`overrideInteger`, as
   /// `RcPlayerState.setInteger`, replaces the float view too) is the document's again once cleared,
   /// in both views: the Kotlin clear writes the recorded float back through `setFloat`, so the
   /// float is 1.5 again and the integer its view, not the action's 9.

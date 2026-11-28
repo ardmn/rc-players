@@ -53,11 +53,40 @@ import Testing
     let medianFrameMilliseconds: Double
   }
 
+  /// Steady per-frame cost of value resolution alone (no layout to speak of) against the number of
+  /// float expressions, for the shapes a wire-order resolver treats differently: the base line a
+  /// change to the session's value resolution is measured against.
+  private struct ResolutionCostReport: Codable {
+    enum Shape: String, Codable, CaseIterable {
+      /// n float constants and n float expressions over one moving float.
+      case floats
+      /// `floats` plus one integer expression over a constant float expression.
+      case integerOverStatic
+      /// `floats` plus one integer expression over the moving float, read through its integer
+      /// view.
+      case integerOverMoving
+      /// n integer-float expression pairs, each reading the one before it in wire order.
+      case interleavedChain
+    }
+    let shape: Shape
+    /// n: float expressions (and as many float constants) for the first three shapes, integer-float
+    /// expression pairs for `interleavedChain`.
+    let size: Int
+    /// The frames the median is taken over, after `resolutionWarmUpFrames` left out.
+    let sampledFrames: Int
+    let medianFrameMilliseconds: Double
+  }
+
+  /// Frames each resolution-cost session renders before timing: the first frames fill the
+  /// session's value tables and per-document caches.
+  private static let resolutionWarmUpFrames = 20
+
   private struct Scenarios: Codable {
     let feedArrival: FeedArrivalReport
     let hostValueSingle: HostValueUpdateReport
     let hostValueBurst: HostValueUpdateReport
     let staticWallClockReuse: StaticWallClockReport
+    let resolutionCost: [ResolutionCostReport]
   }
 
   private struct Budgets: Codable {
@@ -123,7 +152,8 @@ import Testing
       hostValueBurst: try Self.measureHostValueUpdates(
         id: "synthetic-dense-feed-card", data: denseCardData, mutationsPerUpdate: 10),
       staticWallClockReuse: try Self.measureStaticWallClockReuse(
-        id: "synthetic-dense-feed-card", data: denseCardData))
+        id: "synthetic-dense-feed-card", data: denseCardData),
+      resolutionCost: try Self.measureResolutionCost())
 
     var overBudget: [String] = []
     for fixture in fixtures + syntheticFixtures {
@@ -143,7 +173,8 @@ import Testing
     }
 
     let report = Report(
-      schemaVersion: 1,
+      // 2: `scenarios.resolutionCost` added.
+      schemaVersion: 2,
       sourceRevision: ProcessInfo.processInfo.environment["RC_SOURCE_REVISION"] ?? "unknown",
       iterations: Self.iterations,
       frames: Self.frames,
@@ -176,6 +207,12 @@ import Testing
         scenarios.hostValueSingle.medianMilliseconds,
         scenarios.hostValueBurst.medianMilliseconds,
         scenarios.staticWallClockReuse.medianFrameMilliseconds))
+    for cost in scenarios.resolutionCost {
+      print(
+        String(
+          format: "resolution %@ n=%d: %.4fms/frame", cost.shape.rawValue, cost.size,
+          cost.medianFrameMilliseconds))
+    }
     #expect(
       report.passed,
       "native Swift core benchmark over budget:\n  \(overBudget.joined(separator: "\n  "))")
@@ -300,6 +337,81 @@ import Testing
       fixture: id,
       frames: sampleFrames,
       medianFrameMilliseconds: median(samples))
+  }
+
+  private static func measureResolutionCost() throws -> [ResolutionCostReport] {
+    // Each shape and size runs `frames` frames of one session and times the ones after the
+    // warm-up. Cost is linear in n: 4 shapes x 3 sizes x 120 frames, about 0.25 s in release.
+    var reports: [ResolutionCostReport] = []
+    for shape in ResolutionCostReport.Shape.allCases {
+      for size in [100, 1000, 5000] {
+        let session = try NativeSwiftDocumentSession.open(
+          data: makeResolutionDocument(shape: shape, size: size))
+        var samples: [Double] = []
+        for frame in 0..<frames {
+          let started = ProcessInfo.processInfo.systemUptime
+          _ = try session.snapshot(timeSeconds: TimeInterval(frame) / 60)
+          samples.append(milliseconds(since: started))
+        }
+        let timed = Array(samples.dropFirst(resolutionWarmUpFrames))
+        reports.append(
+          ResolutionCostReport(
+            shape: shape, size: size, sampledFrames: timed.count,
+            medianFrameMilliseconds: median(timed)))
+      }
+    }
+    return reports
+  }
+
+  /// The documents `measureResolutionCost` times; see `ResolutionCostReport.shape`. Float 20000 is
+  /// `ANIMATION_TIME * 100`, so every frame resolves something new.
+  private static func makeResolutionDocument(
+    shape: ResolutionCostReport.Shape, size: Int
+  ) -> Data {
+    typealias Op = NativeSwiftWireOpcode
+    let add = Writer.floatOperator(NativeSwiftFloatOperator.add)
+    let movingID = 20000
+    // Integer-expression masks: bit n marks token n as a variable id or an operator.
+    let variableThenOperator = 0b101
+    let singleVariable = 0b1
+    let writer = Writer()
+    writer.header(width: 100, height: 100)
+    writer.u8(Op.animatedFloat).int(movingID).int(3)
+      .int(Writer.nanReference(NativeSwiftSystemVariables.animationTime)).int(Writer.literal(100))
+      .int(Writer.floatOperator(NativeSwiftFloatOperator.mul))
+    switch shape {
+    case .interleavedChain:
+      // I(2k+1) = [2k] + 1, F(2k+2) = [2k+1] + 0.5 from F 30000 = [moving]: a wire-order chain.
+      let base = 30000
+      writer.u8(Op.animatedFloat).int(base).int(1).int(Writer.nanReference(movingID))
+      for step in 0..<size {
+        let floatIn = base + step * 2
+        writer.u8(Op.integerExpression).int(floatIn + 1).int(variableThenOperator).int(3)
+          .int(floatIn).int(1)
+          .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
+        writer.u8(Op.animatedFloat).int(floatIn + 2).int(3).int(Writer.nanReference(floatIn + 1))
+          .int(Writer.literal(0.5)).int(add)
+      }
+    case .floats, .integerOverStatic, .integerOverMoving:
+      for index in 0..<size {
+        writer.u8(Op.dataFloat).int(1000 + index).float(Float(index) + 0.5)
+      }
+      for index in 0..<size {
+        writer.u8(Op.animatedFloat).int(30000 + index).int(3)
+          .int(Writer.nanReference(1000 + index)).int(Writer.nanReference(movingID)).int(add)
+      }
+      let staticID = 20001
+      if shape == .integerOverStatic {
+        writer.u8(Op.animatedFloat).int(staticID).int(1).int(Writer.literal(3))
+      }
+      if shape != .floats {
+        // I60 = one token, a variable id.
+        writer.u8(Op.integerExpression).int(60).int(singleVariable).int(1)
+          .int(shape == .integerOverMoving ? movingID : staticID)
+      }
+    }
+    writer.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    return writer.data
   }
 
   /// A realistic ~65-node feed card with 5 named strings, 5 named floats, float expressions,

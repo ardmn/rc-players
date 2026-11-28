@@ -597,6 +597,10 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
     guard let png = bitmap.representation(using: .png, properties: [:]) else {
       throw NativeSwiftCoreError.malformed(offset: 0, reason: "Could not encode AppKit capture")
     }
+    // Before the records' snapshot below, which may resolve the instant again.
+    let reported =
+      values.isEmpty
+      ? nil : try reportedValues(session: session, timeSeconds: timeSeconds, request: values)
     var records = operationRecords(
       try session.snapshot(timeSeconds: timeSeconds, wallClock: wallClock),
       operationCount: session.linkedOperationCount, operationNames: try operationNames(in: data))
@@ -616,10 +620,7 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
     }
     return NativeMacRenderedFrame(
       png: png, tree: player.layoutTree(),
-      values: values.isEmpty
-        ? nil
-        : try reportedValues(
-           session: session, timeSeconds: timeSeconds, wallClock: wallClock, request: values),
+      values: reported,
       records: records,
       inputHandled: inputHandled)
   }
@@ -1060,16 +1061,16 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
     ]
   }
 
-  /// The values a probe asked for, each resolved at the frame's own instant.
+  /// The values a probe asked for, as the frame's own resolution left them: resolving again would
+  /// move a value that reads its own previous one past the frame the PNG shows.
   ///
   /// A named target addresses a variable the document declared; a numeric one addresses a slot
   /// directly. A slot the document left empty reports null rather than being omitted — that is an
   /// observation, and the runner distinguishes it from a probe this player cannot answer.
   private static func reportedValues(
-    session: NativeSwiftDocumentSession, timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock,
-    request: NativeMacValueRequest
+    session: NativeSwiftDocumentSession, timeSeconds: TimeInterval, request: NativeMacValueRequest
   ) throws -> [String: Any] {
-    let resolved = try session.probeValues(timeSeconds: timeSeconds, wallClock: wallClock)
+    let resolved = session.currentValues()
     func report(_ targets: [String], _ read: (Int) throws -> Any?) throws -> [String: Any] {
       var result: [String: Any] = [:]
       for target in targets {

@@ -1891,10 +1891,15 @@ import Testing
       "a from-now interval resolved to \(String(describing: timedValues.floats[28]))")
     // Without a wall clock there is no "now" to measure from, and the slot stays unwritten rather
     // than measuring from the 1970 epoch; fields of a stated instant still resolve.
-    let unclocked = try timedSession.probeValues(timeSeconds: 0)
+    let unclocked = try NativeSwiftDocumentSession.open(
+      data: timed.data, toleratingRootlessData: true
+    ).probeValues(timeSeconds: 0)
     #expect(
       unclocked.floats[28] == nil && unclocked.floats[24] == 2023,
       "an unclocked time attribute resolved to \(String(describing: unclocked.floats[28]))")
+    // A session that resolved with a clock before leaves 28 unset again, as it leaves the calendar.
+    let reused = try timedSession.probeValues(timeSeconds: 0)
+    #expect(reused.floats[28] == nil, "\(String(describing: reused.floats[28]))")
     let timedSnapshot = try timedSession.snapshot()
     #expect(
       !timedSnapshot.needsWallClockRefresh,
@@ -3362,10 +3367,13 @@ import Testing
     return output.data
   }
 
+  /// A custom component whose float property and float return channel are both F70, a constant:
+  /// a return onto an expression's output would be replaced by its next evaluation, as Kotlin's
+  /// `setFloat` is.
   private func dynamicCustomFloatDocument() -> Data {
     let output = Writer()
     output.header(width: 100, height: 100)
-    output.u8(81).int(70).int(1).float(0.4)
+    output.u8(NativeSwiftWireOpcode.dataFloat).int(70).float(0.4)
     output.text(id: 40, "demo:SwiftControls")
     output.u8(200).int(1)
     output.u8(201).int(2)
@@ -3861,10 +3869,10 @@ private final class FailureLog: @unchecked Sendable {
     #expect(snap2.root.children.first?.text?.value.trimmingCharacters(in: .whitespaces) == "1006")
   }
 
-  /// Writing an integer (through `setInteger` or an integer action) clears any stale float
-  /// override on the same id, so float expressions and `writtenNamedValues()` see the new integer
-  /// rather than an older float write.
-  @Test func integerWriteClearsStaleFloatOverride() throws {
+  /// Writing an integer (through `setInteger` or an integer action) replaces an earlier float write
+  /// on the same id — `setInteger` writes both views — so float expressions and
+  /// `writtenNamedValues()` see the new integer rather than the older float.
+  @Test func anIntegerWriteReplacesAnEarlierFloatWrite() throws {
     let writer = Writer()
     writer.header(width: 100, height: 100)
     writer.u8(NativeSwiftWireOpcode.dataInt).int(60).int(1)
@@ -3881,12 +3889,12 @@ private final class FailureLog: @unchecked Sendable {
     #expect(session.setFloat(2.75, forID: 60))
     #expect(try session.probeValues(timeSeconds: 0).floats[60] == 2.75)
 
-    // Host `setInteger` clears the stale float override.
+    // Host `setInteger` replaces the float write.
     #expect(session.setInteger(7, for: "count"))
     #expect(try session.probeValues(timeSeconds: 0).floats[60] == 7)
     #expect(session.writtenNamedValues().map(\.value) == [.integer(7, float: nil)])
 
-    // A document integer action (`storeInteger`) also clears a stale float override.
+    // A document integer action (`overrideInteger`) replaces it too.
     #expect(session.setFloat(4.5, forID: 60))
     #expect(try session.probeValues(timeSeconds: 0).floats[60] == 4.5)
     _ = try session.click(componentID: 3, timeSeconds: 0)

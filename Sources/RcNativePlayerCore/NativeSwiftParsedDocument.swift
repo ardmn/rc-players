@@ -4,8 +4,52 @@ import Foundation
 enum ParsedNumericConstant {
   case float(id: Int, value: Float)
   case integer(id: Int, value: Int)
-  /// An `ImageAttribute` size: a float the reference writes again on every pass.
+
+  /// The id the constant is declared at.
+  var id: Int {
+    switch self {
+    case .float(let id, _), .integer(let id, _): id
+    }
+  }
+}
+
+/// One value operation a resolution runs, as `RcPlayerState.applyContentStateOperation` applies it
+/// (a time attribute or matrix-vector math: as the canvas draw pass does). In wire order, a step
+/// reads earlier steps' values from this pass and later steps' numbers and colours from the last
+/// one; texts restart from the document's each pass.
+enum ParsedResolutionStep {
+  case floatExpression(ParsedFloatExpression)
+  case integerExpression(id: Int, ParsedIntegerExpression)
+  case colorExpression(ParsedColorExpression)
+  /// `ColorTheme`: the fallback for the requested theme (light unless dark is requested, where
+  /// Kotlin picks dark for anything but light).
+  case colorTheme(id: Int, light: UInt32, dark: UInt32)
+  case colorAttribute(ParsedColorAttribute)
+  /// `ImageAttribute`: a bitmap's declared width or height.
   case imageSize(id: Int, value: Float)
+  case idLookup(ParsedIdLookup)
+  case dataMapLookup(ParsedDataMapLookup)
+  case text(ParsedTextOperation)
+  /// `TextLength`, and `TextAttribute`'s length selector.
+  case textLength(ParsedTextLength)
+  case timeAttribute(ParsedTimeAttribute)
+  case matrixVectorMath(ParsedMatrixVectorMath)
+
+  /// Calls `body` with each numeric id the step writes; a visitor, so the decode-time scan of every
+  /// step allocates no array.
+  func forEachNumericOutputID(_ body: (Int) -> Void) {
+    switch self {
+    case .floatExpression(let expression): body(expression.id)
+    case .integerExpression(let id, _), .imageSize(let id, _): body(id)
+    case .colorAttribute(let attribute): body(attribute.outputID)
+    case .idLookup(let lookup): body(lookup.outputID)
+    case .dataMapLookup(let lookup): body(lookup.outputID)
+    case .textLength(let length): body(length.outputID)
+    case .timeAttribute(let attribute): body(attribute.outputID)
+    case .matrixVectorMath(let operation): operation.outputIDs.forEach(body)
+    case .colorExpression, .colorTheme, .text: break
+    }
+  }
 }
 
 struct ParsedDocument {
@@ -19,47 +63,38 @@ struct ParsedDocument {
   let floats: [Int: Float]
   let colors: [Int: UInt32]
   let integers: [Int: Int]
-  /// Every literal `FloatConstant`, `IntegerConstant` and image size (`ImageAttribute`), in wire
-  /// order. A float and an integer written at one id share it: the reference applies them in order,
-  /// each publishing both numeric views, which the two maps above cannot say.
+  /// Every literal `FloatConstant` and `IntegerConstant`, in wire order. A float and an integer
+  /// written at one id share it: the reference loads them in order (`RcSeedValues.load`), each
+  /// publishing both numeric views, which the two maps above cannot say.
   let numericConstants: [ParsedNumericConstant]
+  /// What a resolution runs, in wire order; see `ParsedResolutionStep`.
+  let resolutionSteps: [ParsedResolutionStep]
+  /// The last integer expression declared at each id, for an action that evaluates one by id.
   let integerExpressions: [Int: ParsedIntegerExpression]
-  /// The same expressions in the order the document declared them: one may read another's result,
-  /// so evaluation follows the wire rather than a dictionary's iteration order.
-  let integerExpressionOrder: [Int]
   let namedVariables: [String: ParsedNamedVariable]
   let expressions: [ParsedFloatExpression]
+  /// The last float expression declared at each id, for an action that evaluates one by id.
+  let floatExpressions: [Int: ParsedFloatExpression]
   let componentValues: [ParsedComponentValue]
-  let colorAttributes: [ParsedColorAttribute]
   /// Epoch-millisecond instants declared with `LongConstant`.
   let longConstants: [Int: Int64]
   /// `BooleanConstant` values; retained as the reference retains them, read by nothing yet.
   let booleanConstants: [Int: Bool]
   let timeAttributes: [ParsedTimeAttribute]
-  let idLookups: [ParsedIdLookup]
-  let textLengths: [ParsedTextLength]
-  let colorExpressions: [ParsedColorExpression]
   let images: [Int: ParsedImageResource]
   let sounds: [Int: ParsedSound]
   let clickAreas: [ParsedClickArea]
   let frameEffects: [ParsedFrameEffect]
-  /// Text producers in exactly the order the wire declared them. A later operation may consume an
-  /// earlier result regardless of their concrete operation types.
-  let textOperations: [ParsedTextOperation]
-  let textFromFloats: [ParsedTextFromFloat]
-  let textMerges: [ParsedTextMerge]
-  let textTransforms: [ParsedTextTransform]
+  /// The one text operation that computes each text an action can compute again, by its output
+  /// (`ParsedTextOperation.producers`); see `NativeSwiftDocumentSession.currentText`.
+  let textProducers: [Int: ParsedTextOperation]
   let idLists: [Int: [Int]]
   let floatLists: [Int: [UInt32]]
   let floatListUpdates: [Int: [(index: UInt32, value: UInt32)]]
   let dynamicFloatLists: [Int: ParsedDynamicFloatList]
-  let textLookups: [ParsedTextLookupInt]
-  let textFloatLookups: [ParsedTextLookup]
   let dataMaps: [Int: [String: (type: Int, valueID: Int)]]
-  let dataMapLookups: [ParsedDataMapLookup]
   let matrixConstants: [Int: NativeSwiftMatrixSnapshot]
   let matrixExpressions: [Int: ParsedMatrixExpression]
-  let matrixVectorMath: [ParsedMatrixVectorMath]
   let animationSpecs: [Int: NativeSwiftAnimationSpec]
   let animationSpecOrder: [Int]
   let pathIDs: Set<Int>
@@ -68,7 +103,6 @@ struct ParsedDocument {
   let shaderUniformNames: [Int: Set<String>]
   let conditionalTraces: [NativeSwiftConditionalTraceSnapshot]
   let impulses: [ParsedImpulse]
-  let darkColors: [Int: UInt32]
   /// `WAKE_IN` requests, as the words the document wrote.
   let wakeWords: [UInt32]
   let particleDefinitions: [ParsedParticleDefinition]
@@ -105,12 +139,12 @@ struct ParsedDocument {
   let imageSnapshots: [NativeSwiftImageResourceSnapshot]
   /// The components `componentValues` bind, as `NativeSwiftDocumentSnapshot.boundComponents`.
   let boundComponentIDs: Set<Int>
-  /// Whether the tolerant first expression pass can change what the authoritative pass computes:
-  /// a component-value binding reads between them, or an expression reads an id that the same or
-  /// a later expression writes. See `resolvedFloats`.
-  let needsTolerantExpressionPass: Bool
+  /// Whether a float expression reads a number that it or a later step writes: on the first
+  /// resolution that number is not there yet, so the expression may fail until the steps run
+  /// again. See `NativeSwiftDocumentSession.resolveFrame`.
+  let floatExpressionsReadForward: Bool
   /// Whether any layout word reads a component-value binding's output, which invalidates a
-  /// subtree estimate once that binding is written. See `resolvedFloats`.
+  /// subtree estimate once that binding is written. See `publishComponentValues`.
   let layoutReadsComponentValues: Bool
 }
 
@@ -190,13 +224,15 @@ struct ParsedColorExpression {
     case NativeSwiftColorExpressionMode.hsv, NativeSwiftColorExpressionMode.argb:
       return [word(first), word(second), word(third)]
     case NativeSwiftColorExpressionMode.idARGB:
-      return [
-        word(first), word(second), word(third),
-        0x7fc0_0000 | alphaField,
-      ]
+      return [word(first), word(second), word(third), alphaReferenceWord]
     default:
       return []
     }
+  }
+
+  /// `ID_ARGB`'s alpha: the float id the mode word's high half names, as a reference word.
+  var alphaReferenceWord: UInt32 {
+    NativeSwiftFloatExpression.referenceWord(alphaField)
   }
 }
 

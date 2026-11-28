@@ -781,7 +781,7 @@ class RcSystemVariableTest {
 
   private fun RcPlayerState.system(id: Int): Float = resolve(RcFloatWord(NAN_REFERENCE or id))
 
-  private companion object {
+  internal companion object {
     const val EPOCH_MILLIS = 1_787_243_445_250L
     const val PULSE = 100
     const val SCALED = 101

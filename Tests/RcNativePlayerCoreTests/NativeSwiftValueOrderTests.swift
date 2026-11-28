@@ -7,7 +7,12 @@ import Testing
 /// runs `applyContentStateOperation` once per pass in wire order, integer expressions read
 /// `integerVariable`, float expressions publish both views through `setFloat`, integer expressions
 /// through `setInteger`, and a document action's integer write is an `overrideInteger` that
-/// `applyIntegerExpression` respects.
+/// `applyIntegerExpression` respects. Kotlin's answers: `RcValueOrderReferenceTest` for the cycle,
+/// the chain, the one-id interleavings, the constants, the division and the host write onto an
+/// integer expression; `RcPlayerStateTest.anActionWriteSurvivesTheDeclarationsThatReplayEveryFrame`
+/// for the action write; `RcSystemVariableTest.anIntegerExpressionOverTheClockReadsItTruncated`
+/// for the clock and density reads (both through `integerVariable`); `RcPlayerStateTest`'s
+/// image-attribute and collection-lookup tests for the image size and the data-map float.
 @Suite struct NativeSwiftValueOrderTests {
   private typealias Op = NativeSwiftWireOpcode
   private typealias Named = NativeSwiftNamedVariableType
@@ -233,15 +238,8 @@ import Testing
       .int(Writer.nanReference(60)).int(Self.floatDiv)
     document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
-    let result = Result { try session.probeValues(timeSeconds: 0) }
-    switch result {
-    case .success(let values):
-      #expect(values.floats[52] == 2, "\(String(describing: values.floats[52]))")
-    case .failure(let error):
-      withKnownIssue("the integer view of a computed float reads 0") {
-        Issue.record("Kotlin 52 = 2; Swift threw \(error)")
-      }
-    }
+    let values = try session.probeValues(timeSeconds: 0)
+    #expect(values.floats[52] == 2, "\(String(describing: values.floats[52]))")
   }
 
   // MARK: - Writes onto an integer expression's output
@@ -262,10 +260,8 @@ import Testing
     let session = try NativeSwiftDocumentSession.open(data: document.data)
     _ = try session.click(componentID: 3, timeSeconds: 0)
     let values = try session.probeValues(timeSeconds: 0)
-    withKnownIssue("a document action's integer write is not kept over its declaring expression") {
-      #expect(
-        values.integers[60] == 9, "Kotlin 9; Swift \(String(describing: values.integers[60]))")
-    }
+    #expect(
+      values.integers[60] == 9, "Kotlin 9; Swift \(String(describing: values.integers[60]))")
   }
 
   /// A host integer write by name onto an integer expression: Kotlin `setNamedValue` ->
@@ -307,12 +303,10 @@ import Testing
       data: document.data, toleratingRootlessData: true)
     let values = try session.probeValues(timeSeconds: 0)
     let expected: (Int, Float) = floatFirst ? (4, 4) : (7, 7.5)
-    withKnownIssue("integer expressions all run before float expressions") {
-      #expect(
-        values.integers[60] == expected.0 && values.floats[60] == expected.1,
-        "floatFirst=\(floatFirst): \(values.integers[60] as Any) \(values.floats[60] as Any)"
-      )
-    }
+    #expect(
+      values.integers[60] == expected.0 && values.floats[60] == expected.1,
+      "floatFirst=\(floatFirst): \(values.integers[60] as Any) \(values.floats[60] as Any)"
+    )
   }
 
   // MARK: - Constants and expressions at one id
@@ -378,7 +372,7 @@ import Testing
     let values = try NativeSwiftDocumentSession.open(
       data: document.data, toleratingRootlessData: true
     ).probeValues(timeSeconds: 0)
-    // The constant's integer view (2) is not seeded under the expression's float.
+    // The constant's integer view (2) is replaced when the expression runs.
     #expect(values.integers[60] != 2, "\(values.integers[60] as Any)")
     #expect(
       values.floats[60] == 7.5 && values.integers[60] == 7 && values.integers[61] == 7,
@@ -424,19 +418,15 @@ import Testing
     document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
     let session = try NativeSwiftDocumentSession.open(data: document.data)
     let first = try session.probeValues(timeSeconds: 0)
-    withKnownIssue("a data-map lookup runs after the float expressions") {
-      #expect(
-        first.integers[74] == 2,
-        "first resolution: Kotlin 2; Swift \(String(describing: first.integers[74]))")
-    }
+    #expect(
+      first.integers[74] == 2,
+      "first resolution: Kotlin 2; Swift \(String(describing: first.integers[74]))")
     for time in [0.0, 1.0] {
       _ = try session.snapshot(timeSeconds: time)
       let values = try session.probeValues(timeSeconds: time)
-      withKnownIssue("a data-map lookup runs after the float expressions") {
-        #expect(
-          values.floats[75] == 5.5,
-          "t=\(time) Kotlin 5.5; Swift \(String(describing: values.floats[75]))")
-      }
+      #expect(
+        values.floats[75] == 5.5,
+        "t=\(time) Kotlin 5.5; Swift \(String(describing: values.floats[75]))")
     }
   }
 

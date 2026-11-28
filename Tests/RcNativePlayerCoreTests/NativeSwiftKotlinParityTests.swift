@@ -154,9 +154,7 @@ import Testing
     _ = try session.click(componentID: 3, timeSeconds: 0)
     let first = try session.probeValues(timeSeconds: 0.1)
     #expect(first.floats[50] == 0.75)
-    withKnownIssue("a document action's integer write is not kept over its declaring expression") {
-      #expect(first.integers[51] == 9, "\(String(describing: first.integers[51]))")
-    }
+    #expect(first.integers[51] == 9, "\(String(describing: first.integers[51]))")
 
     _ = try session.click(componentID: 3, timeSeconds: 0.2)
     #expect(try session.probeValues(timeSeconds: 0.3).floats[50] == 1.0)

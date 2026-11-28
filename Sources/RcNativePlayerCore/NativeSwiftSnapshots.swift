@@ -26,7 +26,7 @@ public enum NativeSwiftPathCommand {
 
 /// A path command token as the wire spells it: the command id in a quiet NaN's payload.
 func pathCommandWord(_ command: Int) -> UInt32 {
-  0x7fc0_0000 | UInt32(command)
+  NativeSwiftFloatExpression.referenceWord(UInt32(command))
 }
 
 /// The themes a host can request and a `THEME` operation can scope to: every value AndroidX defines.

@@ -146,19 +146,18 @@ enum NativeSwiftDocumentDecoder {
     /// constant at one of these ids never changes the float the decode-time reads see.
     var imageSizeIDs: Set<Int> = []
     var integerExpressions: [Int: ParsedIntegerExpression] = [:]
-    var integerExpressionOrder: [Int] = []
+    var resolutionSteps: [ParsedResolutionStep] = []
     var namedVariables: [String: ParsedNamedVariable] = [:]
     var expressions: [ParsedFloatExpression] = []
-    // The IDs in `expressions`, so a click action's existence check is not a scan per operation.
-    var expressionIDs: Set<Int> = []
+    // The last of `expressions` declared at each id, built as they are declared: a click action's
+    // existence check is a lookup rather than a scan, and the document needs no second pass.
+    var floatExpressions: [Int: ParsedFloatExpression] = [:]
     var componentValues: [ParsedComponentValue] = []
-    var colorAttributes: [ParsedColorAttribute] = []
     var longConstants: [Int: Int64] = [:]
     var booleanConstants: [Int: Bool] = [:]
     var timeAttributes: [ParsedTimeAttribute] = []
     var documentAccessibility: ParsedAccessibility?
     var idLookups: [ParsedIdLookup] = []
-    var textLengths: [ParsedTextLength] = []
     /// Declared text styles by id, for `CoreText` to inherit from.
     var textStyles: [Int: ParsedTextProperties] = [:]
     var colorExpressions: [ParsedColorExpression] = []
@@ -171,18 +170,15 @@ enum NativeSwiftDocumentDecoder {
     /// target a host allocates, so both are bounded as the CMP player's `RcOffscreenTargetLimits`.
     var offscreenTargetIDs: Set<Int> = []
     var offscreenTargetPixels = 0
+    /// Every text operation in wire order, read by the action text producers
+    /// (`ParsedTextOperation.producers`) and the clock scan; `appendTextOperation` keeps it in step
+    /// with `resolutionSteps`.
     var textOperations: [ParsedTextOperation] = []
-    var textFromFloats: [ParsedTextFromFloat] = []
-    var textMerges: [ParsedTextMerge] = []
-    var textTransforms: [ParsedTextTransform] = []
     var idLists: [Int: [Int]] = [:]
     var floatLists: [Int: [UInt32]] = [:]
     var floatListUpdates: [Int: [(index: UInt32, value: UInt32)]] = [:]
     var dynamicFloatLists: [Int: ParsedDynamicFloatList] = [:]
     var dataMaps: [Int: [String: (type: Int, valueID: Int)]] = [:]
-    var dataMapLookups: [ParsedDataMapLookup] = []
-    var textLookups: [ParsedTextLookupInt] = []
-    var textFloatLookups: [ParsedTextLookup] = []
     var matrixConstants: [Int: NativeSwiftMatrixSnapshot] = [:]
     var matrixExpressions: [Int: ParsedMatrixExpression] = [:]
     var matrixVectorMath: [ParsedMatrixVectorMath] = []
@@ -237,8 +233,6 @@ enum NativeSwiftDocumentDecoder {
     // whether the content overflows (`applyAndroidXMarquee` acquires frame demand the same way).
     var hasMarquee = false
     var impulses: [ParsedImpulse] = []
-    /// A `ColorTheme`'s dark fallback, by colour id; its light one seeds `colors`.
-    var darkColors: [Int: UInt32] = [:]
     var wakeWords: [UInt32] = []
     /// An open impulse container: its setup (-1) or one of its process containers, closed when
     /// `modifierContainers` returns to `depth`.
@@ -649,6 +643,19 @@ enum NativeSwiftDocumentDecoder {
       let argumentCount = try input.count(
         NativeSwiftWireField.nestedMacroArgumentCount, maximum: maximumProperties)
       for _ in 0..<argumentCount { _ = try input.int(NativeSwiftWireField.nestedMacroArgument) }
+    }
+
+    /// Texts written inside a conditional, a function body or an impulse, which may not run every
+    /// frame, so an action sends them as the last frame left them (`RcPlayerState.textProducers`).
+    var scopedTextOutputs: Set<Int> = []
+    /// A text operation: a resolution step in wire order, and a candidate producer for
+    /// `ParsedTextOperation.producers`.
+    func appendTextOperation(_ operation: ParsedTextOperation) {
+      textOperations.append(operation)
+      resolutionSteps.append(.text(operation))
+      if !conditionalScopes.isEmpty || functionScope != nil || !impulseScopes.isEmpty {
+        scopedTextOutputs.insert(operation.outputID)
+      }
     }
 
     /// Reads past one captured operation's payload, returning whether it opens a container. The
@@ -1611,7 +1618,8 @@ enum NativeSwiftDocumentDecoder {
             functionScope?.expressionPositions.append(position)
           } else {
             expressions.append(alias)
-            expressionIDs.insert(floatID)
+            floatExpressions[floatID] = alias
+            resolutionSteps.append(.floatExpression(alias))
           }
         } else {
           let value = Float(bitPattern: constantWord)
@@ -1689,7 +1697,8 @@ enum NativeSwiftDocumentDecoder {
           functionScope?.expressionPositions.append(position)
         } else {
           expressions.append(expression)
-          expressionIDs.insert(id)
+          floatExpressions[id] = expression
+          resolutionSteps.append(.floatExpression(expression))
         }
       case NativeSwiftWireOpcode.layoutCustom:  // Custom
         let id = try input.int("custom component id")
@@ -1756,10 +1765,10 @@ enum NativeSwiftDocumentDecoder {
         _ = try input.int("color theme group id")
         _ = try input.signedU16("color theme light index")
         _ = try input.signedU16("color theme dark index")
-        let lightFallback = try input.int("color theme light fallback")
-        let darkFallback = try input.int("color theme dark fallback")
-        colors[colorID] = UInt32(bitPattern: Int32(lightFallback))
-        darkColors[colorID] = UInt32(bitPattern: Int32(darkFallback))
+        let light = UInt32(bitPattern: Int32(try input.int("color theme light fallback")))
+        let dark = UInt32(bitPattern: Int32(try input.int("color theme dark fallback")))
+        colors[colorID] = light
+        resolutionSteps.append(.colorTheme(id: colorID, light: light, dark: dark))
       case NativeSwiftWireOpcode.dataInt:  // Integer constant
         let id = try input.int(NativeSwiftWireField.integerID)
         let value = try input.int(NativeSwiftWireField.integerValue)
@@ -1778,13 +1787,9 @@ enum NativeSwiftDocumentDecoder {
         var tokens: [Int] = []
         tokens.reserveCapacity(count)
         for _ in 0..<count { tokens.append(try input.int("integer expression value")) }
-        integerExpressions[outputID] = ParsedIntegerExpression(
-          mask: mask, tokens: tokens, offset: opcodeOffset)
-        // The order is what `probeValues` re-evaluates in: an expression may read another's result,
-        // so the wire's own declaration order is the one that converges. Without this the refresh
-        // pass had nothing to iterate and a probe kept reporting the decode-time value however a
-        // gesture had moved its inputs.
-        integerExpressionOrder.append(outputID)
+        let expression = ParsedIntegerExpression(mask: mask, tokens: tokens, offset: opcodeOffset)
+        integerExpressions[outputID] = expression
+        resolutionSteps.append(.integerExpression(id: outputID, expression))
         integers[outputID] = try NativeSwiftIntegerExpression.evaluate(
           mask: mask, tokens: tokens, values: integers, offset: opcodeOffset)
       case NativeSwiftWireOpcode.idList:  // List of resource ids
@@ -1840,9 +1845,9 @@ enum NativeSwiftDocumentDecoder {
         let outputID = try input.int("data map lookup output id")
         let mapID = try input.int("data map lookup map id")
         let keyTextID = try input.int("data map lookup key text id")
-        dataMapLookups.append(
-          ParsedDataMapLookup(
-            outputID: outputID, mapID: mapID, keyTextID: keyTextID, offset: opcodeOffset))
+        let lookup = ParsedDataMapLookup(
+          outputID: outputID, mapID: mapID, keyTextID: keyTextID, offset: opcodeOffset)
+        resolutionSteps.append(.dataMapLookup(lookup))
       case NativeSwiftWireOpcode.colorExpressions:  // Dynamic color expression
         let expression = ParsedColorExpression(
           outputID: try input.int("color expression output id"),
@@ -1858,6 +1863,7 @@ enum NativeSwiftDocumentDecoder {
           throw input.malformed("Unknown color expression mode")
         }
         colorExpressions.append(expression)
+        resolutionSteps.append(.colorExpression(expression))
       case NativeSwiftWireOpcode.textFromFloat:
         let outputID = try input.int("text from float output id")
         let value = try input.word("text from float value")
@@ -1867,29 +1873,25 @@ enum NativeSwiftDocumentDecoder {
           outputID: outputID, value: value,
           digitsBefore: Int(Int16(bitPattern: UInt16(digits >> 16))),
           digitsAfter: Int(Int16(bitPattern: UInt16(digits & 0xffff))), flags: flags)
-        textFromFloats.append(conversion)
-        textOperations.append(.fromFloat(conversion))
+        appendTextOperation(.fromFloat(conversion))
       case NativeSwiftWireOpcode.textMerge:
         let merge = ParsedTextMerge(
           outputID: try input.int("text merge output id"),
           leftID: try input.int("text merge left id"),
           rightID: try input.int("text merge right id"))
-        textMerges.append(merge)
-        textOperations.append(.merge(merge))
+        appendTextOperation(.merge(merge))
       case NativeSwiftWireOpcode.textLookupInt:
         let lookup = ParsedTextLookupInt(
           outputID: try input.int(NativeSwiftWireField.textLookupOutputID),
           listID: try input.int(NativeSwiftWireField.textLookupListID),
           indexID: try input.int("text lookup index id"))
-        textLookups.append(lookup)
-        textOperations.append(.lookupInt(lookup))
+        appendTextOperation(.lookupInt(lookup))
       case NativeSwiftWireOpcode.textLookup:
         let lookup = ParsedTextLookup(
           outputID: try input.int(NativeSwiftWireField.textLookupOutputID),
           listID: try input.int(NativeSwiftWireField.textLookupListID),
           index: try input.word("text lookup index"))
-        textFloatLookups.append(lookup)
-        textOperations.append(.lookup(lookup))
+        appendTextOperation(.lookup(lookup))
       case NativeSwiftWireOpcode.textTransform:
         let transform = ParsedTextTransform(
           outputID: try input.int("text transform output id"),
@@ -1906,8 +1908,7 @@ enum NativeSwiftDocumentDecoder {
         else {
           throw input.malformed("Unknown text transform operation")
         }
-        textTransforms.append(transform)
-        textOperations.append(.transform(transform))
+        appendTextOperation(.transform(transform))
       case NativeSwiftWireOpcode.dataPath:
         // Path data; bounded now, drawing support is a separate operation family.
         let idAndWinding = try input.int("path id and winding")
@@ -2076,7 +2077,7 @@ enum NativeSwiftDocumentDecoder {
         else {
           throw input.malformed("Unknown color attribute type \(attribute.type)")
         }
-        colorAttributes.append(attribute)
+        resolutionSteps.append(.colorAttribute(attribute))
       case NativeSwiftWireOpcode.matrixConstant:
         let matrixID = try input.int("matrix constant id")
         _ = try input.int("matrix constant type")
@@ -2113,9 +2114,10 @@ enum NativeSwiftDocumentDecoder {
         let inputCount = try input.count("matrix vector math input count", maximum: 4)
         guard inputCount > 0 else { throw input.malformed("Matrix vector math has no inputs") }
         let inputs = try (0..<inputCount).map { _ in try input.word("matrix vector math input") }
-        matrixVectorMath.append(
-          ParsedMatrixVectorMath(
-            type: type, outputIDs: outputs, matrixID: matrixID, inputWords: inputs))
+        let math = ParsedMatrixVectorMath(
+          type: type, outputIDs: outputs, matrixID: matrixID, inputWords: inputs)
+        matrixVectorMath.append(math)
+        resolutionSteps.append(.matrixVectorMath(math))
       case NativeSwiftWireOpcode.attributeImage:  // Image dimension attribute
         let outputID = try input.int(NativeSwiftWireField.imageAttributeOutputID)
         let imageID = try input.int(NativeSwiftWireField.imageAttributeImageID)
@@ -2140,7 +2142,7 @@ enum NativeSwiftDocumentDecoder {
         floats[outputID] = size
         constantIntegerViewByID[outputID] = nativeSwiftIntegerView(size)
         imageSizeIDs.insert(outputID)
-        numericConstants.append(.imageSize(id: outputID, value: size))
+        resolutionSteps.append(.imageSize(id: outputID, value: size))
       case NativeSwiftWireOpcode.layoutRoot:  // Root
         let root = ParsedNode(kind: .root, componentID: try input.int("root component id"))
         root.componentKind = "RootLayoutComponent"
@@ -2654,7 +2656,7 @@ enum NativeSwiftDocumentDecoder {
         guard let container = actionContainer() else {
           throw input.malformed("Float action is outside a click modifier")
         }
-        guard expressionIDs.contains(expressionID) else {
+        guard floatExpressions[expressionID] != nil else {
           throw input.malformed("Missing float action expression \(expressionID)")
         }
         appendAction(
@@ -2798,9 +2800,10 @@ enum NativeSwiftDocumentDecoder {
           throw input.malformed("Invalid time argument count \(count)")
         }
         let arguments = try (0..<count).map { _ in try input.int("time attribute argument") }
-        timeAttributes.append(
-          ParsedTimeAttribute(
-            outputID: outputID, timeID: timeID, type: type & 0xff, argumentIDs: arguments))
+        let attribute = ParsedTimeAttribute(
+          outputID: outputID, timeID: timeID, type: type & 0xff, argumentIDs: arguments)
+        timeAttributes.append(attribute)
+        resolutionSteps.append(.timeAttribute(attribute))
       case NativeSwiftWireOpcode.debugMessage:
         // A diagnostic for the host's log. AndroidX prints it and changes nothing else; this core
         // has no log channel, so reading it past is the whole of its effect.
@@ -2963,16 +2966,17 @@ enum NativeSwiftDocumentDecoder {
         }
         textStyles[styleID] = style
       case NativeSwiftWireOpcode.idLookup:
-        idLookups.append(
-          ParsedIdLookup(
-            outputID: try input.int("id lookup output id"),
-            listID: try input.int("id lookup list id"),
-            index: try input.word("id lookup index")))
+        let lookup = ParsedIdLookup(
+          outputID: try input.int("id lookup output id"),
+          listID: try input.int("id lookup list id"),
+          index: try input.word("id lookup index"))
+        idLookups.append(lookup)
+        resolutionSteps.append(.idLookup(lookup))
       case NativeSwiftWireOpcode.textLength:
-        textLengths.append(
-          ParsedTextLength(
-            outputID: try input.int("text length output id"),
-            textID: try input.int("text length text id")))
+        let length = ParsedTextLength(
+          outputID: try input.int("text length output id"),
+          textID: try input.int("text length text id"))
+        resolutionSteps.append(.textLength(length))
       case NativeSwiftWireOpcode.textSubtext:
         let subtext = ParsedTextTransform(
           outputID: try input.int("text subtext output id"),
@@ -2980,7 +2984,7 @@ enum NativeSwiftDocumentDecoder {
           start: try input.word("text subtext start"),
           length: try input.word("text subtext length"),
           operation: NativeSwiftTextTransformOperation.identity)
-        textOperations.append(.subtext(subtext))
+        appendTextOperation(.subtext(subtext))
       case NativeSwiftWireOpcode.attributeText:
         let outputID = try input.int("text attribute output id")
         let textID = try input.int("text attribute text id")
@@ -2989,7 +2993,8 @@ enum NativeSwiftDocumentDecoder {
         // Selectors 0-5 read the text's bounds under the current paint, which is host metrics
         // this core does not have yet, and leave the output as it was; 6 is its length.
         if type & 0xff == NativeSwiftTextAttributeType.length {
-          textLengths.append(ParsedTextLength(outputID: outputID, textID: textID))
+          let length = ParsedTextLength(outputID: outputID, textID: textID)
+          resolutionSteps.append(.textLength(length))
         }
       case NativeSwiftWireOpcode.textMeasure:
         // Bounds under the current paint are host text metrics, which this core does not have yet.
@@ -3098,12 +3103,15 @@ enum NativeSwiftDocumentDecoder {
     func references(_ ids: Set<Int>) -> Bool {
       if root.references(anyOf: ids) { return true }
       if expressions.contains(where: { references(ids, in: $0.words) }) { return true }
-      if integerExpressions.values.contains(where: {
-        NativeSwiftIntegerExpression.references(anyOf: ids, mask: $0.mask, tokens: $0.tokens)
+      // Every integer expression runs as its own step, a shadowed one at a reused id included, so
+      // the steps are scanned rather than `integerExpressions`, which keeps the last at each id.
+      if resolutionSteps.contains(where: { step in
+        guard case .integerExpression(_, let expression) = step else { return false }
+        return NativeSwiftIntegerExpression.references(
+          anyOf: ids, mask: expression.mask, tokens: expression.tokens)
       }) {
         return true
       }
-      if textFromFloats.contains(where: { references(ids, in: [$0.value]) }) { return true }
       if textOperations.contains(where: { operation in
         switch operation {
         case .fromFloat(let op): return references(ids, in: [op.value])
@@ -3180,46 +3188,47 @@ enum NativeSwiftDocumentDecoder {
         pending.append(contentsOf: node.children)
       }
     }
-    // An expression reads "forward" when an id it reads is written by the same or a later
-    // expression, which is what makes the tolerant first pass observable without a binding.
-    var lastExpressionIndex: [Int: Int] = [:]
-    for (index, expression) in expressions.enumerated() {
-      lastExpressionIndex[expression.id] = index
-    }
-    let expressionsReadForward = expressions.enumerated().contains { index, expression in
-      expression.words.contains { word in
-        guard let id = NativeSwiftFloatExpression.referenceID(word),
-          let writer = lastExpressionIndex[id]
-        else { return false }
-        return writer >= index
+    // Whether a float expression reads an id that it, or a later step, writes last: the first pass
+    // then reads a value that pass itself replaces.
+    var floatExpressionsReadForward = false
+    if !expressions.isEmpty {
+      var lastWriter: [Int: Int] = [:]
+      lastWriter.reserveCapacity(resolutionSteps.count)
+      for (index, step) in resolutionSteps.enumerated() {
+        step.forEachNumericOutputID { lastWriter[$0] = index }
+      }
+      floatExpressionsReadForward = resolutionSteps.enumerated().contains { index, step in
+        guard case .floatExpression(let expression) = step else { return false }
+        return expression.words.contains { word in
+          guard let id = NativeSwiftFloatExpression.referenceID(word),
+            let writerIndex = lastWriter[id]
+          else { return false }
+          return writerIndex >= index
+        }
       }
     }
     return ParsedDocument(
       width: width, height: height, density: density, densityBehavior: densityBehavior,
       root: root, nodes: nodes, texts: texts, floats: floats,
       colors: colors, integers: integers, numericConstants: numericConstants,
-      integerExpressions: integerExpressions,
-      integerExpressionOrder: integerExpressionOrder,
+      resolutionSteps: resolutionSteps, integerExpressions: integerExpressions,
       namedVariables: namedVariables, expressions: expressions,
-      componentValues: componentValues, colorAttributes: colorAttributes,
-      longConstants: longConstants, booleanConstants: booleanConstants,
-      timeAttributes: timeAttributes, idLookups: idLookups, textLengths: textLengths,
-      colorExpressions: colorExpressions, images: images, sounds: sounds, clickAreas: clickAreas,
+      floatExpressions: floatExpressions,
+      componentValues: componentValues, longConstants: longConstants,
+      booleanConstants: booleanConstants, timeAttributes: timeAttributes, images: images,
+      sounds: sounds, clickAreas: clickAreas,
       frameEffects: frameEffects,
-      textOperations: textOperations,
-      textFromFloats: textFromFloats,
-      textMerges: textMerges, textTransforms: textTransforms, idLists: idLists,
-      floatLists: floatLists,
+      textProducers: ParsedTextOperation.producers(
+        of: textOperations, idLists: idLists, excluding: scopedTextOutputs),
+      idLists: idLists, floatLists: floatLists,
       floatListUpdates: floatListUpdates, dynamicFloatLists: dynamicFloatLists,
-      textLookups: textLookups, textFloatLookups: textFloatLookups,
-      dataMaps: dataMaps, dataMapLookups: dataMapLookups,
-      matrixConstants: matrixConstants, matrixExpressions: matrixExpressions,
-      matrixVectorMath: matrixVectorMath, animationSpecs: animationSpecs,
+      dataMaps: dataMaps, matrixConstants: matrixConstants, matrixExpressions: matrixExpressions,
+      animationSpecs: animationSpecs,
       animationSpecOrder: animationSpecOrder,
       pathIDs: pathIDs, pathTweenIDs: pathTweenIDs,
       accessibilityRecords: accessibilityRecords,
       shaderUniformNames: shaderUniformNames, conditionalTraces: conditionalTraces,
-      impulses: impulses, darkColors: darkColors, wakeWords: wakeWords,
+      impulses: impulses, wakeWords: wakeWords,
       particleDefinitions: particleDefinitions, particleOperations: particleOperations,
       eventHandlers: eventHandlers, runActions: runActions, functions: functions,
       needsContinuousFrames: needsContinuousFrames,
@@ -3231,7 +3240,7 @@ enum NativeSwiftDocumentDecoder {
       imageSnapshots: images.values.filter { !$0.isComponentOffscreenBuffer }
         .sorted { $0.id < $1.id }.map(\.snapshot),
       boundComponentIDs: Set(componentValues.map(\.componentID)),
-      needsTolerantExpressionPass: !componentValues.isEmpty || expressionsReadForward,
+      floatExpressionsReadForward: floatExpressionsReadForward,
       layoutReadsComponentValues: !componentValueIDs.isEmpty
         && root.references(anyOf: componentValueIDs))
   }
