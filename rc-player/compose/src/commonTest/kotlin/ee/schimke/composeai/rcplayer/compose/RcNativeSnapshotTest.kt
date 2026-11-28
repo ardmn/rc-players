@@ -1220,6 +1220,74 @@ class RcNativeSnapshotTest {
     assertEquals(50f, commands(snapshot.root).single().third)
   }
 
+  /** A NaN font size measures as Android's default 12 px (Paint.cpp keeps the previous size). */
+  @Test
+  fun aNaNTextSizeOnAWrappedSiblingLeavesTheWeightedWidthFinite() {
+    val reference = RcFloatWord(0x7fc00000 or 42)
+    val end = RcNoArg(RcOpcodes.CONTAINER_END)
+    val document =
+      RcDocument(
+        RcHeader(RcVersion(1, 0, 0), legacyWidth = 100, legacyHeight = 40, modern = false),
+        listOf(
+          RcFloatConstant(30, RcFloatWord.literal(12f)),
+          RcNamedVariable(30, RcNamedVariable.FLOAT_TYPE, "USER:size"),
+          RcTextData(20, "ab"),
+          RcRootLayout(-2),
+          RcLayoutContent(-3),
+          RcRowLayout(
+            -4,
+            0,
+            horizontalPositioning = 1,
+            verticalPositioning = 4,
+            spacedBy = RcFloatWord.literal(0f),
+          ),
+          RcWidthModifier(RcDimensionType.EXACT, RcFloatWord.literal(100f)),
+          RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(40f)),
+          RcLayoutContent(-5),
+          RcTextLayout(
+            componentId = -6,
+            animationId = 0,
+            textId = 20,
+            color = 0xff000000.toInt(),
+            fontSize = RcFloatWord(0x7fc00000 or 30),
+            fontStyle = 0,
+            fontWeight = RcFloatWord.literal(400f),
+            fontFamilyId = 0,
+            textAlignAndFlags = 1,
+            overflow = 1,
+            maxLines = 1,
+          ),
+          end,
+          RcCanvasLayout(-7, 0),
+          RcWidthModifier(RcDimensionType.WEIGHT, RcFloatWord.literal(1f)),
+          RcLayoutContent(-8),
+          RcComponentValue(RcComponentValue.WIDTH, componentId = -7, valueId = 42),
+          RcDraw4(
+            RcOpcodes.DRAW_RECT,
+            RcFloatWord.literal(0f),
+            RcFloatWord.literal(0f),
+            reference,
+            RcFloatWord.literal(10f),
+          ),
+          end,
+          end,
+          end,
+          end,
+          end,
+          end,
+        ),
+      )
+    fun commands(node: RcNativeNodeSnapshot): List<RcNativeDrawCommand> =
+      node.commands + node.children.flatMap(::commands)
+    val session = RcNativeSnapshotSession(RcDocumentCodec.encode(document))
+
+    val root = session.setFloat("size", Float.NaN).snapshot.root
+    val width = commands(root).single { it.text == null }.third
+
+    // "ab" estimated at 0.55 em per char, 12 px: 100 - 2 x 12 x 0.55.
+    assertEquals(100f - 2 * 12f * 0.55f, width, 0.001f)
+  }
+
   @Test
   fun weightedAllocationSubtractsFillSibling() {
     val reference = RcFloatWord(0x7fc00000 or 42)

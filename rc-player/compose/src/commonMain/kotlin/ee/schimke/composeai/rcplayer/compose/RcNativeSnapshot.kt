@@ -576,6 +576,13 @@ public constructor(bytes: ByteArray) {
   }
 }
 
+/** A `TextLayout`'s size in points: Android's default and cap are pixels, so normalise first. */
+private fun nativeTextSize(
+  operation: RcTextLayout,
+  state: RcPlayerState,
+  document: RcDocument,
+): Float = rcTextSizePixels(state.resolve(operation.fontSize)) / document.header.density
+
 private fun requireValidNativeTime(timeSeconds: Float) {
   require(timeSeconds.isFinite() && timeSeconds >= 0f) {
     "Native snapshot time must be finite and non-negative"
@@ -1021,7 +1028,7 @@ public object RcNativeSnapshotBridge {
               val childOperation = childContainers[index].operation
               return when (childOperation) {
                 is RcTextLayout -> {
-                  val fontSize = state.resolve(childOperation.fontSize) / document.header.density
+                  val fontSize = nativeTextSize(childOperation, state, document)
                   val text = state.text(childOperation.textId).orEmpty()
                   if (horizontal) text.length * fontSize * 0.55f
                   else fontSize * 1.2f * childOperation.maxLines.coerceAtMost(2)
@@ -1182,8 +1189,7 @@ public object RcNativeSnapshotBridge {
                 ),
             )
       } else if (operation is RcTextLayout) {
-        // Android's default and cap are pixels: normalise, then divide.
-        val size = rcTextSizePixels(state.resolve(operation.fontSize)) / document.header.density
+        val size = nativeTextSize(operation, state, document)
         val weight = rcTextWeight(state.resolve(operation.fontWeight))
         require(operation.textAlign in 1..6) {
           "TextLayout alignment ${operation.textAlign} is invalid"
