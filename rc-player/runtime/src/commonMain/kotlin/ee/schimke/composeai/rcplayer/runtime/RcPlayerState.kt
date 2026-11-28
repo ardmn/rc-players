@@ -273,6 +273,12 @@ private constructor(
 
   /** Colour ids the host overrides by name; document writes to them are ignored ([setColor]). */
   private val colorOverrides = mutableSetOf<Int>()
+
+  /**
+   * Float ids a host's named write pinned (AndroidX `mFloatOverride`): a float expression no longer
+   * writes them, until [clearNamedValue].
+   */
+  private val hostFloatOverrides = mutableSetOf<Int>()
   private val idMaps = mutableMapOf<Int, RcIdMap>()
   private val bitmaps = mutableMapOf<Int, RcBitmapData>()
   private val floatExpressionEvaluator = RcFloatExpressionEvaluator(arrays = ::floatArray)
@@ -1633,7 +1639,7 @@ private constructor(
   }
 
   public fun applyFloatExpression(operation: RcFloatExpression) {
-    if (operation.id in overriddenFloats) return
+    if (operation.id in overriddenFloats || operation.id in hostFloatOverrides) return
     // Inputs unchanged since its last evaluation: its value stands, as Compose's `derivedStateOf`
     // keeps a value whose dependencies did not move. The inputs are read through the observed maps,
     // so whatever evaluates this (a component's draw) still depends on them.
@@ -2396,7 +2402,14 @@ private constructor(
         if (variable.id in RcSystemVariables.ALL && variable.id !in documentClaimedSystemIds) {
           claimedSystemIds.remove(variable.id)
         } else {
-          documentNamedValues[name]?.let { setNamedValue(name, it) }
+          // Unpinned, as AndroidX's clearFloatOverride: the remembered value stands until the
+          // document's expression writes again, and writing it is no new pin.
+          hostFloatOverrides.remove(variable.id)
+          when (val recorded = documentNamedValues[name]) {
+            is RcNamedValue.FloatValue -> setFloat(variable.id, recorded.value)
+            null -> Unit
+            else -> setNamedValue(name, recorded)
+          }
         }
       else -> documentNamedValues[name]?.let { setNamedValue(name, it) }
     }
@@ -2460,7 +2473,12 @@ private constructor(
       is RcNamedValue.Text -> setText(variable.id, value.value)
       // `setFloat`, not `storeFloat`: a host overriding a named *system* variable claims it, the
       // same as any other host write, or the next frame's clock would replace the override.
-      is RcNamedValue.FloatValue -> setFloat(variable.id, value.value)
+      is RcNamedValue.FloatValue -> {
+        // AndroidX's overrideFloat pins only a value `!=` the one held (unset is 0), NaN included.
+        val held: Float = floats.peek(variable.id) ?: 0f
+        if (value.value != held) hostFloatOverrides += variable.id
+        setFloat(variable.id, value.value)
+      }
       is RcNamedValue.Color -> {
         colorOverrides.add(variable.id)
         colors[variable.id] = value.argb
