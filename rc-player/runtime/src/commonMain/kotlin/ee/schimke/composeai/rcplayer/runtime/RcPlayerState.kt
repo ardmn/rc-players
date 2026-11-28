@@ -981,8 +981,10 @@ private constructor(
    *
    * A host's NaN bound runs what Java's loop runs, and a loop that never ends stops when the budget
    * is spent. Compose redraws only what changed, so each outermost document loop starts with what
-   * the loops before it in document order last left, as in AndroidX's full paint. A pass runs only
-   * if it fits whole; a loop outside the document has the whole budget.
+   * the loops before it in document order last left. A pass runs only if it fits whole; a loop
+   * outside the document has the whole budget. Known limitation: a loop that stops running (false
+   * conditional, GONE) keeps its last count, where AndroidX counts per paint. Cost: O(L) per
+   * outermost loop for L document loops.
    */
   public fun forEachLoopValue(
     operation: RcLoopOperation,
@@ -1620,6 +1622,9 @@ private constructor(
   }
 
   public fun applyFloatExpression(operation: RcFloatExpression) {
+    // Only a document action pins the id; a host write does not yet, unlike AndroidX's
+    // overrideFloat
+    // and the Swift player (a known limitation).
     if (operation.id in overriddenFloats) return
     // Inputs unchanged since its last evaluation: its value stands, as Compose's `derivedStateOf`
     // keeps a value whose dependencies did not move. The inputs are read through the observed maps,
