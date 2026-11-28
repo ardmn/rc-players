@@ -11,9 +11,10 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   public var maximumNestingDepth: Int
   public var maximumDrawCommandCount: Int
   public var maximumPathElementCount: Int
-  /// The UTF-8 bytes of text one frame may lay out, each also a unit of `maximumFrameWork`. A
-  /// document's string counts each place it is shown; a host's counts once, at most
-  /// `longestDocumentTextBytes`, so one renders at any length. The 128 KiB default holds two such.
+  /// The UTF-8 bytes of a document's own text one frame may lay out, each place it is shown; each
+  /// byte is also a unit of `maximumFrameWork`. A host's string is left out, so it renders at any
+  /// length, but each place it is shown costs `longestDocumentTextBytes` of work at most. The
+  /// 128 KiB default holds two of the longest texts a document can make (Core Text: ~14 ms).
   public var maximumTextBytes: Int
   /// The largest view or canvas side. The document's own size over it is refused; the UIKit
   /// player clamps a resolved exact width or height to it instead (`layoutDimension`).
@@ -169,8 +170,6 @@ struct NativeFrameBudget: Equatable, Sendable {
   private(set) var work = 0
   /// The frame's host strings (`NativeSwiftDocumentSnapshot.hostStrings`).
   let hostStrings: Set<String>
-  /// The host strings, and strings longer than a document can make, counted so far.
-  private var countedHostStrings: Set<String> = []
 
   init(hostStrings: Set<String> = []) {
     self.hostStrings = hostStrings
@@ -231,19 +230,20 @@ struct NativeFrameBudget: Equatable, Sendable {
     _ strings: [String?], limits: RemoteComposeNativeExecutionLimits
   ) throws {
     let longest = RemoteComposeNativeExecutionLimits.longestDocumentTextBytes
-    var addedBytes = 0
+    var documentBytes = 0
+    var hostWork = 0
     for string in strings.compactMap({ $0 }) {
       let bytes = string.utf8.count
-      // A host's string counts once per frame, at most `longest`; the lookup hashes it, O(length).
-      let isHostString = bytes > longest || hostStrings.contains(string)
-      if isHostString {
-        if countedHostStrings.insert(string).inserted { addedBytes += min(bytes, longest) }
+      // Every place a host's string is shown costs at most `longest`, so a document can lay one out
+      // a few times per frame, not thousands; the lookup hashes it, O(length).
+      if bytes > longest || hostStrings.contains(string) {
+        hostWork += min(bytes, longest)
       } else {
-        addedBytes += bytes
+        documentBytes += bytes
       }
     }
-    textBytes += addedBytes
-    work += addedBytes
+    textBytes += documentBytes
+    work += documentBytes + hostWork
     guard textBytes <= limits.maximumTextBytes else {
       throw RemoteComposeNativeLimitError.textTooLong(
         actual: textBytes, maximum: limits.maximumTextBytes)

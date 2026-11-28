@@ -9,8 +9,9 @@ import Testing
   import UIKit
 #endif
 
-/// A host's string counts against the frame's text once however many texts show it, as AndroidX
-/// lays it out (`AndroidRemoteContext.setNamedStringOverride`); a document's text counts each time.
+/// A host's string renders at any length, as AndroidX lays it out
+/// (`AndroidRemoteContext.setNamedStringOverride`): it stays out of the frame's text bytes and each
+/// text showing it costs bounded work; a document's text counts its bytes each time.
 @MainActor @Suite(.serialized) struct NativeHostStringBudgetTests {
   static let hostName = "USER:s"
 
@@ -28,7 +29,7 @@ import Testing
   }
 
   /// 100 KB, over what a document can make itself, and 40 KB, under it: four texts of either are
-  /// over the 128 KiB a frame's own text may take if each text counted it.
+  /// over the 128 KiB a frame's own text may take, had they counted as the document's.
   static let hostStrings = [
     String(repeating: "x", count: 100_000), String(repeating: "y", count: 40_000),
   ]
@@ -73,23 +74,67 @@ import Testing
     #expect(try session.snapshot(timeSeconds: 0).hostStrings.isEmpty)
   }
 
-  /// A host's string counts once, at most the longest text a document can make; a document's
-  /// string of the same length still counts each time it is shown.
-  @Test func aHostStringCountsOnceAndADocumentStringEveryTime() throws {
+  /// A host's string stays out of the frame's text bytes, so it renders at any length, but every
+  /// place it is shown costs the work of the longest text a document can make; a document's string
+  /// counts its bytes each time in both.
+  @Test func aHostStringCostsWorkEachTimeAndADocumentStringItsBytes() throws {
     let longest = RemoteComposeNativeExecutionLimits.longestDocumentTextBytes
     let hostBytes = 40_000
     let host = String(repeating: "h", count: hostBytes)
     var budget = NativeFrameBudget(hostStrings: [host])
-    for _ in 0..<10 { try budget.recordStrings([host], limits: .default) }
-    #expect(budget.textBytes == hostBytes && budget.work == hostBytes)
-    // Longer than any document text, so it counts once as a host's, whatever the snapshot names.
+    for _ in 0..<2 { try budget.recordStrings([host], limits: .default) }
+    #expect(budget.textBytes == 0 && budget.work == 2 * hostBytes)
+    // Longer than any document text, so it is a host's whatever the snapshot names.
     let long = String(repeating: "l", count: longest + 1)
-    for _ in 0..<10 { try budget.recordStrings([long], limits: .default) }
-    #expect(budget.textBytes == hostBytes + longest)
+    try budget.recordStrings([long], limits: .default)
+    #expect(budget.textBytes == 0 && budget.work == 2 * hostBytes + longest)
     var document = NativeFrameBudget(hostStrings: [host])
     let documentText = String(repeating: "d", count: hostBytes)
     #expect(throws: RemoteComposeNativeLimitError.self) {
       for _ in 0..<10 { try document.recordStrings([documentText], limits: .default) }
+    }
+  }
+
+  /// A megabyte host string shown by many texts is refused by the frame's work budget rather than
+  /// laid out once per text: 20 texts would be 20 MB of layout on the main thread.
+  @Test func manyTextsShowingAMegabyteHostStringExceedTheFrameWork() throws {
+    let host = String(repeating: "m", count: 1_000_000)
+    var budget = NativeFrameBudget(hostStrings: [host])
+    #expect(throws: RemoteComposeNativeLimitError.self) {
+      for _ in 0..<20 { try budget.recordStrings([host], limits: .default) }
+    }
+    #if canImport(AppKit) && !canImport(UIKit)
+      let session = try NativeSwiftDocumentSession.open(data: Self.document(texts: 20))
+      #expect(session.setString(host, for: Self.hostName))
+      let snapshot = try session.snapshot(timeSeconds: 0)
+      #expect(throws: RemoteComposeNativeLimitError.self) {
+        _ = try NativeMacPolicy.evaluate(snapshot, compatibility: .compatible)
+      }
+    #endif
+  }
+
+  /// The corpus's banner shows three host strings; at a megabyte each it renders, as on Kotlin.
+  @Test func theBannerRendersThreeMegabyteHostStrings() throws {
+    let banner = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent("renders/ts-empty-font-height/banner.rc")
+    let session = try NativeSwiftDocumentSession.open(data: try Data(contentsOf: banner))
+    var hostStrings: Set<String> = []
+    for (index, name) in ["USER:headline", "USER:body", "USER:cta"].enumerated() {
+      let text = String(repeating: Character(UnicodeScalar(UInt8(97 + index))), count: 1_000_000)
+      #expect(session.setString(text, for: name), "\(name)")
+      hostStrings.insert(text)
+    }
+    let snapshot = try session.snapshot(timeSeconds: 0)
+    #expect(snapshot.hostStrings == hostStrings)
+    #if canImport(AppKit) && !canImport(UIKit)
+      #expect(throws: Never.self) {
+        _ = try NativeMacPolicy.evaluate(snapshot, compatibility: .compatible)
+      }
+    #endif
+    var budget = NativeFrameBudget(hostStrings: snapshot.hostStrings)
+    #expect(throws: Never.self) {
+      for text in hostStrings { try budget.recordStrings([text], limits: .default) }
     }
   }
 }
