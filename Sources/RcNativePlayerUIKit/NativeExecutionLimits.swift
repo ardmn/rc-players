@@ -132,7 +132,8 @@ public enum RemoteComposeNativeLimitError: Error, Equatable, LocalizedError, Sen
   case textTooLong(actual: Int, maximum: Int)
   case invalidCanvasDimension(actual: Double)
   case canvasTooLarge(actual: Double, maximum: Double)
-  /// Thrown only for a non-finite canvas size; a resolved value is normalised or dropped instead.
+  /// Not thrown: a non-finite canvas size is `invalidCanvasDimension`, and a resolved value is
+  /// normalised or dropped. Kept as public API.
   case nonFiniteValue(componentID: Int, field: String)
   /// Not thrown: resolved coordinates are clamped to `maximumCoordinateMagnitude`. Kept as public
   /// API.
@@ -295,7 +296,7 @@ struct NativeFrameBudget: Equatable, Sendable {
   ) throws {
     for value in values {
       guard value.isFinite else {
-        throw RemoteComposeNativeLimitError.nonFiniteValue(componentID: 0, field: "canvas")
+        throw RemoteComposeNativeLimitError.invalidCanvasDimension(actual: value)
       }
       guard value >= 0, value <= limits.maximumCanvasDimension else {
         throw RemoteComposeNativeLimitError.canvasTooLarge(
