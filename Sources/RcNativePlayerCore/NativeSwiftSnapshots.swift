@@ -679,9 +679,9 @@ public struct NativeSwiftDrawCommandSnapshot: Sendable, Equatable {
   public let text: String?
   public let textSize: Float
   public let textFlags: Int
-  /// Positions in `values` that hold NaN as the wire's own "no value" sentinel rather than a
-  /// number: `DrawTextAnchored`'s `panY` when it is the id-0 NaN, which the reference reads as
-  /// "leave the baseline where it is".
+  /// Positions in `values` that hold NaN as "no value" rather than a number: `DrawTextAnchored`'s
+  /// `panY` when it resolves to NaN, the id-0 sentinel or a variable's value, which the reference
+  /// reads as "leave the baseline where it is".
   public let unsetValueIndices: [Int]
   /// Set only on a `NativeSwiftDrawKind.drawToBitmap` command: where this node's later commands
   /// draw, up to the next such command or the end of the node's commands.

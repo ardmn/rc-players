@@ -371,6 +371,9 @@ struct ParsedDrawCommand {
   /// resolves to NaN: `DrawTextAnchored`'s `panY`, which the reference reads that way to leave the
   /// baseline where it is.
   let nanSentinelIndices: Set<Int>
+  /// Word positions where any NaN, the sentinel or a variable's value, means "no value"
+  /// (`DrawTextAnchored.paint`'s `Float.isNaN(mOutPanY)`); the snapshot's `unsetValueIndices`.
+  let nanMeansUnsetIndices: Set<Int>
   /// A `DrawToBitmap` redirect's target. Final at decode but for the component ids it names, which
   /// may be variables and are resolved with the frame's (or a function call's) values.
   let offscreenTarget: NativeSwiftOffscreenTargetSnapshot?
@@ -386,8 +389,9 @@ struct ParsedDrawCommand {
   ) {
     self.kind = kind
     self.words = words
-    self.nanSentinelIndices = nanSentinelIndices.filter {
-      words.indices.contains($0) && NativeSwiftFloatExpression.referenceID(words[$0]) == 0
+    nanMeansUnsetIndices = nanSentinelIndices.filter(words.indices.contains)
+    self.nanSentinelIndices = nanMeansUnsetIndices.filter {
+      NativeSwiftFloatExpression.referenceID(words[$0]) == 0
     }
     staticValues = words.contains { NativeSwiftFloatExpression.referenceID($0) != nil }
       ? nil : words.map(Float.init(bitPattern:))
@@ -487,7 +491,7 @@ struct ParsedDrawCommand {
         return String(decoding: units[lower..<upper], as: UTF16.self)
       }, textSize: NativeSwiftFloatExpression.resolve(paint.textSize, values: values),
       textFlags: textFlags,
-      unsetValueIndices: nanSentinelIndices.sorted(),
+      unsetValueIndices: nanMeansUnsetIndices.filter { resolvedValues[$0].isNaN }.sorted(),
       offscreenTarget: offscreenTarget?.resolvingComponents(values: values, integers: integers))
   }
 
