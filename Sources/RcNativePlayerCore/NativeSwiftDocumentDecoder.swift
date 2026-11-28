@@ -1234,8 +1234,8 @@ enum NativeSwiftDocumentDecoder {
         guard suspendedInputs.count < maximumNestingDepth else {
           throw input.malformed("LOOM expansion nesting exceeds \(maximumNestingDepth)")
         }
-        // AndroidX counts a pass and each operation directly in its body; a nested loop's own
-        // passes count when it runs.
+        // AndroidX counts a pass and each operation directly in its body. A loop nested in the
+        // body is refused: `skipOperationPayload` has no LoopStart case.
         let loop = LoopExpansion(
           indexID: indexID, body: body, from: from, step: step, until: until,
           passCost: 1 + capturedBodyTopLevelOperations)

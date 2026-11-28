@@ -457,9 +457,13 @@ public struct NativeSwiftNodeSnapshot: Sendable {
   public let heightValue: Float
   public let padding: NativeSwiftInsets
   public let minimumWidth: Float
+  /// The `widthIn` maximum, or `noMaximum` (any negative value reads as none).
   public let maximumWidth: Float
   public let minimumHeight: Float
+  /// The `heightIn` maximum, or `noMaximum` (any negative value reads as none).
   public let maximumHeight: Float
+  /// The `maximumWidth` / `maximumHeight` of a node with no maximum: the wire's literal -1.
+  public static let noMaximum: Float = -1
   public let cornerRadius: Float
   public let clipsToBounds: Bool
   public let graphicsLayer: NativeSwiftGraphicsLayerSnapshot?
@@ -687,8 +691,8 @@ public struct NativeSwiftDrawCommandSnapshot: Sendable, Equatable {
   /// draw, up to the next such command or the end of the node's commands.
   public let offscreenTarget: NativeSwiftOffscreenTargetSnapshot?
 
-  /// The values a host validates as geometry: every value except those sentinels. A NaN anywhere
-  /// else is still a document error.
+  /// The values a renderer checks as geometry: every value except those "no value" NaNs. A
+  /// non-finite value anywhere else stops the draw (`NativeCanvasCommands.drawable`).
   public var geometryValues: [Float] {
     guard !unsetValueIndices.isEmpty else { return values }
     return values.enumerated().compactMap { index, value in

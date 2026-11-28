@@ -1261,9 +1261,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
           right: resolvedFloat(node.paddingWords.right, values: values),
           bottom: resolvedFloat(node.paddingWords.bottom, values: values)),
       minimumWidth: resolvedFloat(node.minimumWidthWord, values: values),
-      maximumWidth: maximumWidth > 1_000_000 ? -1 : maximumWidth,
+      maximumWidth: maximumWidth > 1_000_000 ? NativeSwiftNodeSnapshot.noMaximum : maximumWidth,
       minimumHeight: resolvedFloat(node.minimumHeightWord, values: values),
-      maximumHeight: maximumHeight > 1_000_000 ? -1 : maximumHeight,
+      maximumHeight: maximumHeight > 1_000_000 ? NativeSwiftNodeSnapshot.noMaximum : maximumHeight,
       cornerRadius: cornerRadius,
       clipsToBounds: node.clipsToBounds,
       graphicsLayer: node.graphicsLayer.isEmpty
@@ -1330,8 +1330,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       scrollMaximum: node.scrollMaximumWord.map {
         NativeSwiftFloatExpression.resolve($0, values: values)
       } ?? 0,
-      // A NaN, zero or negative velocity holds the content still (`NativeSwiftMarqueeSnapshot.offset`,
-      // Kotlin's `androidXMarqueeOffset`) rather than failing the frame.
+      // A NaN, zero or negative velocity holds the content still rather than failing the frame
+      // (`NativeSwiftMarqueeSnapshot.offset`, Kotlin's `androidXMarqueeOffset`).
       marquee: node.marqueeVelocityWord.map {
         NativeSwiftMarqueeSnapshot(
           iterations: node.marqueeIterations, animationMode: node.marqueeAnimationMode,
@@ -1500,11 +1500,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     nativeSwiftSaturated(NativeSwiftFloatExpression.resolve(word, values: values))
   }
 
-  /// A `widthIn` / `heightIn` maximum: NaN is no bound (-1), as the Kotlin player's
+  /// A `widthIn` / `heightIn` maximum: NaN is no bound (`noMaximum`), as the Kotlin player's
   /// `applyWidthRange` passes `Dp.Unspecified`; any other value saturates.
   private func resolvedMaximum(_ word: UInt32, values: [Int: Float]) -> Float {
     let value = NativeSwiftFloatExpression.resolve(word, values: values)
-    return value.isNaN ? -1 : nativeSwiftSaturated(value)
+    return value.isNaN ? NativeSwiftNodeSnapshot.noMaximum : nativeSwiftSaturated(value)
   }
 
   /// A float write: the float view, and the integer view under the same id, truncated toward zero

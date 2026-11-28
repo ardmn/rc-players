@@ -563,9 +563,9 @@ struct ParsedImageDraw {
   }
 }
 
-/// The word for a literal `-1`, which is how a node says "no maximum". Spelled once so the default
-/// cannot drift from the `> 1_000_000 ? -1` sentinel the snapshot still hands the layout.
-let nativeSwiftNegativeOneWord = Float(-1).bitPattern
+/// The word for a literal `-1`, which is how a node says "no maximum": the snapshot's
+/// `NativeSwiftNodeSnapshot.noMaximum`, so the two cannot drift.
+let nativeSwiftNegativeOneWord = NativeSwiftNodeSnapshot.noMaximum.bitPattern
 
 /// Padding held as it arrived on the wire. `NativeSwiftInsets` stays the resolved, public shape.
 struct ParsedInsetWords {

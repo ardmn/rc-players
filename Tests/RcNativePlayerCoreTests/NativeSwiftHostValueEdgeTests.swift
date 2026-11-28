@@ -34,8 +34,9 @@ import Testing
   }
 
   /// A marquee whose velocity a host sets to NaN, 0 or below stands still instead of failing the
-  /// frame: Kotlin's `androidXMarqueeOffset` gives 0 for a duration that is not finite and positive,
-  /// and AndroidX's `MarqueeModifierOperation.paint` (java:180) divides by the raw velocity.
+  /// frame: Kotlin's `androidXMarqueeOffset` gives 0 for a duration that is not finite and
+  /// positive, and AndroidX's `MarqueeModifierOperation.paint` (java:180) divides by the raw
+  /// velocity.
   @Test func aHostMarqueeVelocityThatIsNotPositiveStandsStill() throws {
     typealias Op = NativeSwiftWireOpcode
     let document = Writer()

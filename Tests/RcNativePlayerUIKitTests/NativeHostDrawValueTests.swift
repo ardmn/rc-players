@@ -6,7 +6,8 @@ import Testing
 @testable import RcNativePlayerUIKit
 
 /// Host values in a canvas's draws, from the document through the core snapshot to what the UIKit
-/// and AppKit renderers keep (`NativeCanvasCommands.drawable`), as AndroidX's Skia canvas draws them.
+/// and AppKit renderers keep (`NativeCanvasCommands.drawable`), as AndroidX's Skia canvas draws
+/// them.
 @Suite struct NativeHostDrawValueTests {
   typealias Op = NativeSwiftWireOpcode
   static let floatName = "USER:value"
