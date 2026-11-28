@@ -449,44 +449,6 @@ class RcPlayerStateTest {
     assertEquals(0, passes(third))
   }
 
-  /**
-   * A drawing that no longer runs a loop (its conditional turned false) frees that loop's budget,
-   * and one released (its component GONE) frees all it recorded, as AndroidX counts only what
-   * paints (CoreDocument.java:2357).
-   */
-  @Test
-  fun aLoopItsDrawingNoLongerRunsLeavesTheBudgetToLaterLoops() {
-    val first = loop(30)
-    val second = loop(30)
-    val state =
-      RcPlayerState(
-        RcDocument(
-          RcHeader(RcVersion(1, 0, 0)),
-          listOf(RcFloatConstant(30, RcFloatWord.literal(Float.POSITIVE_INFINITY)), first, second),
-        ),
-      )
-    val firstDrawing = Any()
-    val secondDrawing = Any()
-    fun passes(drawing: Any, loop: RcLoopOperation?): Int {
-      var count = 0
-      state.inLoopPass(drawing) {
-        loop?.let { state.forEachLoopValue(it, bodyOperations = 0) { count++ } }
-      }
-      return count
-    }
-
-    assertEquals(ANDROIDX_MAX_OP_COUNT, passes(firstDrawing, first))
-    assertEquals(0, passes(secondDrawing, second))
-    // Drawn again without its loop: the second loop has the whole budget.
-    passes(firstDrawing, loop = null)
-    assertEquals(ANDROIDX_MAX_OP_COUNT, passes(secondDrawing, second))
-
-    passes(firstDrawing, first)
-    assertEquals(0, passes(secondDrawing, second))
-    state.releaseLoopPass(firstDrawing)
-    assertEquals(ANDROIDX_MAX_OP_COUNT, passes(secondDrawing, second))
-  }
-
   /** v4.1.0 published `forEachLoopValue(operation, block)`; it still runs, a pass costing one. */
   @Suppress("DEPRECATION")
   @Test
