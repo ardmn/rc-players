@@ -71,6 +71,25 @@ import Testing
         == forwards)
   }
 
+  /// A marquee moves, and so needs frames, only when it has a finite sweep: overflowing content and
+  /// a velocity that is neither 0 nor NaN, as `androidXMarqueeOffset` reads the duration.
+  @Test func aMarqueeWithoutAFiniteSweepNeedsNoFrames() {
+    func marquee(_ velocity: Float) -> NativeSwiftMarqueeSnapshot {
+      NativeSwiftMarqueeSnapshot(
+        iterations: -1, animationMode: 0, repeatDelayMillis: 0, initialDelayMillis: 0, spacing: 0,
+        velocity: velocity)
+    }
+    for velocity: Float in [0, .nan, .infinity] {
+      #expect(!marquee(velocity).moves(overflowDistance: 200, density: 1), "\(velocity)")
+    }
+    for velocity: Float in [30, -30] {
+      #expect(marquee(velocity).moves(overflowDistance: 200, density: 1), "\(velocity)")
+    }
+    for overflow: Float in [0, -5, .infinity, .nan] {
+      #expect(!marquee(30).moves(overflowDistance: overflow, density: 1), "\(overflow)")
+    }
+  }
+
   /// A host write equal to the value an expression gives its id changes nothing, so the expression
   /// keeps driving it: AndroidX's `overrideFloat` writes and marks an override only for a value
   /// `!=` the one held (RemoteComposeState.java:318-324).

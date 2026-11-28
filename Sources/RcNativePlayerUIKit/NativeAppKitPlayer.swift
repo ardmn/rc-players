@@ -2645,7 +2645,7 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
   /// constraint it was measured under gave — as Compose chooses it — so layout reuses it rather than
   /// searching again inside the box it produced, where "strictly shorter" would pick a smaller one.
   private var autosizedTexts: [MacAvailableSpace: MacAutosizedText] = [:]
-  /// Whether the marquee's content overflows, so it moves and needs frames.
+  /// Whether the marquee can move (`NativeSwiftMarqueeSnapshot.moves`), so it needs frames.
   private var marqueeMoves = false
   private(set) var componentChildren: [NativeMacComponentView]
   private var inputView: NativeMacInputView?
@@ -3307,7 +3307,7 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
               marquee.offset(
                 overflowDistance: max(overflow, 0), density: 1,
                 elapsedSeconds: documentView?.marqueeElapsedSeconds ?? 0)),
-            moves: overflow > 0 && overflow.isFinite)
+            moves: marquee.moves(overflowDistance: overflow, density: 1))
           label.frame = NSRect(
             x: content.minX + marqueeOffset - inset, y: content.minY,
             width: max(content.width, natural) + inset * 2, height: height)
@@ -3345,13 +3345,13 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
       marquee.offset(
         overflowDistance: max(overflow, 0), density: 1,
         elapsedSeconds: documentView?.marqueeElapsedSeconds ?? 0))
-    setMarquee(offset: offset, moves: overflow > 0 && overflow.isFinite)
+    setMarquee(offset: offset, moves: marquee.moves(overflowDistance: overflow, density: 1))
     guard offset != 0 else { return }
     for child in componentChildren { child.frame.origin.x += offset }
   }
 
   /// Records where the marquee is and whether it can move, telling the document view when the
-  /// latter changes: frames are requested only while some marquee overflows.
+  /// latter changes: frames are requested only while some marquee can move.
   private func setMarquee(offset: CGFloat, moves: Bool) {
     marqueeOffset = offset
     guard marqueeMoves != moves else { return }
@@ -3359,7 +3359,7 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
     documentView?.marqueeDemandChanged()
   }
 
-  /// Whether this component or any below it has a marquee whose content overflows.
+  /// Whether this component or any below it has a marquee that can move.
   var hasMovingMarquee: Bool {
     marqueeMoves || componentChildren.contains { $0.hasMovingMarquee }
   }
