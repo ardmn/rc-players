@@ -187,8 +187,7 @@
       let limits = RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10)
       func rect(
         _ values: [Float], strokeWidth: Float = 1, isStroke: Bool = false, path: [Float] = []
-      ) -> NativeSwiftDrawCommandSnapshot
-      {
+      ) -> NativeSwiftDrawCommandSnapshot {
         let elements =
           path.isEmpty
           ? [] : [NativeSwiftPathElementSnapshot(kind: NativeSwiftPathCommand.move, values: path)]
