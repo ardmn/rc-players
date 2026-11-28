@@ -86,8 +86,8 @@ struct NativeLayoutNode: Equatable {
 }
 
 extension NativeLayoutNode {
-  /// Every float the snapshot resolved is normalised through `limits` (`layoutCoordinate`,
-  /// `layoutDimension`), so whatever value a host wrote lays out with finite geometry.
+  /// A layout node with every resolved float normalised through `limits`, so any value a host
+  /// wrote lays out with finite geometry.
   init(snapshot: NativeSwiftNodeSnapshot, limits: RemoteComposeNativeExecutionLimits = .default) {
     self.init(kind: snapshot.kind)
     componentID = snapshot.componentID

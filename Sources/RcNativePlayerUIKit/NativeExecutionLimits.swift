@@ -11,22 +11,15 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   public var maximumNestingDepth: Int
   public var maximumDrawCommandCount: Int
   public var maximumPathElementCount: Int
-  /// The UTF-8 bytes of text one frame may lay out; each byte also counts one unit of
-  /// `maximumFrameWork`. The limit bounds what a document's own text costs: each place a document
-  /// shows its own string counts it in full, so a document that repeats its text to stall the
-  /// frame is refused. A host's string — one `NativeSwiftDocumentSnapshot.hostStrings` names, or
-  /// one longer than `longestDocumentTextBytes`, which only a host can write — counts once per
-  /// frame however many texts show it, and at most `longestDocumentTextBytes`, so it renders
-  /// whatever its length and wherever it is shown, as AndroidX takes it
-  /// (`AndroidRemoteContext.setNamedStringOverride`). The default, 128 KiB, is well over what a
-  /// document shows by itself and holds two full-length strings.
+  /// The UTF-8 bytes of text one frame may lay out, each also a unit of `maximumFrameWork`. A
+  /// document's string counts each place it is shown; a host's counts once, at most
+  /// `longestDocumentTextBytes`, so it renders at any length. The 128 KiB default holds two.
   public var maximumTextBytes: Int
   /// The largest view or canvas side. The document's own size over it is refused; the UIKit
   /// player clamps a resolved exact width or height to it instead (`layoutDimension`).
   public var maximumCanvasDimension: Double
-  /// The largest coordinate magnitude. The players clamp resolved layout values to it rather
-  /// than refusing the frame (`layoutCoordinate`); the UIKit player clamps a draw command's
-  /// coordinates the same way (`drawValues(of:)`), but not a transform's operands or an angle.
+  /// The largest coordinate magnitude: resolved layout values and draw coordinates are clamped to
+  /// it rather than refusing the frame; a transform's operands and angles are not.
   public var maximumCoordinateMagnitude: Double
   public var maximumFrameWork: Int
 
@@ -54,28 +47,19 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
 
   public static let `default` = RemoteComposeNativeExecutionLimits()
 
-  /// The longest text, in UTF-8 bytes, a document can make by itself: a `TextMerge` result is at
-  /// most 16K UTF-16 units (AndroidX `TextMerge.MAX_TEXT_LENGTH`, the core's
-  /// `maximumTextMergeLength`), each at most 3 bytes, and a string on the wire at most 4000 bytes
-  /// (`Limits.MAX_STRING_SIZE`). Any longer string is a host's, and counts against
-  /// `maximumTextBytes` as this many bytes, once per frame.
+  /// The longest UTF-8 text a document can make itself: a `TextMerge` result of at most 16K UTF-16
+  /// units (TextMerge.java:41), 3 bytes each. Any longer string is a host's.
   static let longestDocumentTextBytes = 3 * 16 * 1024
 
-  /// A resolved layout float (a padding, spacing, offset, constraint or z-index) as UIKit can take
-  /// it, whatever a host wrote: NaN reads 0, as Java's `(int)` and `Math.round` read it where the
-  /// Kotlin player rounds a padding or offset, and the rest is held within
-  /// ±`maximumCoordinateMagnitude`, so layout arithmetic stays finite and a `CALayer` never sees a
-  /// NaN position. AndroidX takes the raw float (`PaddingModifierOperation.updateVariables`,
-  /// `OffsetModifierOperation.updateVariables`), so a host's value must not fail the frame.
+  /// A resolved layout float (padding, spacing, offset, constraint, z-index) as UIKit can take it:
+  /// NaN reads 0, as in Java's `(int)`; the rest is held to ±`maximumCoordinateMagnitude`.
   func layoutCoordinate(_ value: Float) -> CGFloat {
     value.isNaN ? 0 : Self.clamped(CGFloat(value), to: maximumCoordinateMagnitude)
   }
 
-  /// An exact width or height, held within ±`maximumCanvasDimension` so no view outgrows the
-  /// largest canvas the player backs; NaN reads 0. Within a parent it is clamped to the parent's
-  /// constraints anyway, as AndroidX's measure clamps it
-  /// (`BaseModernMeasurePolicy.measure`: `Math.min(maxWidth, computeModifierDefinedWidth(..))`).
-  /// Any other dimension type keeps NaN, which a fill reads as a bare `fillMaxWidth()`.
+  /// An exact width or height held to ±`maximumCanvasDimension`, NaN as 0; a parent clamps it
+  /// further, as AndroidX's `BaseModernMeasurePolicy.measure` does. Any other type keeps NaN,
+  /// which a fill reads as a bare `fillMaxWidth()`.
   func layoutDimension(_ value: Float, type: Int) -> CGFloat {
     switch type {
     case NativeSwiftDimensionType.exact, NativeSwiftDimensionType.exactDp:
@@ -85,19 +69,14 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
     }
   }
 
-  /// A draw command's float within ±`maximumCoordinateMagnitude`. NaN is kept: it is a sentinel
-  /// some commands carry (`unsetValueIndices`), and `NativeCanvasCommands.drawable` already left
-  /// out a command whose geometry is non-finite.
+  /// A draw command's float within ±`maximumCoordinateMagnitude`; NaN is kept, as some commands
+  /// carry it as a sentinel (`unsetValueIndices`).
   func drawCoordinate(_ value: Float) -> CGFloat {
     value.isNaN ? .nan : Self.clamped(CGFloat(value), to: maximumCoordinateMagnitude)
   }
 
-  /// A draw command's values as the UIKit player draws them: its coordinates through
-  /// `drawCoordinate`, and a transform's operands and an arc's angles as they are. A scale, a
-  /// skew, a matrix entry or an angle is not a coordinate: clamping one changes the drawing, and an
-  /// angle that grows with time passes any coordinate bound (1e6° at 360°/s is 46 minutes). A
-  /// translation composes with the coordinates it moves, so it is not clamped either. Core
-  /// Graphics composes any finite matrix and reduces any finite angle itself.
+  /// A draw command's values as UIKit draws them: coordinates through `drawCoordinate`, and a
+  /// transform's operands and an arc's angles as they are, since clamping one changes the drawing.
   func drawValues(of command: NativeSwiftDrawCommandSnapshot) -> [CGFloat] {
     switch command.kind {
     case NativeSwiftDrawKind.matrixTranslate, NativeSwiftDrawKind.matrixScale,
@@ -117,13 +96,13 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   /// edges (`[left, top, right, bottom, startAngle, sweepAngle]`).
   private static let arcAngleIndices = 4...5
 
-  /// Whether a draw command's geometry, paint and path are all finite. AndroidX hands the raw
-  /// floats to `Canvas` (`DrawRect.paint`: `context.drawRect(mX1, mY1, mX2, mY2)`), which draws
-  /// nothing for a non-finite shape (`SkCanvas::quickReject`: `!devRect.isFinite()`). Matrix,
-  /// clip and save/restore commands are judged by `NativeCanvasCommands.drawable` instead.
+  /// Whether a draw command's geometry, paint and path are all finite: Skia draws nothing for a
+  /// non-finite shape (`SkCanvas::quickReject`).
   func isDrawable(_ command: NativeSwiftDrawCommandSnapshot) -> Bool {
-    command.geometryValues.allSatisfy(\.isFinite) && command.strokeWidth.isFinite
-      && command.alpha.isFinite && command.path.allSatisfy { $0.values.allSatisfy(\.isFinite) }
+    let geometryIsFinite = command.geometryValues.allSatisfy(\.isFinite)
+    let paintIsFinite = command.strokeWidth.isFinite && command.alpha.isFinite
+    let pathIsFinite = command.path.allSatisfy { $0.values.allSatisfy(\.isFinite) }
+    return geometryIsFinite && paintIsFinite && pathIsFinite
   }
 
   private static func clamped(_ value: CGFloat, to bound: Double) -> CGFloat {
@@ -143,10 +122,9 @@ public enum RemoteComposeNativeLimitError: Error, Equatable, LocalizedError, Sen
   case canvasTooLarge(actual: Double, maximum: Double)
   case nonFiniteValue(componentID: Int, field: String)
   case coordinateTooLarge(componentID: Int, field: String, actual: Double, maximum: Double)
-  /// No player throws it any more: every resolved width and height renders. Kept because the
-  /// enum is public API.
+  /// Not thrown: every resolved width and height renders. Kept as public API.
   case invalidDimensionValue(componentID: Int, field: String, actual: Double)
-  /// No player throws it any more. Kept because the enum is public API.
+  /// Not thrown. Kept as public API.
   case invalidGradientStop(componentID: Int, actual: Double)
   case frameWorkExceeded(actual: Int, maximum: Int)
 
@@ -189,9 +167,9 @@ struct NativeFrameBudget: Equatable, Sendable {
   private(set) var pathElements = 0
   private(set) var textBytes = 0
   private(set) var work = 0
-  /// The frame's host strings (`NativeSwiftDocumentSnapshot.hostStrings`), and those of them, or
-  /// of the strings longer than a document can make, already counted.
+  /// The frame's host strings (`NativeSwiftDocumentSnapshot.hostStrings`).
   let hostStrings: Set<String>
+  /// The host strings, and strings longer than a document can make, counted so far.
   private var countedHostStrings: Set<String> = []
 
   init(hostStrings: Set<String> = []) {
@@ -256,10 +234,9 @@ struct NativeFrameBudget: Equatable, Sendable {
     var addedBytes = 0
     for string in strings.compactMap({ $0 }) {
       let bytes = string.utf8.count
-      // A host's string — one the snapshot names, or one longer than a document can make — counts
-      // once per frame, at most `longest`: AndroidX lays it out wherever the document shows it.
-      // Membership hashes the string, O(its length), once per place it is shown.
-      if bytes > longest || hostStrings.contains(string) {
+      // A host's string counts once per frame, at most `longest`; the lookup hashes it, O(length).
+      let isHostString = bytes > longest || hostStrings.contains(string)
+      if isHostString {
         if countedHostStrings.insert(string).inserted { addedBytes += min(bytes, longest) }
       } else {
         addedBytes += bytes

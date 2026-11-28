@@ -3322,22 +3322,19 @@ internal fun rcTextFontSizePixels(
   resolved: Float,
   density: Float,
   densityBehavior: Int,
-): Float =
-  rcTextSizePixels(
-    if (word.isNaNEncoded) resolved else rcDpTypedPixels(resolved, density, densityBehavior),
-  )
+): Float {
+  val pixels =
+    if (word.isNaNEncoded) resolved else rcDpTypedPixels(resolved, density, densityBehavior)
+  return rcTextSizePixels(pixels)
+}
 
 /**
- * A text size, in pixels, as AndroidX's players hand it to Android's `Paint.setTextSize`, made safe
- * for Skia's text layout here, which throws on a NaN size (skiko `TextStyle.setFontSize`'s
- * `check(!size.isNaN())`) and on the NaN metrics an infinite size gives (`setBaselineShift`).
+ * A text size in pixels, as Android's `Paint.setTextSize` takes it, made safe for Skia's layout,
+ * which throws on a NaN size (skiko `TextStyle.setFontSize`) and on an infinite one's NaN metrics.
  *
- * Any float may arrive: the size may be a host's value. Android ignores a NaN or negative size
- * (frameworks/base `libs/hwui/jni/Paint.cpp:1001`, `if (textSize >= 0)`), and the paint keeps the
- * size it had, [previous]: a canvas paint's last size, or for a text component the size a fresh
- * paint holds, Skia's 12 px default (`SkFont`'s `kDefault_Size`). A size past
- * [RC_MAX_TEXT_SIZE_PX], an infinity included, Android takes as it is, and draws no glyph a screen
- * shows; here it is that cap, so the same value always lays out the same.
+ * Android keeps the [previous] size for a NaN or negative one (frameworks/base
+ * `libs/hwui/jni/Paint.cpp:1001`); a size past [RC_MAX_TEXT_SIZE_PX] draws no visible glyph there,
+ * so here it is capped.
  */
 internal fun rcTextSizePixels(size: Float, previous: Float = RC_DEFAULT_TEXT_SIZE_PX): Float =
   if (size >= 0f) size.coerceAtMost(RC_MAX_TEXT_SIZE_PX) else previous
@@ -5704,9 +5701,8 @@ internal fun rcFontWeight(resolved: Float): Int =
   if (resolved.isNaN()) RC_NORMAL_TEXT_WEIGHT else resolved.javaRoundToInt().coerceIn(1, 1000)
 
 /**
- * [rcFontWeight] unrounded, for the native snapshot: `coerceIn` keeps a NaN, which then reached the
- * native renderer as the weight. The Swift player's `NativeSwiftTextSnapshot.normalWeight` is its
- * twin.
+ * [rcFontWeight] unrounded, for the native snapshot; NaN is normal, as `coerceIn` would keep it.
+ * Swift twin: `NativeSwiftTextSnapshot.normalWeight`.
  */
 internal fun rcTextWeight(resolved: Float): Float =
   if (resolved.isNaN()) RC_NORMAL_TEXT_WEIGHT.toFloat() else resolved.coerceIn(1f, 1000f)
@@ -8314,14 +8310,13 @@ private fun applyPaint(
   while (index < operation.words.size) {
     val command = operation.words[index++]
     when (command and 0xffff) {
-      1 ->
-        state.textSize =
-          rcTextSizePixels(
-            values.resolve(
-              ee.schimke.composeai.rcplayer.protocol.RcFloatWord(operation.words[index++]),
-            ),
-            previous = state.textSize,
+      1 -> {
+        val size =
+          values.resolve(
+            ee.schimke.composeai.rcplayer.protocol.RcFloatWord(operation.words[index++]),
           )
+        state.textSize = rcTextSizePixels(size, previous = state.textSize)
+      }
       4 -> state.color = operation.words[index++] // PaintBundle.COLOR
       5 ->
         state.strokeWidth =
@@ -9304,11 +9299,8 @@ private class RcFlatEngine(
     }
   }
 
-  // A NaN exact size (a host's value, 0 / 0) is no size, as `Modifier.width(NaN.dp)`, Compose's
-  // `Dp.Unspecified`, is on the per-component path ([applyWidth]): the component wraps its content,
-  // and a later size modifier stays ignored there too.
   private fun Constraints.withWidth(width: RcWidthModifier): Constraints =
-    if (isNoSize(width.type, width.value)) this
+    if (isNaNExactSize(width.type, width.value)) this
     else
       when (width.type) {
         RcDimensionType.EXACT -> fixWidth(px(state.resolve(width.value)).javaRoundToInt())
@@ -9323,7 +9315,7 @@ private class RcFlatEngine(
       }
 
   private fun Constraints.withHeight(height: RcHeightModifier): Constraints =
-    if (isNoSize(height.type, height.value)) this
+    if (isNaNExactSize(height.type, height.value)) this
     else
       when (height.type) {
         RcDimensionType.EXACT -> fixHeight(px(state.resolve(height.value)).javaRoundToInt())
@@ -9337,12 +9329,16 @@ private class RcFlatEngine(
         else -> this
       }
 
-  private fun isNoSize(type: Int, value: RcFloatWord): Boolean =
+  /**
+   * Whether an exact size is NaN (a host's value, 0 / 0): no size, as `Modifier.width(NaN.dp)` is
+   * `Dp.Unspecified` on the per-component path ([applyWidth]), so the component wraps its content.
+   */
+  private fun isNaNExactSize(type: Int, value: RcFloatWord): Boolean =
     (type == RcDimensionType.EXACT || type == RcDimensionType.EXACT_DP) &&
       state.resolve(value).isNaN()
 
-  // Through [rcConstraints]: a host's size may be past what a `Constraints` holds, and `copy`
-  // threw on one, as Compose's `Modifier.width` did on the per-component path.
+  // [rcConstraints], not `copy`: a host's size may be past what a `Constraints` holds, where `copy`
+  // throws.
   private fun Constraints.fixWidth(width: Int): Constraints {
     val w = constrainWidth(width.coerceAtLeast(0))
     return rcConstraints(w, w, minHeight, maxHeight)

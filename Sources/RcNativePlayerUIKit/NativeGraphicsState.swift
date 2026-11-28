@@ -445,28 +445,17 @@ enum NativeGradientRenderer {
   }
 }
 
-/// A node's draw commands as AndroidX's `Canvas` treats a non-finite value, so a host's NaN or
-/// infinity changes only what Skia would change and never how saves and restores pair up. AndroidX
-/// hands the floats to `Canvas` unchecked (`AndroidPaintContext.matrixTranslate`: `mCanvas.translate
-/// (translateX, translateY)`; `clipRect`: `mCanvas.clipRect(left, top, right, bottom)`), and so
-/// does hwui (`SkiaCanvas::translate`, `SkiaCanvas::clipRect`), so Skia decides:
+/// A node's draw commands as AndroidX's `Canvas` treats a non-finite value: AndroidX and hwui pass
+/// the floats to Skia unchecked, so Skia decides. Saves and restores are always kept.
 ///
-/// - A matrix command with a non-finite operand makes the matrix non-finite (`SkCanvas::translate`,
-///   `scale`, `rotate`, `skew` and `concat` do not check), and Skia then rejects every draw under it
-///   (`SkCanvas::quickReject`: `!devRect.isFinite()`) until the restore that pops it. The command
-///   and every draw up to that restore are left out. A NaN pivot is the reference's "no pivot"
-///   (`AndroidPaintContext.matrixScale` and `matrixRotate`: `Float.isNaN(centerX)`), not an operand.
-/// - A clip rectangle with a non-finite edge is ignored (`SkCanvas::clipRect`: `if
-///   (!rect.isFinite()) return;`).
-/// - An intersecting clip path with a non-finite point clips everything away until its restore
-///   (`SkRegion::setPath` reads a non-finite path as empty); a difference clip of one is ignored.
+/// - A matrix command with a non-finite operand drops every draw up to its restore, as Skia rejects
+///   draws under a non-finite matrix (`SkCanvas::quickReject`). A NaN pivot x is "no pivot"
+///   (AndroidPaintContext.java:1473, :1495), not an operand.
+/// - A clip rectangle with a non-finite edge is ignored (`SkCanvas::clipRect`).
+/// - An intersecting clip path with a non-finite point clips its scope away; a difference one is
+///   ignored.
 /// - Any other command with non-finite geometry or paint draws nothing (`isDrawable`).
-///
-/// Saves and restores are always kept. A `DrawToBitmap` redirect draws into another canvas
-/// (`AndroidPaintContext.drawToBitmap` swaps `mCanvas`): the bitmap's own, which it keeps for the
-/// next redirect to that bitmap (`mCCache`), or the main canvas (`mMainCanvas`) for bitmap 0. Each
-/// canvas has its own matrix and save stack, so a redirect ends what the commands before it
-/// suppressed, and drawing that returns to a canvas is suppressed again as that canvas left it.
+/// - A `DrawToBitmap` redirect switches to that canvas's own save stack, kept per bitmap id.
 enum NativeCanvasCommands {
   static func drawable(
     _ commands: [NativeSwiftDrawCommandSnapshot],
@@ -541,13 +530,13 @@ enum NativeCanvasCommands {
     }
   }
 
-  /// `MatrixScale`'s `[scaleX, scaleY, centerX, centerY]` and `MatrixRotate`'s
-  /// `[angle, pivotX, pivotY]`: where the pivot starts.
+  /// Where `MatrixScale`'s pivot starts in `[scaleX, scaleY, centerX, centerY]`.
   private static let scalePivotIndex = 2
+  /// Where `MatrixRotate`'s pivot starts in `[angle, pivotX, pivotY]`.
   private static let rotatePivotIndex = 1
 
   /// The values the matrix depends on: all of them, or those before the pivot when its x is NaN,
-  /// which AndroidX reads as no pivot and ignores the pivot's y with it.
+  /// which AndroidX reads as no pivot, ignoring its y too.
   private static func operands(_ values: [Float], pivotAt index: Int) -> ArraySlice<Float> {
     index < values.count && values[index].isNaN ? values.prefix(index) : values[...]
   }

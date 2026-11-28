@@ -82,13 +82,13 @@ Malformed or over-budget input is reported in the control window. Safety is inde
 compatibility: both modes enforce a 16 MiB encoded-document limit, a bounded document size,
 20,000 nodes, 256 levels of nesting, 50,000 draw commands, 100,000 path elements, 128 KiB of text,
 and 200,000 work units per frame. A document's own string counts at every place it is shown; a
-host's string counts once per frame, however many texts show it, and at most 48 KiB, the longest a
-document can make by itself, so a host's string renders whatever its length. A resolved value
-never fails the frame by itself, as AndroidX takes every host value: layout floats are normalised as
-on UIKit (NaN reads 0, the rest is held within the coordinate limit, and a negative fill fraction
-lays out as no width, an infinite one as the parent's), and a non-finite draw value stops only what
-it stops on AndroidX's Skia canvas: a non-finite transform or intersecting clip path draws nothing
-until its restore, a non-finite clip rectangle is ignored, and any other non-finite draw is dropped.
+host's string counts once per frame, at most 48 KiB (the longest a document can make by itself),
+so it renders at any length. A resolved value never fails the frame, as AndroidX takes every host
+value. Layout floats are normalised as on UIKit: NaN reads 0, the rest is held within the
+coordinate limit, and a negative fill fraction lays out as no width, an infinite one as the
+parent's. A non-finite draw value stops only what it stops on AndroidX's Skia canvas: a non-finite
+transform or intersecting clip path draws nothing until its restore, a non-finite clip rectangle
+is ignored, and any other non-finite draw is dropped.
 Validation runs before the initial AppKit hierarchy is created and again before animated or
 event-driven snapshots replace the current frame. Host events share that frame budget and are
 validated before delivery.

@@ -74,13 +74,11 @@ import ee.schimke.composeai.rcplayer.trace.RcTraceCategory
 import ee.schimke.composeai.rcplayer.trace.rcTrace
 
 /**
- * The loop operations a frame runs in all ([RcPlayerState.forEachLoopValue]): AndroidX's
- * `Limits.MAX_OP_COUNT` (Limits.java:24, androidx-main 4cd983e99fe). AndroidX counts one for every
- * pass of a loop and one for every operation in its body, at every depth (`LoopOperation.paint`,
- * LoopOperation.java:126-140, through `RemoteContext.incrementOpCount`, RemoteContext.java:1144),
- * from zero at the top of each paint (`CoreDocument.paint`'s `clearLastOpCount`), and throws past
- * it. Here the loop stops and the frame renders. The native Swift player's constant of the same
- * name is its twin.
+ * The loop operations a frame may run in all ([RcPlayerState.forEachLoopValue]): AndroidX
+ * `Limits.MAX_OP_COUNT` (Limits.java:24, androidx-main 4cd983e99fe). AndroidX counts every pass and
+ * every body operation at every depth (LoopOperation.java:126-140), from zero each paint
+ * (CoreDocument.java:2357), and throws past it; here the loop stops. The Swift player's constant of
+ * the same name is its twin.
  */
 private const val MAX_LOOP_OPERATIONS_PER_FRAME = 20_000
 
@@ -977,22 +975,13 @@ private constructor(
   }
 
   /**
-   * Runs AndroidX's loop, `for (i = from; i < until; i += step)`, under AndroidX's operation
-   * budget.
+   * Runs AndroidX's loop, `for (i = from; i < until; i += step)`, within the frame's
+   * [MAX_LOOP_OPERATIONS_PER_FRAME]; a pass costs one plus its [bodyOperations].
    *
-   * Every bound may be a host's value, so any float reaches here: a NaN bound or step runs what
-   * Java's loop runs (none, or a single pass for a NaN step), and a loop it would never leave (an
-   * infinite bound, a step that does not advance the index) runs until the budget is spent.
-   *
-   * The budget is AndroidX's: [MAX_LOOP_OPERATIONS_PER_FRAME] for all of a frame's loops, a pass
-   * costing one plus the [bodyOperations] it runs, inner loops' passes counted as they run.
-   * AndroidX paints every loop of a document each frame, in document order, so a loop has what the
-   * loops before it in the document left. Compose redraws only what changed, so here each outermost
-   * loop records what it used, and a loop starts with the budget less what the loops before it in
-   * the document used when they last ran: what a loop draws depends on the document and its values,
-   * not on which components this frame redrew. A pass runs only when all of it fits, where AndroidX
-   * throws part way through one. A loop that is not one of the document's own operations has the
-   * whole budget.
+   * A host's NaN bound runs what Java's loop runs, and a loop that never ends stops when the budget
+   * is spent. Compose redraws only what changed, so each outermost document loop starts with what
+   * the loops before it in document order last left, as in AndroidX's full paint. A pass runs only
+   * if it fits whole; a loop outside the document has the whole budget.
    */
   public fun forEachLoopValue(
     operation: RcLoopOperation,
@@ -1005,8 +994,8 @@ private constructor(
     val passCost = 1 + bodyOperations.coerceAtLeast(0)
     val ordinal = if (loopDepth == 0) documentLoops.indexOfFirst { it === operation } else -1
     if (loopDepth == 0) {
-      loopOperationsLeft =
-        MAX_LOOP_OPERATIONS_PER_FRAME - (0 until ordinal).sumOf { loopOperationsUsed[it] }
+      val usedByEarlierLoops = (0 until ordinal).sumOf { loopOperationsUsed[it] }
+      loopOperationsLeft = MAX_LOOP_OPERATIONS_PER_FRAME - usedByEarlierLoops
     }
     val budgetAtStart = loopOperationsLeft
     loopDepth++
@@ -2128,8 +2117,8 @@ private constructor(
 
   // AndroidX RemoteComposeState.updateFloat publishes both numeric views. Integer expressions
   // consume float results (including comparisons) through the same ID, truncating toward zero.
-  // AndroidX writes only a value `!=` the one it holds (an unset id holds 0), so a zero written
-  // over a zero keeps the sign already there; NaN is never equal to itself and is always written.
+  // AndroidX writes only a value `!=` the one it holds (RemoteComposeState.java:300; unset is 0),
+  // so a zero over a zero keeps its sign; NaN is never equal to itself and is always written.
   private fun storeFloat(id: Int, value: Float) {
     val previous = floats[id] ?: 0f
     floats[id] = if (value == previous) previous else value

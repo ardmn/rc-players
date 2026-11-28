@@ -107,13 +107,8 @@ public enum NativeMacPolicy {
     }
   }
 
-  /// The frame's budget. A resolved value never fails the frame by itself (RC_MACOS_PLAYER_APP.md):
-  /// every layout float, a width or height of any type included, is normalised by
-  /// `NativeLayoutNode` (`layoutCoordinate`, `layoutDimension`) and resolved by
-  /// `NativeLayoutDimension.resolve`, which reads a negative fill fraction as no width and an
-  /// infinite one as the parent's; what a non-finite draw value stops drawing is left out
-  /// (`NativeCanvasCommands.drawable`). Each command still counts against the budget. AndroidX
-  /// takes every such value (`PaddingModifierOperation.updateVariables`, `DrawRect.paint`).
+  /// The frame's budget. A resolved value never fails the frame: `NativeLayoutNode` normalises
+  /// every layout float and `NativeCanvasCommands.drawable` drops non-finite draws.
   private static func validateSnapshot(_ snapshot: NativeSwiftDocumentSnapshot) throws
     -> NativeFrameBudget
   {

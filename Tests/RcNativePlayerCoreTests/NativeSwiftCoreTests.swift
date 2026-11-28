@@ -193,8 +193,7 @@ import Testing
       spacingSnapshot.root.children[0].spacing == 12,
       "computed row spacing resolved to \(spacingSnapshot.root.children[0].spacing)")
 
-    // A size that resolves to 0 is taken, as Android's `Paint.setTextSize(0)` takes it; the
-    // renderers draw it at their smallest size. Sizes below 0 are
+    // A size resolving to 0 is taken, as Android's `Paint.setTextSize(0)` takes it; below 0 is
     // `NativeSwiftHostValueEdgeTests.aHostTextSizeBelowZeroIsAndroidsDefaultSize`.
     let zeroSize = Writer()
     zeroSize.header(width: 100, height: 100)

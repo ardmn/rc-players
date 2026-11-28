@@ -438,12 +438,9 @@ public data class RcFloatList(val id: Int, val values: List<RcFloatWord>) : RcOp
     public const val MAX_VALUES: Int = 2_000
 
     /**
-     * Whether a host's float array is one a float list could hold: at most [MAX_VALUES] values, the
-     * size AndroidX holds every float list to (`DataListFloat.read`, `DataDynamicListFloat`). Any
-     * value is allowed, NaN and the infinities included, as AndroidX's `UpdateDynamicFloatList`
-     * writes any float into a list. The one rule every Kotlin host path checks a float array
-     * against; the native Swift player's
-     * `NativeSwiftNamedVariableDeclarations.isWritableFloatArray` is its twin.
+     * Whether a host's float array fits a float list: at most [MAX_VALUES] values
+     * (DataListFloat.java:115). NaN and the infinities fit, as `UpdateDynamicFloatList` writes any
+     * float. Swift twin: `NativeSwiftNamedVariableDeclarations.isWritableFloatArray`.
      */
     public fun canHold(values: List<Float>): Boolean = values.size <= MAX_VALUES
   }
@@ -665,9 +662,8 @@ public data class RcTextMerge(val outId: Int, val leftId: Int, val rightId: Int)
 
   public companion object {
     /**
-     * The longest text a merge may produce, in UTF-16 units: AndroidX `TextMerge.MAX_TEXT_LENGTH`.
-     * AndroidX throws on a longer one; the players leave the merged text as it was. The native
-     * Swift player's `NativeSwiftDocumentSession.maximumTextMergeLength` is its twin.
+     * The longest text a merge may produce, in UTF-16 units: AndroidX `TextMerge.MAX_TEXT_LENGTH`
+     * (TextMerge.java:41). Swift twin: `NativeSwiftDocumentSession.maximumTextMergeLength`.
      */
     public const val MAX_LENGTH: Int = 16 * 1024
   }

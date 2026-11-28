@@ -334,11 +334,8 @@ class RcPlayerStateTest {
     }
 
     assertEquals(listOf(1f, 3f, 5f), values)
-    // AndroidX runs `for (float i = mFromOut; i < mUntilOut; i += mStepOut)` (remote-core
-    // LoopOperation.java:125, androidx-main ef999e6c39e) and never leaves a loop that does not end.
-    // The player runs the same Java loop and stops when AndroidX's 20 000 operations a frame are
-    // spent: here a pass with no body is one.
-    // The bounds are variables, as a host's values reach a loop: a NaN literal would be an id.
+    // Java's `for (float i = from; i < until; i += step)` (LoopOperation.java:125), stopped by the
+    // frame's operation budget. Bounds are variables, as a host's are: a NaN literal is an id.
     fun passes(from: Float, until: Float, step: Float): List<Float> {
       state.setFloat(30, from)
       state.setFloat(31, step)
@@ -356,22 +353,22 @@ class RcPlayerStateTest {
       )
       return seen
     }
-    // 100 000 passes in Java: the budget stops the loop at exactly 20 000.
+    // 100 000 passes in Java: the budget stops the loop, a pass with no body costing one.
     val capped = passes(0f, 1f, 0.00001f)
-    assertEquals(20_000, capped.size)
+    assertEquals(ANDROIDX_MAX_OP_COUNT, capped.size)
     assertEquals(0f, capped.first())
-    assertEquals(20_000, passes(0f, Float.POSITIVE_INFINITY, 1f).size)
-    assertEquals(20_000, passes(0f, 1f, 0f).size)
+    assertEquals(ANDROIDX_MAX_OP_COUNT, passes(0f, Float.POSITIVE_INFINITY, 1f).size)
+    assertEquals(ANDROIDX_MAX_OP_COUNT, passes(0f, 1f, 0f).size)
     // 1e9 + 1 rounds back to 1e9: the index never advances.
-    assertEquals(20_000, passes(1e9f, 2e9f, 1f).size)
-    assertEquals(20_000, passes(Float.NEGATIVE_INFINITY, 0f, 1f).size)
+    assertEquals(ANDROIDX_MAX_OP_COUNT, passes(1e9f, 2e9f, 1f).size)
+    assertEquals(ANDROIDX_MAX_OP_COUNT, passes(Float.NEGATIVE_INFINITY, 0f, 1f).size)
     // A NaN bound fails `i < until` at once; a NaN step runs the first pass, then the index is NaN.
     assertTrue(passes(Float.NaN, 1f, 1f).isEmpty())
     assertTrue(passes(0f, Float.NaN, 1f).isEmpty())
     assertEquals(listOf(0f), passes(0f, 1f, Float.NaN))
     assertTrue(passes(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY, 1f).isEmpty())
     // A negative step with from < until runs until the cap, as Java's loop would never end.
-    assertEquals(20_000, passes(0f, 1f, -1f).size)
+    assertEquals(ANDROIDX_MAX_OP_COUNT, passes(0f, 1f, -1f).size)
     val zeroIterations = mutableListOf<Float>()
     state.forEachLoopValue(
       RcLoopOperation(
@@ -387,9 +384,8 @@ class RcPlayerStateTest {
   }
 
   /**
-   * The budget holds for a whole loop nest, not each loop in it: two loops to a host's infinity ran
-   * 10 000 x 10 000 passes, about 16 s a frame. As AndroidX counts them, the outer pass and the
-   * inner loop it runs are two operations and each inner pass one, so the nest stops at 20 000.
+   * The budget holds for a whole loop nest: AndroidX counts the outer pass and the inner loop it
+   * runs as two operations and each inner pass as one (LoopOperation.java:126-140).
    */
   @Test
   fun aLoopNestSpendsOneBudgetAsAndroidXCountsIt() {
@@ -404,7 +400,7 @@ class RcPlayerStateTest {
       state.forEachLoopValue(loop(30), bodyOperations = 0) { inner++ }
     }
     assertEquals(1, outer)
-    assertEquals(19_998, inner)
+    assertEquals(ANDROIDX_MAX_OP_COUNT - 2, inner)
 
     // A finite nest runs every pass, as AndroidX does.
     var cells = 0
@@ -415,10 +411,8 @@ class RcPlayerStateTest {
   }
 
   /**
-   * A document's loops share one frame's 20 000 operations, in document order, as AndroidX paints
-   * them: three loops to a host's infinity ran 10 000 passes each, three budgets a frame. What a
-   * loop runs depends on the loops before it in the document, not on which ones this frame redrew:
-   * Compose redraws a component alone.
+   * A document's loops share one frame's budget in document order, as AndroidX paints them, even
+   * when Compose redraws one loop's component alone.
    */
   @Test
   fun aDocumentsLoopsShareOneBudgetInDocumentOrder() {
@@ -435,22 +429,23 @@ class RcPlayerStateTest {
       )
     fun passes(loop: RcLoopOperation): Int {
       var count = 0
-      // A pass and its one body operation: two of the budget.
       state.forEachLoopValue(loop, bodyOperations = 1) { count++ }
       return count
     }
+    // A pass and its one body operation: two of the budget.
+    val passesInBudget = ANDROIDX_MAX_OP_COUNT / 2
 
-    assertEquals(listOf(10_000, 0, 0), listOf(first, second, third).map(::passes))
+    assertEquals(listOf(passesInBudget, 0, 0), listOf(first, second, third).map(::passes))
     // Redrawn alone, a loop still has only what the loops before it left.
     assertEquals(0, passes(third))
     assertEquals(0, passes(second))
-    assertEquals(10_000, passes(first))
+    assertEquals(passesInBudget, passes(first))
 
     // The first loop now ends after 100 passes: the second has the rest.
     state.setFloat(30, 100f)
     assertEquals(100, passes(first))
     state.setFloat(30, Float.POSITIVE_INFINITY)
-    assertEquals(9_900, passes(second))
+    assertEquals(passesInBudget - 100, passes(second))
     assertEquals(0, passes(third))
   }
 
@@ -462,7 +457,7 @@ class RcPlayerStateTest {
       RcFloatWord(0x7fc00000 or until),
     )
 
-  /** AndroidX `TextMerge` throws past 16K UTF-16 units; the player keeps the text it had. */
+  /** AndroidX throws past `TextMerge.MAX_TEXT_LENGTH` (TextMerge.java:139); the text stays. */
   @Test
   fun aMergeLongerThanAndroidXsLimitLeavesTheTextUnchanged() {
     val state = RcPlayerState(RcDocument(RcHeader(RcVersion(1, 0, 0)), emptyList()))
@@ -479,7 +474,7 @@ class RcPlayerStateTest {
     assertEquals('b', state.text(3)?.last())
   }
 
-  /** AndroidX throws on a dynamic list length outside 0..2000; the player then holds no list. */
+  /** AndroidX throws on a length outside 0..2000 (DataDynamicListFloat.java:74); here no list. */
   @Test
   fun aDynamicListLengthOutsideAndroidXsRangeHoldsNoList() {
     val state = RcPlayerState(RcDocument(RcHeader(RcVersion(1, 0, 0)), emptyList()))
@@ -502,9 +497,8 @@ class RcPlayerStateTest {
   }
 
   /**
-   * AndroidX writes a float only when `previous != value` (RemoteComposeState.java:300,
-   * androidx-main ef999e6c39e; an unset id holding 0), so a zero over a zero keeps its sign, and a
-   * NaN is always written.
+   * AndroidX writes a float only when `previous != value` (RemoteComposeState.java:300; an unset id
+   * holds 0), so a zero over a zero keeps its sign, and a NaN is always written.
    */
   @Test
   fun aZeroWrittenOverAZeroKeepsTheSignAlreadyThere() {
@@ -1714,3 +1708,6 @@ class RcPlayerStateTest {
     assertFalse(state.readContinuousClockRecently, "the constant still read the clock")
   }
 }
+
+/** AndroidX `Limits.MAX_OP_COUNT` (Limits.java:24): the loop operations a frame may run. */
+private const val ANDROIDX_MAX_OP_COUNT = 20_000

@@ -42,8 +42,7 @@ public struct NativeSwiftNamedVariableDeclarations: Sendable {
   }
 
   /// Whether `value` may be written to the string variable `name`: `name` is declared as a string.
-  /// A string of any length is, as AndroidX's `setNamedStringOverride` takes it; the 4000-byte
-  /// limit (`maximumStringBytes`) holds only for strings a document carries.
+  /// Any length is, as AndroidX takes it; `maximumStringBytes` holds only for document strings.
   public func acceptsString(_ value: String, for name: String) -> Bool {
     accepts(.text(value), for: name)
   }
@@ -75,9 +74,8 @@ public struct NativeSwiftNamedVariableDeclarations: Sendable {
     variable(for: name).map { Self.accepts(value, by: $0) } ?? false
   }
 
-  /// The rule every named write meets, whoever names the variable: the value is of the declared
-  /// type, and a float array is no longer than a document's float list may be. Any float, string,
-  /// colour, integer or long of that type is written, as AndroidX's `setNamed*Override` writes it.
+  /// The rule every named write meets: the value is of the declared type, and a float array fits a
+  /// document's float list. Any value of that type is taken, as AndroidX's `setNamed*Override` is.
   static func accepts(_ value: NativeSwiftNamedValue, by variable: ParsedNamedVariable) -> Bool {
     switch value {
     case .float:
@@ -95,12 +93,8 @@ public struct NativeSwiftNamedVariableDeclarations: Sendable {
     }
   }
 
-  /// The rule a float array a host writes meets, whatever variable it is for: no more values than
-  /// a document's float list may hold (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000, which every
-  /// AndroidX float list is held to). Any value is allowed, NaN and the infinities included, as
-  /// AndroidX's `UpdateDynamicFloatList` writes any float into a list. The one Swift owner of this
-  /// rule: the native session and the controller's native backend read it; Kotlin's
-  /// `RcFloatList.canHold` is its twin. O(1): the values are not read.
+  /// Whether a host's float array fits a document's float list (2000, DataListFloat.java:47); any
+  /// value is allowed. The one Swift owner of the rule; Kotlin's twin is `RcFloatList.canHold`.
   public static func isWritableFloatArray(_ values: [Float]) -> Bool {
     values.count <= NativeSwiftDocumentDecoder.maximumFloatListValues
   }
@@ -136,10 +130,10 @@ public enum NativeSwiftNamedValue: Equatable, Sendable {
 
 /// Kotlin's float equality, which the controllers compare a host's writes by.
 public enum NativeSwiftKotlinFloat {
-  /// Whether two floats are one value as Kotlin's `Float.equals` compares them, by
-  /// `Float.floatToIntBits`: every NaN is the one canonical NaN, and 0 is not -0. Swift's `==` says
-  /// the opposite of both. The one owner of the rule for the UIKit player and the SwiftUI overlay.
+  /// Kotlin's `Float.equals`, by `floatToIntBits`: every NaN is one value and 0 is not -0, the
+  /// opposite of Swift's `==` on both.
   public static func equals(_ lhs: Float, _ rhs: Float) -> Bool {
-    lhs.isNaN ? rhs.isNaN : !rhs.isNaN && lhs.bitPattern == rhs.bitPattern
+    if lhs.isNaN || rhs.isNaN { return lhs.isNaN && rhs.isNaN }
+    return lhs.bitPattern == rhs.bitPattern
   }
 }

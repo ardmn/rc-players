@@ -27,25 +27,17 @@ import androidx.compose.ui.unit.isSpecified
 import kotlin.math.ceil
 
 /**
- * A text component's [BasicText], which lays out only the part of a very long text that can be
- * seen.
+ * A text component's [BasicText] that lays out only the visible part of a very long text.
  *
- * A host may write a string of any length, and Skia's line breaker is quadratic in a word too long
- * for a line: for every line it fills it walks on to the end of that word, so a megabyte of one
- * word in a 200 px box cost a million characters times 40 000 lines per layout, and a text is laid
- * out several times a frame. A frame took minutes. Text with spaces is linear, but still shapes and
- * breaks every character on every layout.
+ * Skia's line breaker is quadratic in a word too long for a line, so a host's megabyte-long word
+ * took minutes per frame. A text longer than [longTextLength] is laid out as [rcVisibleTextPrefix];
+ * what is drawn, the size, the overflow and the semantics' text stay the whole text's, while
+ * `onTextLayout` and `LastBaseline` see the prefix's lines. Crossing the length swaps the subtree,
+ * which holds no state. The text is not cut where lines can show past the box
+ * ([TextOverflow.Visible], unbounded height), where [cuttable] is false (the Ahem model sizes the
+ * whole text), or where the line breaker looks past a line ([rcTextBreaksLinesGreedily]).
  *
- * A text of up to [RC_LONG_TEXT_LENGTH] characters is the plain [BasicText] it always was. A longer
- * one is measured first, with the incoming constraints, and handed to [BasicText] as a prefix,
- * grown fourfold until its settled lines reach past the box: [rcVisibleTextPrefix]. What is drawn,
- * the size, whether the text overflows and the semantics' text (the whole of it) do not change.
- * What can: the host's `onTextLaidOut` and a `LastBaseline` see the prefix's lines, and a text
- * crossing the threshold is a new subtree, which holds no state of its own.
- *
- * The text is not cut where its lines can be seen past the box ([TextOverflow.Visible], or a box of
- * unbounded height), where [cuttable] is false (the closed-form Ahem model sizes the whole text
- * itself), or where the platform's line breaker may look past a line ([rcTextBreaksLinesGreedily]).
+ * @param autoSizeMinFontSize the smallest size [autoSize] may choose; the prefix is measured at it.
  */
 @Composable
 internal fun RcBasicText(
@@ -57,18 +49,17 @@ internal fun RcBasicText(
   maxLines: Int,
   textMeasurer: TextMeasurer,
   autoSize: TextAutoSize? = null,
-  /** The smallest size [autoSize] may choose; the prefix is measured at it. */
   autoSizeMinFontSize: TextUnit = TextUnit.Unspecified,
   cuttable: Boolean = true,
   longTextLength: Int = RC_LONG_TEXT_LENGTH,
 ) {
-  if (
-    !rcTextBreaksLinesGreedily ||
-      !cuttable ||
-      text.length <= longTextLength ||
-      overflow == TextOverflow.Visible ||
-      (autoSize != null && !autoSizeMinFontSize.isSpecified)
-  ) {
+  val mayCut =
+    rcTextBreaksLinesGreedily &&
+      cuttable &&
+      text.length > longTextLength &&
+      overflow != TextOverflow.Visible &&
+      (autoSize == null || autoSizeMinFontSize.isSpecified)
+  if (!mayCut) {
     BasicText(
       text = text,
       modifier = modifier,
@@ -111,21 +102,14 @@ internal fun RcBasicText(
 }
 
 /**
- * The prefix of [text] that lays out, in [constraints], exactly as much of [text] as can be seen:
- * [text] itself when no shorter one is known to.
+ * The first prefix of [text], each try four times longer, that lays out in [constraints] all of
+ * [text] that can be seen; [text] itself when none is found.
  *
- * Skia breaks lines greedily, deciding each break from the text up to the end of the word it is in,
- * so a prefix lays its lines out as the whole text does until the last word it cuts: every line but
- * its last two. A prefix whose lines but those two reach past the box's height, or number more than
- * [maxLines], is laid out, clipped and reported as overflowing exactly as the whole is. Each try
- * quadruples the prefix, so the work is that of the last one, a few times the box's characters.
- *
- * The prefix is also only taken when
- * - it is at least as wide as the box, so the layout is the box's width either way, not the widest
- *   line's;
- * - [text] has no right-to-left character, so no bidi level before the cut can depend on what
- *   follows it;
- * - it holds the text's first letter, if there is one, so the paragraph's direction is the same.
+ * Skia breaks lines greedily, so a prefix lays out as the whole text does but for its last
+ * [RC_UNSETTLED_PREFIX_LINES] lines; once the others pass the box's height or [maxLines], it clips
+ * and overflows as the whole does. A prefix is taken only if it is at least as wide as the box,
+ * [text] has no right-to-left character (bidi levels may depend on what follows the cut), and it
+ * holds the text's first letter (the paragraph's direction).
  */
 internal fun rcVisibleTextPrefix(
   text: String,
@@ -154,13 +138,12 @@ internal fun rcVisibleTextPrefix(
             Constraints(minWidth = constraints.minWidth, maxWidth = constraints.maxWidth),
         )
       val settled = laidOut.lineCount - RC_UNSETTLED_PREFIX_LINES
-      if (
+      val settledLinesOverflow =
         settled > 0 &&
-          laidOut.multiParagraph.intrinsics.maxIntrinsicWidth >= constraints.maxWidth &&
           (settled > maxLines || laidOut.getLineBottom(settled - 1) > constraints.maxHeight)
-      ) {
-        return text.substring(0, cut)
-      }
+      val fillsBoxWidth =
+        laidOut.multiParagraph.intrinsics.maxIntrinsicWidth >= constraints.maxWidth
+      if (settledLinesOverflow && fillsBoxWidth) return text.substring(0, cut)
     }
     length *= 4
   }

@@ -14,20 +14,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.isSpecified
 
 /**
- * Compose's `width`, `height`, `widthIn`, `heightIn` and their `required` forms, for sizes a host
- * may write: any float.
+ * Compose's `width`, `height`, `widthIn`, `heightIn` and their `required` forms, for any size a
+ * host may write.
  *
- * Compose's own `SizeNode` builds a `Constraints` from the size before it constrains it to the
- * incoming one, and a `Constraints` holds at most 262 142 px on one axis (fewer on the other), so
- * an exact width from 262 143 px up to the first size `roundToPx` takes as unbounded threw "Can't
- * represent a width". AndroidX's `remote-core` takes an exact size up to the space it has
- * (`LegacyMeasurePolicy` and `BaseModernMeasurePolicy`: `Math.min(maxWidth,
- * computeModifierDefinedWidth(…))`), and its embedded Compose player calls `Modifier.width` and
- * throws like this one did.
- *
- * This is `SizeNode` (foundation-layout `Size.kt`) with the sizes kept as integers until the end,
- * and every `Constraints` it builds made by [rcConstraints]: what Compose can hold, which is the
- * same for every size it could hold before.
+ * Compose's `SizeNode` (foundation-layout `Size.kt`) builds a `Constraints` before constraining it
+ * and throws "Can't represent a width" past 262,142 px, where AndroidX takes an exact size up to
+ * the space it has (LegacyMeasurePolicy.java:45). This is `SizeNode` with every `Constraints` built
+ * by [rcConstraints].
  */
 internal fun Modifier.rcSize(
   minWidth: Dp = Dp.Unspecified,
@@ -43,8 +36,8 @@ internal fun Modifier.rcHeight(height: Dp): Modifier =
   rcSize(minHeight = height, maxHeight = height)
 
 /**
- * `Constraints` as near the bounds as Compose can hold, the width first: one axis keeps up to 262
- * 142 px and the other what is left. Bounds it can hold come back as they are.
+ * `Constraints` as near the bounds as Compose can hold, the width first: one axis keeps up to
+ * 262,142 px and the other what is left. Bounds it can hold come back as they are.
  */
 internal fun rcConstraints(minWidth: Int, maxWidth: Int, minHeight: Int, maxHeight: Int) =
   Constraints.fitPrioritizingWidth(minWidth, maxWidth, minHeight, maxHeight)
@@ -87,12 +80,12 @@ private class RcSizeNode(var element: RcSizeElement) : Modifier.Node(), LayoutMo
       fun Dp.pixels(): Int? = if (isSpecified) roundToPx().coerceAtLeast(0) else null
       val maxWidth = element.maxWidth.pixels() ?: Constraints.Infinity
       val maxHeight = element.maxHeight.pixels() ?: Constraints.Infinity
-      fun least(min: Dp, max: Int): Int =
+      fun minPixels(min: Dp, max: Int): Int =
         min.pixels()?.coerceIn(0, max)?.takeIf { it != Constraints.Infinity } ?: 0
       return RcSizeBounds(
-        least(element.minWidth, maxWidth),
+        minPixels(element.minWidth, maxWidth),
         maxWidth,
-        least(element.minHeight, maxHeight),
+        minPixels(element.minHeight, maxHeight),
         maxHeight,
       )
     }
@@ -112,24 +105,24 @@ private class RcSizeNode(var element: RcSizeElement) : Modifier.Node(), LayoutMo
           target.maxHeight.coerceIn(constraints.minHeight, constraints.maxHeight),
         )
       } else {
-        fun specified(dp: Dp, own: Int, incoming: Int) = if (dp.isSpecified) own else incoming
+        fun ownIfSpecified(dp: Dp, own: Int, incoming: Int) = if (dp.isSpecified) own else incoming
         rcConstraints(
-          specified(
+          ownIfSpecified(
             element.minWidth,
             target.minWidth,
             constraints.minWidth.coerceAtMost(target.maxWidth),
           ),
-          specified(
+          ownIfSpecified(
             element.maxWidth,
             target.maxWidth,
             constraints.maxWidth.coerceAtLeast(target.minWidth),
           ),
-          specified(
+          ownIfSpecified(
             element.minHeight,
             target.minHeight,
             constraints.minHeight.coerceAtMost(target.maxHeight),
           ),
-          specified(
+          ownIfSpecified(
             element.maxHeight,
             target.maxHeight,
             constraints.maxHeight.coerceAtLeast(target.minHeight),

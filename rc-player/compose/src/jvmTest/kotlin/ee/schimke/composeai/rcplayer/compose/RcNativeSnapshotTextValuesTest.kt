@@ -21,10 +21,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * The native snapshot's text takes a font size and weight a document computes, as the Compose
- * player does: a NaN weight (`0 / 0`) is the normal 400, where `coerceIn(1, 1000)` kept the NaN,
- * and a NaN or negative size is 12 px and an infinite one 1e6 px ([rcTextSizePixels]), where a NaN
- * or infinite size threw and the snapshot failed.
+ * The native snapshot's text takes a computed font size and weight as the Compose player does: a
+ * NaN weight is the normal 400, a NaN or negative size Android's default 12 px, and an infinite one
+ * [RC_MAX_TEXT_SIZE_PX].
  */
 class RcNativeSnapshotTextValuesTest {
   @Test
@@ -97,6 +96,7 @@ class RcNativeSnapshotTextValuesTest {
     RcCoreText(
       textId = TEXT_ID,
       properties =
+        // Property ids: 1 component id, 5 font size, 7 font weight.
         listOf(
           RcTextStyleProperty.IntValue(1, 5),
           RcTextStyleProperty.FloatValue(5, size),
@@ -110,6 +110,7 @@ class RcNativeSnapshotTextValuesTest {
     const val TEXT_ID = 101
     val NAN = reference(NAN_ID)
     val INFINITY = reference(INFINITY_ID)
+    /** AndroidX `DIV`. */
     val DIVIDE = RcFloatExpressionEvaluator.operatorWord(RcFloatExpressionEvaluator.OFFSET + 4)
 
     fun literal(value: Float) = RcFloatWord.literal(value)

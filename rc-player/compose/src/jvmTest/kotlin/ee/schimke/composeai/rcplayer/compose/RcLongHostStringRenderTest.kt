@@ -12,12 +12,8 @@ import kotlin.test.assertTrue
 import org.jetbrains.skia.Bitmap
 
 /**
- * A host may write a string of any length, as AndroidX's `setNamedStringOverride` takes one. The
- * documents here show their host strings in a `CoreText` and hung the frame for over a minute on a
- * megabyte of one unbroken word: Skia's line breaker walks to the end of a word too long for a line
- * on every line it fills, so a 1 MB word cost a million characters times 40 000 lines per layout.
- * Each must now render its first frames, with the megabyte in one string variable or in all of
- * them, in [MAX_RENDER_MILLIS].
+ * A megabyte host string of one word, which AndroidX's `setNamedStringOverride` takes, renders each
+ * document's first frames in [MAX_RENDER_MILLIS], in one string variable or in all of them.
  */
 class RcLongHostStringRenderTest {
   @Test(timeout = 300_000)
@@ -67,10 +63,7 @@ class RcLongHostStringRenderTest {
   }
 
   private companion object {
-    /**
-     * The review's corpus documents that hung on a megabyte host string (`banner-classic` is
-     * byte-for-byte `banner`).
-     */
+    /** Corpus documents that show host strings in a `CoreText`. */
     val FIXTURES =
       listOf(
         "host-string-banner.rc",

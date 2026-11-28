@@ -9,9 +9,8 @@ import Testing
   import UIKit
 #endif
 
-/// A host's string counts against the frame's text once, however many texts show it, as AndroidX
-/// lays it out wherever the document shows it (`AndroidRemoteContext.setNamedStringOverride`). A
-/// document's own text still counts at every place it is shown (`NativeCanvasCommandsTests`).
+/// A host's string counts against the frame's text once however many texts show it, as AndroidX
+/// lays it out (`AndroidRemoteContext.setNamedStringOverride`); a document's text counts each time.
 @MainActor @Suite(.serialized) struct NativeHostStringBudgetTests {
   static let hostName = "USER:s"
 
@@ -54,7 +53,8 @@ import Testing
         try await waitUntil("\(label) opens", within: 60) {
           !view.isOpeningDocument && !view.isBusy
         }
-        #expect(await view.submit(.text(text), for: Self.hostName) == .accepted, "\(label)")
+        let result = await view.submit(.text(text), for: Self.hostName)
+        #expect(result == .accepted, "\(label)")
         try await waitUntil("\(label) settles", within: 60) { !view.isBusy }
         view.setNeedsLayout()
         view.layoutIfNeeded()
@@ -77,19 +77,19 @@ import Testing
   /// string of the same length still counts each time it is shown.
   @Test func aHostStringCountsOnceAndADocumentStringEveryTime() throws {
     let longest = RemoteComposeNativeExecutionLimits.longestDocumentTextBytes
-    let host = String(repeating: "h", count: 40_000)
+    let hostBytes = 40_000
+    let host = String(repeating: "h", count: hostBytes)
     var budget = NativeFrameBudget(hostStrings: [host])
     for _ in 0..<10 { try budget.recordStrings([host], limits: .default) }
-    #expect(budget.textBytes == 40_000 && budget.work == 40_000)
-    // Longer than a document can make, so a host's whatever the snapshot says.
+    #expect(budget.textBytes == hostBytes && budget.work == hostBytes)
+    // Longer than any document text, so it counts once as a host's, whatever the snapshot names.
     let long = String(repeating: "l", count: longest + 1)
     for _ in 0..<10 { try budget.recordStrings([long], limits: .default) }
-    #expect(budget.textBytes == 40_000 + longest)
+    #expect(budget.textBytes == hostBytes + longest)
     var document = NativeFrameBudget(hostStrings: [host])
+    let documentText = String(repeating: "d", count: hostBytes)
     #expect(throws: RemoteComposeNativeLimitError.self) {
-      for _ in 0..<10 {
-        try document.recordStrings([String(repeating: "d", count: 40_000)], limits: .default)
-      }
+      for _ in 0..<10 { try document.recordStrings([documentText], limits: .default) }
     }
   }
 }

@@ -187,9 +187,8 @@
       #expect(text(NativeTestDocuments.labelID, in: player.view) == "Host")
     }
 
-    /// The float arrays answer as the Kotlin controller answers (`RcComposeViewControllerTest`):
-    /// one value more than a float list holds is refused, and any element value, NaN and the
-    /// infinities included, is taken, as AndroidX writes any float into a list.
+    /// Float arrays answer as on the Kotlin controller (`RcComposeViewControllerTest`): one value
+    /// over a float list's limit is refused; any element, NaN and infinities included, is taken.
     @Test func answersMatchTheKotlinController() async throws {
       let player = try await player(data: NativeTestDocuments.longAndFloatArray())
       let limit = NativeSwiftDocumentDecoder.maximumFloatListValues

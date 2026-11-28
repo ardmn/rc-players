@@ -625,11 +625,8 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
       inputHandled: inputHandled)
   }
 
-  /// `object` with every non-finite number spelled as Java's `Float.toString` spells it ("NaN",
-  /// "Infinity", "-Infinity"), as `rc2json` does. The batch writes a frame with
-  /// `JSONSerialization`, which raises on a non-finite number, and has no option to spell one
-  /// (`JSONEncoder`'s `nonConformingFloatEncodingStrategy` needs `Encodable` values). A value the
-  /// document resolves, or a host writes, can be NaN or an infinity.
+  /// `object` with every non-finite number spelled as Java's `Float.toString` spells it, as
+  /// `rc2json` does: `JSONSerialization` raises on one and has no option to spell it.
   static func jsonSafe(_ object: [String: Any]) -> [String: Any] {
     object.mapValues(jsonSafe(any:))
   }
@@ -639,7 +636,6 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
     case let number as NSNumber where CFGetTypeID(number) == CFNumberGetTypeID():
       let double = number.doubleValue
       guard !double.isFinite else { return value }
-      // The core's spelling (`NativeSwiftTextFormatter.javaFloatString`) is internal to it.
       if double.isNaN { return "NaN" }
       return double < 0 ? "-Infinity" : "Infinity"  // lint-ok: the core's spelling is internal
     case let object as [String: Any]: return jsonSafe(object)
@@ -2971,11 +2967,11 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
 
   private static func canvasCommands(for node: NativeMacNode) -> [NativeMacDrawCommand] {
     let promotesImage = node.kind == .image
-    // What a non-finite value stops drawing on AndroidX's Canvas is left out, as on UIKit
-    // (`NativeCanvasCommands.drawable`).
-    return NativeCanvasCommands.drawable(
-      node.commands.filter { !(promotesImage && $0.kind == NativeSwiftDrawKind.bitmap) },
-      limits: NativeMacPolicy.executionLimits)
+    let commands = node.commands.filter {
+      !(promotesImage && $0.kind == NativeSwiftDrawKind.bitmap)
+    }
+    // Drops what a non-finite value stops drawing on AndroidX's Canvas.
+    return NativeCanvasCommands.drawable(commands, limits: NativeMacPolicy.executionLimits)
   }
 
   private static func labelTexts(for node: NativeMacNode) -> [NativeSwiftTextSnapshot] {
@@ -3703,13 +3699,13 @@ private final class NativeMacCanvasView: NSView {
     case NativeSwiftDrawKind.matrixRestore: context.restoreGState()
     case NativeSwiftDrawKind.matrixTranslate: context.translateBy(x: v[0], y: v[1])
     case NativeSwiftDrawKind.matrixScale:
-      // A NaN centre x is no pivot (`AndroidPaintContext.matrixScale`).
+      // A NaN centre x is no pivot (AndroidPaintContext.java:1473).
       let pivot = v[2].isNaN ? CGPoint.zero : CGPoint(x: v[2], y: v[3])
       context.translateBy(x: pivot.x, y: pivot.y)
       context.scaleBy(x: v[0], y: v[1])
       context.translateBy(x: -pivot.x, y: -pivot.y)
     case NativeSwiftDrawKind.matrixRotate:
-      // A NaN pivot x is no pivot (`AndroidPaintContext.matrixRotate`).
+      // A NaN pivot x is no pivot (AndroidPaintContext.java:1495).
       let pivot = v[1].isNaN ? CGPoint.zero : CGPoint(x: v[1], y: v[2])
       context.translateBy(x: pivot.x, y: pivot.y)
       context.rotate(by: v[0] * .pi / 180)
@@ -3878,12 +3874,9 @@ private final class NativeMacCanvasView: NSView {
     return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
   }
 
-  /// Where an image lands in `destination`, as AndroidX's `ImageScaling` places it. That class
-  /// computes in `int`s; the arithmetic here is in `CGFloat`, each step truncated toward zero as
-  /// Java's `(int)` cast and integer division truncate, so a host's huge value (a 1e30 edge, a
-  /// product past `Int.max`) scales instead of trapping. Exact for every value under 2^53, which
-  /// covers every size a screen shows. A non-finite rectangle or factor gives `.zero`, which draws
-  /// nothing, as Skia rejects a non-finite rectangle (`SkCanvas::quickReject`).
+  /// Where an image lands in `destination`, as AndroidX's `ImageScaling` places it: its `int` steps
+  /// truncate here in `CGFloat`, so a host's huge value scales instead of trapping. A non-finite
+  /// rectangle or factor gives `.zero`, as Skia rejects one (`SkCanvas::quickReject`).
   private func scaledImageDestination(
     source: NSRect, destination: NSRect, scaleType: Int, scaleFactor: CGFloat
   ) -> NSRect {
@@ -3959,9 +3952,8 @@ private final class NativeMacCanvasView: NSView {
 
   private func drawText(_ command: NativeMacDrawCommand, _ context: CGContext) {
     guard let text = command.text else { return }
-    // A canvas paint's size as Android's `Paint.setTextSize` takes it (`androidSize`). The Kotlin
-    // player keeps the size the paint held before a NaN or negative one; a command carries only
-    // its own, so that is the paint's default here.
+    // A command carries only its own size, so a NaN or negative one falls back to the paint's
+    // default rather than, as in the Kotlin player, the size the paint held before.
     let paintSize = NativeSwiftTextSnapshot.androidSize(
       command.textSize, unset: NativeSwiftTextSnapshot.paintDefaultSize)
     let size = max(CGFloat(paintSize), 1)

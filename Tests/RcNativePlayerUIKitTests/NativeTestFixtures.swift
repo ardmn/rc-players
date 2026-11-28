@@ -59,14 +59,17 @@ enum NativeHostValueDocuments {
     typealias Op = NativeSwiftWireOpcode
     let wire = NativeTestWire()
     wire.header(width: 100, height: 60)
-    wire.u8(Op.dataFloat).int(700).float(16)
-      .named(700, NativeTestWire.NamedType.float, hostTextFloatName)
-    wire.u8(Op.dataText).int(701).utf8("hello")
+    let floatID = 700
+    let textID = 701
+    wire.u8(Op.dataFloat).int(floatID).float(16)
+      .named(floatID, NativeTestWire.NamedType.float, hostTextFloatName)
+    wire.u8(Op.dataText).int(textID).utf8("hello")
     wire.u8(Op.layoutRoot).int(1)
-    let reference = Int(Int32(bitPattern: 0xff80_0000 | 700))
+    // A NaN whose low bits name the float it reads.
+    let reference = Int(Int32(bitPattern: 0xff80_0000 | UInt32(floatID)))
     // TextLayout: component, animation, text, colour, size, style, weight, family, alignment,
     // overflow, maximum lines.
-    wire.u8(Op.layoutText).int(hostTextID).int(0).int(701)
+    wire.u8(Op.layoutText).int(hostTextID).int(0).int(textID)
       .int(NativeTestDocuments.opaqueBlack).int(reference).int(0).int(reference).int(-1).int(1)
       .int(1).int(1)
     wire.u8(Op.containerEnd)

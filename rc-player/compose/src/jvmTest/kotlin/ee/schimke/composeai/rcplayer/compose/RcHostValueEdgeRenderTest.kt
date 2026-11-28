@@ -53,17 +53,12 @@ import kotlin.test.assertTrue
 import org.jetbrains.skia.Bitmap
 
 /**
- * Every value a host may write, NaN, the infinities and strings far over a document string's 4000
- * bytes included, as AndroidX's `setNamed*Override` takes them, reaches each float and text
- * consumer of the player without crashing it or hanging a frame: layout sizes, weights, padding,
- * offsets, `widthIn`, z-index, alpha, rotation and scale, colour interpolation, an animated
- * expression, a conditional, visibility, a dynamic list's length, canvas geometry, text formatting,
- * text length and merge.
+ * Every value AndroidX's `setNamed*Override` takes (NaN, the infinities, strings past
+ * `Limits.MAX_STRING_SIZE`) reaches each float and text consumer without a crash or a hung frame.
  *
- * The same documents are written to `Tests/RcNativePlayerCoreTests/Fixtures/host-value-edges/` for
- * the native Swift player's `NativeSwiftHostValueEdgeTests`, which writes the same values into
- * them; run with `-Prc.hostValueEdges.update=true` to rewrite them. This test fails when the
- * committed fixtures differ from the documents built here.
+ * The documents are the fixtures of the Swift player's `NativeSwiftHostValueEdgeTests`, in
+ * `Tests/RcNativePlayerCoreTests/Fixtures/host-value-edges/`; `-Prc.hostValueEdges.update=true`
+ * rewrites them.
  */
 class RcHostValueEdgeRenderTest {
 
@@ -78,9 +73,8 @@ class RcHostValueEdgeRenderTest {
     }
 
   /**
-   * The consumers the Swift fixtures do not hold yet: a text's font size, as layout text and as a
-   * canvas paint's, and a loop nest whose bounds are the host's. Each takes every edge float, past
-   * the ones above to the huge and the negative, without crashing or hanging the frame.
+   * The consumers the Swift fixtures lack (a text's and a paint's font size, a loop nest bounded by
+   * the host) take every edge float, the huge and the negative ones too.
    */
   @Test(timeout = 120_000)
   fun everyFontSizeAndLoopTakesNonFiniteHugeAndNegativeHostValues() =
@@ -95,10 +89,9 @@ class RcHostValueEdgeRenderTest {
     }
 
   /**
-   * Every float consumer takes the sizes past what a Compose `Constraints` can hold, and their
-   * negatives: an exact width from 262 143 px up to the `Int.MAX_VALUE` that `roundToPx` takes as
-   * no size threw "Can't represent a width". AndroidX's `remote-core` takes the size up to the
-   * space it has (`LegacyMeasurePolicy`: `Math.min(maxWidth, …)`). Both axes at once too.
+   * Every float consumer takes sizes past what a Compose `Constraints` holds, and their negatives,
+   * on one axis and both, as AndroidX takes a size up to the space it has
+   * (LegacyMeasurePolicy.java:45).
    */
   @Test(timeout = 120_000)
   fun everyFloatConsumerTakesSizesPastComposeConstraints() =
@@ -123,8 +116,8 @@ class RcHostValueEdgeRenderTest {
     }
 
   /**
-   * A megabyte of one word, in a `TextLayout`, a merge and a `CoreText`, renders in time: Skia lays
-   * out a word too long for a line in time quadratic in its length, and this one took minutes.
+   * A megabyte of one word renders in time in a `TextLayout`, a merge and a `CoreText`: Skia's line
+   * breaking is quadratic in a word too long for a line.
    */
   @Test(timeout = 120_000)
   fun aMegabyteWordLaysOutInTime() =
@@ -459,8 +452,8 @@ class RcHostValueEdgeRenderTest {
     private const val FRAME_NANOS = 16_000_000L
 
     /**
-     * A case's frames, composition included, in a fraction of this: a loop nest the host can run
-     * forever stops at AndroidX's 20 000 operations a frame, a few milliseconds of rects.
+     * A case's frames, composition included. A loop nest the host could run forever stops at
+     * AndroidX's `Limits.MAX_OP_COUNT` operations a frame, a few milliseconds of rects.
      */
     private const val MAX_RENDER_MILLIS = 3_000L
 
@@ -475,10 +468,10 @@ class RcHostValueEdgeRenderTest {
     private const val LENGTH = 141
     private const val MERGED = 142
 
-    /** AndroidX `PaintBundle.TEXT_SIZE`: the paint's text size is the float that follows. */
+    /** AndroidX `PaintBundle.TEXT_SIZE` (PaintBundle.java:808): the float that follows. */
     private const val PAINT_TEXT_SIZE = 1
 
-    /** AndroidX `PaintBundle.COLOR_ID`: the paint's colour is the colour variable that follows. */
+    /** AndroidX `PaintBundle.COLOR_ID` (PaintBundle.java:825): the colour id that follows. */
     private const val PAINT_COLOR_ID = 19
     private const val PURPLE = 0xff6750a4.toInt()
     private const val INK = 0xff101828.toInt()
@@ -488,6 +481,7 @@ class RcHostValueEdgeRenderTest {
     private val END = RcNoArg(RcOpcodes.CONTAINER_END)
     private val HOST = reference(HOST_ID)
 
+    /** The non-finite values, a negative zero, and a value past `Int`'s range. */
     private val EDGE_FLOATS =
       floatArrayOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, -0f, 3e9f)
 
@@ -495,7 +489,7 @@ class RcHostValueEdgeRenderTest {
     private val HUGE_AND_NEGATIVE_FLOATS = floatArrayOf(1e30f, -1e30f, -5f, Float.MAX_VALUE)
 
     /**
-     * Around the sizes a Compose `Constraints` can hold: 262 142 px on one axis, 262 143 the first
+     * Around the sizes a Compose `Constraints` can hold: 262,142 px on one axis, 262,143 the first
      * it cannot, up to the first float `roundToPx` takes as unbounded.
      */
     private val CONSTRAINT_LIMIT_FLOATS =
@@ -503,9 +497,10 @@ class RcHostValueEdgeRenderTest {
         sizes + sizes.map { -it }
       }
 
+    /** Past `Limits.MAX_STRING_SIZE` (Limits.java:42), 4000: one word, words and emoji. */
     private val LONG_TEXTS = listOf("x".repeat(4_001), "word ".repeat(20_000), "😀".repeat(50_000))
 
-    /** A megabyte of one word: Skia's line breaker walked it once per line it filled. */
+    /** A megabyte of one word: Skia's line breaker walks it once per line it fills. */
     private val MEGABYTE_WORD = "x".repeat(1 shl 20)
 
     private fun literal(value: Float) = RcFloatWord.literal(value)

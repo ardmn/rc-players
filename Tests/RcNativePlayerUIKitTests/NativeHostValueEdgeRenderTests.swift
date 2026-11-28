@@ -7,12 +7,8 @@
   @_spi(Conformance) @_spi(RemoteComposeController) @testable import RcNativePlayerCore
   @_spi(RemoteComposeController) @testable import RcNativePlayerUIKit
 
-  /// Every value a host may write reaches the UIKit player, and the frame renders: NaN, the
-  /// infinities and 1e9 into each float consumer, and a 100 KB string into each text consumer.
-  /// The documents are the Kotlin `RcHostValueEdgeRenderTest`'s (`Fixtures/host-value-edges` of
-  /// the core tests), which the Compose player renders at its full width with the same values;
-  /// that test's bar, a frame that renders, is the bar here too, and every component's frame must
-  /// be finite. Documents that abuse the frame budget themselves are still refused.
+  /// Every value a host may write renders on UIKit with finite component frames, on the Kotlin
+  /// `RcHostValueEdgeRenderTest` documents; documents that abuse the frame budget stay refused.
   @MainActor @Suite(.serialized, .timeLimit(.minutes(10))) struct NativeHostValueEdgeRenderTests {
     static let floats: [Float] = [.nan, .infinity, -.infinity, 1e9, -0.0]
     static let texts = [
@@ -88,9 +84,9 @@
       try await waitUntil("\(value) opens", within: 60) {
         !view.isOpeningDocument && !view.isBusy
       }
-      #expect(
-        await view.submit(.float(value), for: NativeHostValueDocuments.hostTextFloatName)
-          == .accepted, "\(value)")
+      let result = await view.submit(
+        .float(value), for: NativeHostValueDocuments.hostTextFloatName)
+      #expect(result == .accepted, "\(value)")
       try await waitUntil("\(value) settles", within: 60) { !view.isBusy }
       view.setNeedsLayout()
       view.layoutIfNeeded()
@@ -123,9 +119,10 @@
       typealias Op = NativeSwiftWireOpcode
       let wire = NativeTestWire()
       wire.header(width: 100, height: 100)
-      wire.u8(Op.dataText).int(700).utf8(String(repeating: "x", count: 4_000))
+      let textID = 700
+      wire.u8(Op.dataText).int(textID).utf8(String(repeating: "x", count: 4_000))
       wire.u8(Op.layoutRoot).int(1)
-      for index in 0..<40 { wire.text(id: 3000 + index, reading: 700) }
+      for index in 0..<40 { wire.text(id: 3000 + index, reading: textID) }
       wire.u8(Op.containerEnd)
       let error = try await UIKitHostValueEdgeFixtures.refusal(of: wire.data)
       let limit = RemoteComposeNativeExecutionLimits.default.maximumTextBytes
@@ -191,13 +188,13 @@
       func rect(_ values: [Float], strokeWidth: Float = 1, path: [Float] = [])
         -> NativeSwiftDrawCommandSnapshot
       {
-        NativeSwiftDrawCommandSnapshot(
+        let elements =
+          path.isEmpty
+          ? [] : [NativeSwiftPathElementSnapshot(kind: NativeSwiftPathCommand.move, values: path)]
+        return NativeSwiftDrawCommandSnapshot(
           kind: NativeSwiftDrawKind.rect, values: values, colorARGB: 0xff00_00ff, alpha: 1,
           strokeWidth: strokeWidth, isStroke: false, strokeCap: .butt, strokeJoin: .miter,
-          blendMode: .sourceOver,
-          path: path.isEmpty
-            ? []
-            : [NativeSwiftPathElementSnapshot(kind: NativeSwiftPathCommand.move, values: path)],
+          blendMode: .sourceOver, path: elements,
           pathWinding: .nonZero, image: nil, textureImageID: nil, textureTileModeX: 0,
           textureTileModeY: 0, shaderMatrix: nil, filterQuality: nil,
           usesComponentGeometry: false, gradient: nil, text: nil, textSize: 14, textFlags: 0,
@@ -232,8 +229,7 @@
       let index = try String(
         contentsOf: directory.appendingPathComponent("index.tsv"), encoding: .utf8)
       let rows = index.split(separator: "\n").map { $0.split(separator: "\t").map(String.init) }
-      return rows.filter { $0.count == 2 && $0[1] == kind }
-        .map { $0[0] }
+      return rows.filter { $0.count == 2 && $0[1] == kind }.map { $0[0] }
     }
 
     struct Rendered {

@@ -376,12 +376,8 @@ final class NativeSwiftFloatAnimationRuntime {
     return delta
   }
 
-  /// Whether the spring's target or state is not a finite number: a host's NaN or infinity as the
-  /// target, or a state that overflowed integrating towards one. AndroidX's
-  /// `SpringStopEngine.isStopped` (SpringStopEngine.java:207) is then false on every frame, since a
-  /// NaN or infinite energy never compares at or under the stop threshold, so its player repaints
-  /// for ever. Here such a spring is stopped: `evaluate` returns its target, whatever that is, and
-  /// `isAnimating` requests no frames.
+  /// Whether the spring's target or state is not finite: a host's NaN or infinity, or an overflow.
+  /// Such a spring is stopped; AndroidX's `isStopped` (SpringStopEngine.java:207) never is.
   private var springHasDiverged: Bool {
     !springTarget.isFinite || !springPosition.isFinite || !springVelocity.isFinite
   }
@@ -398,10 +394,8 @@ final class NativeSwiftFloatAnimationRuntime {
     let delta = Double(time - springLastTime)
     springLastTime = time
     guard delta > 0 else { return }
-    // AndroidX `SpringStopEngine.compute` (`SpringStopEngine.java:231-232`, mass 1 at `:101`):
-    // over-sample in proportion to the spring's natural frequency times the frame, at most 1000
-    // times, as the Kotlin `RcSpringAnimation.compute` does. Fewer sub-steps on a longer frame
-    // run the midpoint integrator past its stability limit on a stiff spring.
+    // Sub-steps grow with natural frequency times frame (at most 1000) so a stiff spring stays
+    // stable, as AndroidX `SpringStopEngine.compute` does (SpringStopEngine.java:231-232, mass 1).
     let requestedSteps = 1 + 9 * (sqrt(stiffness) * delta * 4)
     let steps = requestedSteps >= 1_000 ? 1_000 : Int(requestedSteps)
     let dt = delta / Double(steps)

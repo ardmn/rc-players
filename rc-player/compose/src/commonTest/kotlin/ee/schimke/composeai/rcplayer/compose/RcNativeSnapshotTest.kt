@@ -290,11 +290,7 @@ class RcNativeSnapshotTest {
     assertTrue(click.snapshot.diagnostics.none { it.opcode == RcOpcodes.MODIFIER_CLICK })
   }
 
-  /**
-   * A write the snapshot refuses leaves the value as it was. The refusal is a `CoreText`
-   * line-height multiplier of -1; a text size of -1, the refusal this test used, is now the 12 px a
-   * host's negative size is everywhere else.
-   */
+  /** A write the snapshot refuses, a `CoreText` line-height multiplier of -1, is rolled back. */
   @Test
   fun retainedSessionRollsBackNamedValueAfterInvalidSnapshot() {
     val lineHeight = RcFloatWord(0x7fc00000 or 20)
@@ -308,6 +304,7 @@ class RcNativeSnapshotTest {
           RcRootLayout(-2),
           RcCoreText(
             30,
+            // Property ids: 1 component id, 5 font size, 14 line-height multiplier.
             listOf(
               RcTextStyleProperty.IntValue(1, -3),
               RcTextStyleProperty.FloatValue(5, RcFloatWord.literal(12f)),

@@ -79,9 +79,8 @@ public class RcComposePlayerController {
   /**
    * Replaces the list a float-array variable holds, returning false when [name] is absent or has a
    * different type, or when there are more values than a float list holds
-   * ([RcFloatList.MAX_VALUES]) — the native Swift player refuses the same arrays. Any value is
-   * taken, NaN and the infinities included, as AndroidX writes any float into a list. The length is
-   * checked before the array is copied.
+   * ([RcFloatList.MAX_VALUES]) — the native Swift player refuses the same arrays. NaN and the
+   * infinities are taken, as AndroidX writes any float into a list.
    */
   public fun setFloatArray(name: String, values: FloatArray): Boolean {
     // Counted before it is copied: a host's array can be far larger than a float list holds.

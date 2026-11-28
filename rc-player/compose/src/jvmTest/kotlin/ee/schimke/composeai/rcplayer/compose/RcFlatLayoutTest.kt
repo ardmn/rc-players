@@ -110,9 +110,8 @@ class RcFlatLayoutTest {
     }
 
   /**
-   * An exact size that is NaN (a host's value, or 0 / 0) is no size, as Compose's `width(NaN.dp)`
-   * on the per-component path is: the box wraps its content, and the box below it moves down to
-   * make room. The flat layout took it as 0, and drew the next box over the first.
+   * A NaN exact size (a host's value, or 0 / 0) is no size, as `width(NaN.dp)` is on the
+   * per-component path: the box wraps its content and the box below it moves down.
    */
   @Test
   fun aNaNExactSizeWrapsAsOnThePerComponentPath() {
@@ -135,6 +134,7 @@ class RcFlatLayoutTest {
               listOf(
                 RcFloatWord.literal(0f),
                 RcFloatWord.literal(0f),
+                // AndroidX `DIV`.
                 RcFloatExpressionEvaluator.operatorWord(RcFloatExpressionEvaluator.OFFSET + 4),
               ),
               null,
@@ -147,12 +147,12 @@ class RcFlatLayoutTest {
   }
 
   /**
-   * An exact size past what a Compose `Constraints` can hold, on one axis or both, lays out as on
-   * the per-component path: up to the space there is. Copying the constraints with it threw "Can't
-   * represent a width".
+   * An exact size past what a Compose `Constraints` holds lays out as on the per-component path: up
+   * to the space there is.
    */
   @Test
   fun anExactSizePastComposeConstraintsLaysOutAsOnThePerComponentPath() {
+    // 262,143 px is the first size a `Constraints` cannot hold on either axis.
     for (size in listOf(262_143f, 1_048_576f, 16_777_216f)) {
       val huge =
         listOf(
@@ -963,6 +963,7 @@ class RcFlatLayoutTest {
     const val TEXT = 43
     const val FRAME_NANOS = 16_000_000L
     const val ALPHA = 44
+    /** The id of a `0 / 0` expression. */
     const val NOT_A_NUMBER = 45
   }
 }

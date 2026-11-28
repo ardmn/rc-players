@@ -85,9 +85,8 @@
       var pending: [(NativeSwiftNodeSnapshot, Int)] = [(swiftSnapshot.root, 1)]
       while let (node, depth) = pending.popLast() {
         try budget.recordNode(depth: depth, limits: limits)
-        // Every layout float renders whatever its value: `NativeLayoutNode` normalises it
-        // (`layoutCoordinate`, `layoutDimension`), and `NativeLayoutDimension.resolve` reads a
-        // negative fill fraction as no width and an infinite one as the parent's.
+        // Every layout float renders: `NativeLayoutNode` normalises it, and a negative fill
+        // fraction resolves to no width and an infinite one to the parent's.
         if let text = node.text {
           try budget.recordCommand(pathElementCount: 0, strings: [text.value], limits: limits)
           if let family = text.familyName?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -100,9 +99,8 @@
             }
           }
         }
-        // `NativeNode` leaves out what a non-finite value stops drawing
-        // (`NativeCanvasCommands.drawable`) and clamps the rest (`NativeDrawCommand(_:limits:)`);
-        // each command still counts against the budget.
+        // `NativeNode` drops what a non-finite value stops drawing and clamps the rest; each
+        // command still counts against the budget.
         for command in node.commands {
           try budget.recordCommand(pathElementCount: command.path.count, limits: limits)
         }
@@ -290,11 +288,11 @@
       componentID = snapshot.componentID
       componentKind = snapshot.componentKind
       scrollDirection = snapshot.scrollDirection
-      commands =
-        NativeCanvasCommands.drawable(snapshot.commands, limits: limits).map {
-          NativeDrawCommand($0, limits: limits)
-        }
-        + (snapshot.text.map { [NativeDrawCommand(text: $0)] } ?? [])
+      let canvasCommands = NativeCanvasCommands.drawable(snapshot.commands, limits: limits).map {
+        NativeDrawCommand($0, limits: limits)
+      }
+      let textCommands = snapshot.text.map { [NativeDrawCommand(text: $0)] } ?? []
+      commands = canvasCommands + textCommands
       children = snapshot.children.map {
         NativeNode(swiftSnapshot: $0, densityBehavior: densityBehavior, limits: limits)
       }
@@ -409,9 +407,8 @@
     let usesComponentGeometry: Bool
     let offscreenTarget: NativeSwiftOffscreenTargetSnapshot?
 
-    /// Its coordinates, stroke and path held within the coordinate limit (`drawValues(of:)`,
-    /// `drawCoordinate`). `NativeCanvasCommands.drawable` left out a command with a non-finite
-    /// operand before it gets here.
+    /// A command with its coordinates, stroke and path held within the coordinate limit; one with
+    /// a non-finite operand was already dropped by `NativeCanvasCommands.drawable`.
     init(
       _ snapshot: NativeSwiftDrawCommandSnapshot,
       limits: RemoteComposeNativeExecutionLimits = .default
@@ -2486,13 +2483,13 @@
       case NativeSwiftDrawKind.matrixRestore: context.restoreGState()
       case NativeSwiftDrawKind.matrixTranslate: context.translateBy(x: v[0], y: v[1])
       case NativeSwiftDrawKind.matrixScale:
-        // A NaN centre x is no pivot (`AndroidPaintContext.matrixScale`).
+        // A NaN centre x is no pivot (AndroidPaintContext.java:1473).
         let pivot = v[2].isNaN ? CGPoint.zero : CGPoint(x: v[2], y: v[3])
         context.translateBy(x: pivot.x, y: pivot.y)
         context.scaleBy(x: v[0], y: v[1])
         context.translateBy(x: -pivot.x, y: -pivot.y)
       case NativeSwiftDrawKind.matrixRotate:
-        // A NaN pivot x is no pivot (`AndroidPaintContext.matrixRotate`).
+        // A NaN pivot x is no pivot (AndroidPaintContext.java:1495).
         let pivot = v[1].isNaN ? CGPoint.zero : CGPoint(x: v[1], y: v[2])
         context.translateBy(x: pivot.x, y: pivot.y)
         context.rotate(by: v[0] * .pi / 180)

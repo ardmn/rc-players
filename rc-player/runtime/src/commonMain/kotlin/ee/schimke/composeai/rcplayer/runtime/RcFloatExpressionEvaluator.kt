@@ -58,9 +58,8 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
     } catch (_: IndexOutOfBoundsException) {
       return 0f
     } catch (_: SumTillLimitExceeded) {
-      // `A_SUM_TILL` past AndroidX's iteration limit, which AndroidX throws on: a host's infinity
-      // reaches it as easily as a malformed document. Only this failure is read as 0: any other —
-      // a resolver's, say — still reaches the caller.
+      // A host's infinity reaches this limit as easily as a malformed document does. Only this
+      // failure reads as 0; any other (a resolver's, say) still reaches the caller.
       return 0f
     }
     return if (sp in stack.indices) stack[sp] else 0f
@@ -390,8 +389,14 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
   }
 }
 
-/** AndroidX `Limits.MAX_SUM_TILL_ITERATIONS`: the last index `A_SUM_TILL` may sum to. */
+/**
+ * The last index `A_SUM_TILL` may sum to: AndroidX `Limits.MAX_SUM_TILL_ITERATIONS`
+ * (Limits.java:105).
+ */
 private const val MAX_SUM_TILL_ITERATIONS = 10_000
 
-/** `A_SUM_TILL` past [MAX_SUM_TILL_ITERATIONS], which AndroidX throws a `RuntimeException` on. */
+/**
+ * `A_SUM_TILL` past [MAX_SUM_TILL_ITERATIONS], where AndroidX throws
+ * (AnimatedFloatExpression.java:1221).
+ */
 private class SumTillLimitExceeded : RuntimeException("Too many iterations in A_SUM_TILL")

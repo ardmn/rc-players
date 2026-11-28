@@ -87,10 +87,8 @@ class RcFloatExpressionRuntimeTest {
   }
 
   /**
-   * A host's NaN or infinity as the target, from rest or mid-flight, settles the spring at that
-   * target: its energy is NaN, which no stop threshold is above, so it asked for frames forever.
-   * The next finite target starts at rest there, and springs to the one after, not with the NaN
-   * velocity AndroidX's `SpringStopEngine` keeps.
+   * A host's NaN or infinity as the target settles the spring, whose NaN energy never falls below
+   * the stop threshold; the next finite target starts at rest, not with AndroidX's NaN velocity.
    */
   @Test
   fun aNonFiniteTargetSettlesAndTheNextFiniteOneStartsAtRest() {
@@ -138,6 +136,7 @@ class RcFloatExpressionRuntimeTest {
     )
 
   private companion object {
+    /** Spring parameters: 0, stiffness, damping, stop threshold, boundary mode. */
     val SPRING =
       listOf(
         RcFloatWord.literal(0f),

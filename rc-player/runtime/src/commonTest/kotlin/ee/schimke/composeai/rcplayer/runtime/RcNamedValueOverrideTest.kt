@@ -62,7 +62,7 @@ class RcNamedValueOverrideTest {
    * ignored, and the list stays as it was: the native Swift player and the iOS controller refuse
    * the same arrays. It must not throw, because a host's map reaches here from inside composition
    * (`RcComposePlayer`'s `applyHostValues`), where a throw crashes the app; AndroidX holds every
-   * float list to the same size (`DataListFloat.read`, `DataDynamicListFloat`).
+   * float list to the same size (DataListFloat.java:115).
    */
   @Test
   fun aFloatArrayNoFloatListCouldHoldIsIgnored() {

@@ -31,14 +31,9 @@ import kotlin.test.assertTrue
 import org.jetbrains.skia.Bitmap
 
 /**
- * [RcBasicText] lays out only the part of a long text that can be seen, and draws exactly what
- * [BasicText] draws with the whole of it: the same pixels for one long word, words, lines, CJK,
- * emoji, combining marks and digits, in narrow, square and wide boxes, every alignment, clipped and
- * ellipsized, capped by lines and auto-sized. The threshold is 0 here, so every text is cut, and
- * each is short enough for the whole of it to lay out in the reference.
- *
- * The reference takes an `onTextLayout`, as the player's text does: without one, the whole text
- * drew 19 of these cases a pixel row differently below its last line than with one.
+ * [RcBasicText] draws the same pixels as [BasicText] with the whole text. The threshold is 0, so
+ * every text may be cut; the reference takes an `onTextLayout`, as the player's text does, since
+ * without one [BasicText] draws some cases a pixel row differently.
  */
 class RcLongTextTest {
   @Test(timeout = 300_000)
@@ -69,10 +64,8 @@ class RcLongTextTest {
   }
 
   /**
-   * A prefix whose last lines end just inside the box is not taken: those lines break where the
-   * prefix ends, not where the whole text does. One long word ends its last line short; a long word
-   * after short ones fills the rest of their line, where the few letters of it a prefix holds move
-   * to the next. Each box shows the top of one of the first prefix's last lines.
+   * A prefix whose unsettled last lines show in the box is not taken: they break where the prefix
+   * ends, not where the whole text does. Each box shows the top of one of those lines.
    */
   @Test
   fun aPrefixWhoseLastLinesShowIsNotTaken() {

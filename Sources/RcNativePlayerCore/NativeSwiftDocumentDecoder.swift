@@ -15,17 +15,13 @@ enum NativeSwiftDocumentDecoder {
   static let maximumFloatListValues = 2_000
   private static let maximumNodes = 20_000
   private static let maximumNestingDepth = 256
-  /// The loop operations one frame may run, every loop in the document together: AndroidX's
-  /// `Limits.MAX_OP_COUNT`. AndroidX counts each pass and each operation of its body
-  /// (`LoopOperation.paint` calls `RemoteContext.incrementOpCount`, LoopOperation.java:126) and
-  /// throws "Too many operations executed" past this many in one paint (RemoteContext.java:1146),
-  /// failing the frame. Here a loop whose next pass would go past it stops instead, and the frame
-  /// renders what ran. The Kotlin player's `MAX_LOOP_OPERATIONS_PER_FRAME`. AndroidX also counts
-  /// the frame's other operations against the same number; only loops are counted here, so a frame
-  /// AndroidX draws whole is drawn whole here too.
+  /// The loop operations one frame may run, all loops together (`MAX_OP_COUNT`, Limits.java:24).
+  /// Past it AndroidX fails the frame (RemoteContext.java:1146); here the next pass stops instead.
   static let maximumLoopOperationsPerFrame = 20_000
   /// The refusal when a for-each or a loop needs more generated ids than the macro range holds.
   private static let macroIDsExhausted = "LOOM macro generated-id range is exhausted"
+  /// The largest id a macro may generate: the id bits a NaN reference holds (Utils.java:46).
+  private static let lastMacroGeneratedID = 0x003f_ffff
   /// The bytes every LOOM loop and for-each expansion in one document may unroll to, together.
   /// Their bodies are small drawing and structural operations, so this is far above anything a real
   /// template produces; it exists because an unrolled body is held in memory before it runs, and a
@@ -276,9 +272,8 @@ enum NativeSwiftDocumentDecoder {
       /// The loop whose passes run above this frame, one at a time, when this is where it resumes.
       var loop: LoopExpansion? = nil
     }
-    /// A loop running pass by pass: each pass is unrolled only when the one before it, and every
-    /// loop nested in it, has run, so the passes are charged to `loopOperationsLeft` in the order
-    /// AndroidX runs them.
+    /// A loop unrolled one pass at a time, once the previous pass and its nested loops ran, so the
+    /// passes are charged to `loopOperationsLeft` in AndroidX's order.
     final class LoopExpansion {
       let indexID: Int
       let body: Data
@@ -303,8 +298,7 @@ enum NativeSwiftDocumentDecoder {
     }
     /// The loop operations this frame may still run; see `maximumLoopOperationsPerFrame`.
     var loopOperationsLeft = maximumLoopOperationsPerFrame
-    /// The operations directly in the body `captureMacroBody` last captured, not in any container
-    /// it opens.
+    /// The operations directly in the body `captureMacroBody` last captured, outside any container.
     var capturedBodyTopLevelOperations = 0
     var macroDefinitions: [Int: MacroDefinition] = [:]
     var referencedOperations: [Int: Data] = [:]
@@ -879,7 +873,7 @@ enum NativeSwiftDocumentDecoder {
         // `declareId` in the canonical LOOM reader preserves system globals, then allocates a
         // distinct ID for every declaration read while expanding a macro (including regular IDs).
         guard id > NativeSwiftLoomID.lastSystemGlobal, id != -1 else { return }
-        guard nextMacroGeneratedID <= 0x003f_ffff else {
+        guard nextMacroGeneratedID <= lastMacroGeneratedID else {
           throw input.malformed(macroIDsExhausted)
         }
         let replacement = nextMacroGeneratedID
@@ -1019,8 +1013,9 @@ enum NativeSwiftDocumentDecoder {
       }
     }
 
-    /// The loop's next pass, or the constant that leaves its index at the last value it took once
-    /// it ends, or nil when nothing of it is left to run.
+    /// Unrolls the loop's next pass.
+    /// - Returns: The pass; once the loop ends, the constant setting its index to its last value;
+    ///   then nil.
     func nextLoopInput(_ loop: LoopExpansion) throws -> Data? {
       guard !loop.finished else { return nil }
       func constant(_ id: Int, _ value: Float) -> Data {
@@ -1030,29 +1025,29 @@ enum NativeSwiftDocumentDecoder {
         }
         return Data(bytes)
       }
-      // Java's `for (i = from; i < until; i += step)` over any bounds (LoopOperation.java:125): a
-      // NaN bound runs no pass and a NaN step one. A pass runs only while the frame's loop budget
-      // holds all of it, so a loop that would not end (an infinite bound, a step that is 0,
-      // negative or too small to move the index) stops there.
+      // Java's `for (i = from; i < until; i += step)` (LoopOperation.java:125); a loop that never
+      // ends (an infinite bound, a step that does not move the index up) stops at the budget.
       guard loop.value < loop.until, loop.passCost <= loopOperationsLeft else {
         loop.finished = true
-        // After the loop its index holds the last value it was given, as in the reference.
+        // After the loop its index holds the last value it was given.
         guard loop.indexID != 0, loop.passes > 0 else { return nil }
         return constant(loop.indexID, loop.lastValue)
       }
       loopOperationsLeft -= loop.passCost
       loop.passes += 1
-      var pass: Data
+      let pass: Data
       if loop.indexID == 0 {
         pass = loop.body
       } else {
-        // Each pass is the body with the index bound to a constant of its own, so a draw in pass n
-        // reads n rather than the final value.
-        guard nextMacroGeneratedID <= 0x003f_ffff else { throw input.malformed(macroIDsExhausted) }
+        // Each pass binds the index to a constant of its own, so a draw in pass n reads n.
+        guard nextMacroGeneratedID <= lastMacroGeneratedID else {
+          throw input.malformed(macroIDsExhausted)
+        }
         let passID = nextMacroGeneratedID
         nextMacroGeneratedID += 1
-        pass = constant(passID, loop.value)
-        pass.append(try remappedMacroBody(loop.body, mappings: [loop.indexID: passID]))
+        let indexConstant = constant(passID, loop.value)
+        let remappedBody = try remappedMacroBody(loop.body, mappings: [loop.indexID: passID])
+        pass = indexConstant + remappedBody
       }
       try chargeExpansion(operations: 0, bytes: pass.count)
       expandedBytes += pass.count
@@ -1221,8 +1216,7 @@ enum NativeSwiftDocumentDecoder {
         input = WireReader(expanded)
       case NativeSwiftWireOpcode.loopStart:
         // AndroidX's ascending loop: `index < until`, stepping by `step`, with the index variable
-        // set before each pass. This core unrolls it pass by pass (`nextLoopInput`), each pass
-        // read before the next is unrolled.
+        // set before each pass. Unrolled pass by pass in `nextLoopInput`.
         // Bounds are read when the loop is; a bound that is not known then refuses the document
         // rather than unrolling to the wrong count.
         let indexID = try input.int("loop index id")

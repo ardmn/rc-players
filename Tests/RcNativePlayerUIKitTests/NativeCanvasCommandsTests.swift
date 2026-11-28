@@ -5,21 +5,21 @@ import Testing
 @testable import RcNativePlayerCore
 @testable import RcNativePlayerUIKit
 
-/// What a non-finite value stops drawing, as AndroidX's Skia canvas stops it
-/// (`NativeCanvasCommands.drawable`), and how the players hold the rest: shared by the UIKit and
-/// AppKit renderers, so it runs on both.
+/// What a non-finite value stops drawing (`NativeCanvasCommands.drawable`), as AndroidX's Skia
+/// canvas stops it; the UIKit and AppKit renderers share it.
 @Suite struct NativeCanvasCommandsTests {
   typealias Kind = NativeSwiftDrawKind
 
   static func command(
     _ kind: Int, _ values: [Float] = [], alpha: Float = 1, path: [Float]? = nil
   ) -> NativeSwiftDrawCommandSnapshot {
-    NativeSwiftDrawCommandSnapshot(
+    let elements =
+      path.map { [NativeSwiftPathElementSnapshot(kind: NativeSwiftPathCommand.move, values: $0)] }
+      ?? []
+    return NativeSwiftDrawCommandSnapshot(
       kind: kind, values: values, colorARGB: 0xff00_00ff, alpha: alpha, strokeWidth: 1,
       isStroke: false, strokeCap: .butt, strokeJoin: .miter, blendMode: .sourceOver,
-      path: path.map {
-        [NativeSwiftPathElementSnapshot(kind: NativeSwiftPathCommand.move, values: $0)]
-      } ?? [],
+      path: elements,
       pathWinding: .nonZero, image: nil, textureImageID: nil, textureTileModeX: 0,
       textureTileModeY: 0, shaderMatrix: nil, filterQuality: nil, usesComponentGeometry: false,
       gradient: nil, text: nil, textSize: 14, textFlags: 0, unsetValueIndices: [],
@@ -32,6 +32,10 @@ import Testing
   static func rect(_ x: Float) -> NativeSwiftDrawCommandSnapshot {
     command(Kind.rect, [x, 0, x + 5, 5])
   }
+
+  /// A kept save and restore as ``kept(_:)`` spells them.
+  static let saved = "kind \(Kind.matrixSave)"
+  static let restored = "kind \(Kind.matrixRestore)"
 
   /// The kept commands as kinds, a rect as its x.
   static func kept(_ commands: [NativeSwiftDrawCommandSnapshot]) -> [String] {
@@ -57,7 +61,7 @@ import Testing
       Self.restore, Self.rect(4),
     ]
     #expect(
-      Self.kept(commands) == ["kind 0", "kind 0", "kind 1", "kind 1", "rect 4"],
+      Self.kept(commands) == [Self.saved, Self.saved, Self.restored, Self.restored, "rect 4"],
       "\(transform.kind) \(transform.values)")
   }
 
@@ -66,7 +70,7 @@ import Testing
     let commands = [
       Self.rect(1), Self.command(Kind.matrixTranslate, [.nan, .nan]), Self.restore, Self.rect(2),
     ]
-    #expect(Self.kept(commands) == ["rect 1", "kind 1"])
+    #expect(Self.kept(commands) == ["rect 1", Self.restored])
   }
 
   /// A NaN pivot x is AndroidX's "no pivot" (`AndroidPaintContext.matrixRotate`,
@@ -74,14 +78,16 @@ import Testing
   @Test func aNaNPivotIsNoPivot() {
     let rotate = Self.command(Kind.matrixRotate, [45, .nan, .infinity])
     let scale = Self.command(Kind.matrixScale, [2, 3, .nan, .nan])
-    #expect(Self.kept([rotate, scale, Self.rect(1)]) == ["kind 4", "kind 3", "rect 1"])
+    let kinds = ["kind \(Kind.matrixRotate)", "kind \(Kind.matrixScale)", "rect 1"]
+    #expect(Self.kept([rotate, scale, Self.rect(1)]) == kinds)
   }
 
   /// `SkCanvas::clipRect` returns without clipping for a non-finite rectangle.
   @Test func aNonFiniteClipRectIsIgnored() {
     let clip = Self.command(Kind.clipRect, [0, .nan, 10, 10])
     #expect(
-      Self.kept([Self.save, clip, Self.rect(1), Self.restore]) == ["kind 0", "rect 1", "kind 1"])
+      Self.kept([Self.save, clip, Self.rect(1), Self.restore])
+        == [Self.saved, "rect 1", Self.restored])
   }
 
   /// `SkRegion::setPath` reads a non-finite path as empty: intersecting with it clips everything
@@ -93,7 +99,7 @@ import Testing
       Kind.clipPath, [Float(NativeSwiftClipRegionOp.difference)], path: [.infinity, 0])
     #expect(
       Self.kept([Self.save, intersect, Self.rect(1), Self.restore, Self.rect(2)])
-        == ["kind 0", "kind 1", "rect 2"])
+        == [Self.saved, Self.restored, "rect 2"])
     #expect(Self.kept([difference, Self.rect(1)]) == ["rect 1"])
     // A region operation the renderers cannot read as an integer is no clip at all.
     let unreadable = Self.command(Kind.clipPath, [.nan], path: [0, 0])
@@ -106,12 +112,13 @@ import Testing
       Self.command(Kind.matrixSave, alpha: .nan), Self.command(Kind.rect, [0, .nan, 5, 5]),
       Self.rect(1), Self.command(Kind.matrixRestore, alpha: .infinity),
     ]
-    #expect(Self.kept(commands) == ["kind 0", "rect 1", "kind 1"])
+    #expect(Self.kept(commands) == [Self.saved, "rect 1", Self.restored])
   }
 
   /// A `DrawToBitmap` redirect to `bitmapID`; 0 is the main canvas.
   static func redirect(_ bitmapID: Int) -> NativeSwiftDrawCommandSnapshot {
     let base = command(Kind.drawToBitmap)
+    let side = bitmapID == 0 ? 0 : 8
     return NativeSwiftDrawCommandSnapshot(
       kind: base.kind, values: base.values, colorARGB: base.colorARGB, alpha: base.alpha,
       strokeWidth: base.strokeWidth, isStroke: base.isStroke, strokeCap: base.strokeCap,
@@ -120,8 +127,7 @@ import Testing
       textureTileModeY: 0, shaderMatrix: nil, filterQuality: nil, usesComponentGeometry: false,
       gradient: nil, text: nil, textSize: base.textSize, textFlags: 0, unsetValueIndices: [],
       offscreenTarget: NativeSwiftOffscreenTargetSnapshot(
-        bitmapID: bitmapID, mode: 0, colorARGB: 0, width: bitmapID == 0 ? 0 : 8,
-        height: bitmapID == 0 ? 0 : 8))
+        bitmapID: bitmapID, mode: 0, colorARGB: 0, width: side, height: side))
   }
 
   /// A `DrawToBitmap` draws into another canvas (`AndroidPaintContext.drawToBitmap` swaps
@@ -133,9 +139,8 @@ import Testing
     #expect(Self.kept(commands) == ["kind \(Kind.drawToBitmap)", "rect 2"])
   }
 
-  /// Each canvas keeps its own matrix: AndroidX swaps `mCanvas` back to `mMainCanvas` on a
-  /// redirect to 0, and to the bitmap's cached `Canvas` (`mCCache`) on one to the same bitmap, so
-  /// what a non-finite transform suppressed on either is suppressed again when drawing returns.
+  /// Each canvas keeps its own matrix, as AndroidX returns to `mMainCanvas` or the bitmap's cached
+  /// `Canvas` (`mCCache`), so a suppression holds again when drawing returns to it.
   @Test func returningToACanvasRestoresItsSuppression() {
     let nan = Self.command(Kind.matrixTranslate, [.nan, 0])
     let commands = [
@@ -150,7 +155,7 @@ import Testing
   // MARK: - Values the UIKit player draws
 
   /// A transform's operands and an arc's angles are not coordinates: a spinner's angle grows past
-  /// the coordinate limit in 46 minutes at 360°/s, and clamping it froze the spinner.
+  /// the coordinate limit in 46 minutes at 360°/s, and clamping it would freeze the spinner.
   @Test func anglesScalesAndMatricesAreNotClampedAsCoordinates() {
     let limits = RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10)
     let rotate = Self.command(Kind.matrixRotate, [1_000_090, 50, .nan])

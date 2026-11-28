@@ -130,8 +130,8 @@ class RcComposeSupportTest {
   }
 
   /**
-   * Android's `Paint.setTextSize` ignores a NaN or negative size, and takes any other; Skia's text
-   * layout here throws on NaN and on an infinity's metrics, so a size past the cap is the cap.
+   * Android's `Paint.setTextSize` ignores a NaN or negative size (`Paint.cpp:1001`) and takes any
+   * other; Skia's layout throws on NaN and on an infinity's metrics, so a huge size is capped.
    */
   @Test
   fun aTextSizeIsWhatAndroidsPaintTakesWithinTheCap() {

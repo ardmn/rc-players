@@ -111,7 +111,7 @@ public enum NativeTexturePolicy {
     }
     let columns = maxX - minX + 1
     let rows = maxY - minY + 1
-    // A tile index past `Int32` is not one a tile position can be computed at either.
+    // Past `Int32` a tile index has no computable position.
     let indexBound = CGFloat(Int32.max)
     guard columns > 0, rows > 0, columns * rows <= CGFloat(maximumTiles),
       [minX, maxX, minY, maxY].allSatisfy({ abs($0) <= indexBound })

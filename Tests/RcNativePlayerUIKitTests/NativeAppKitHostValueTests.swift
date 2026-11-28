@@ -7,12 +7,13 @@
   @_spi(Conformance) @_spi(RemoteComposeController) @testable import RcNativePlayerCore
   @_spi(RemoteComposeController) @testable import RcNativePlayerUIKit
 
-  /// The AppKit player's frame policy and capture with values AndroidX takes: a host's NaN,
-  /// infinite, huge or long value, and a document's own non-finite fill or float, render rather
-  /// than fail the frame. The documents are the core tests' `Fixtures/host-value-edges`, as the
-  /// UIKit `NativeHostValueEdgeRenderTests` use them.
+  /// Values AndroidX takes (a host's NaN, infinite, huge or long value, a document's non-finite
+  /// fill or float) render through the AppKit frame policy and capture rather than fail the frame.
   @MainActor @Suite struct NativeAppKitHostValueTests {
     nonisolated static let values: [Float] = [.nan, .infinity, -.infinity, 1e30, -1e30]
+    /// `RcHostValueEdgeRenderTest.FLOAT_NAME` and `TEXT_NAME`.
+    static let floatName = "USER:v"
+    static let textName = "USER:s"
 
     static func open(_ name: String) throws -> NativeSwiftDocumentSession {
       let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -28,7 +29,7 @@
     func aHostStringOverTheTextBudgetRenders(_ name: String) throws {
       let session = try Self.open(name)
       let text = String(repeating: "\u{1F600}", count: 50_000)
-      #expect(session.setString(text, for: "USER:s"))
+      #expect(session.setString(text, for: Self.textName))
       let snapshot = try session.snapshot(timeSeconds: 0)
       #expect(throws: Never.self, "\(name) with \(text.utf8.count) bytes") {
         _ = try NativeMacPolicy.evaluate(snapshot, compatibility: .compatible)
@@ -38,7 +39,7 @@
     @Test(arguments: values)
     func aHostPaddingRenders(_ value: Float) throws {
       let session = try Self.open("padding")
-      #expect(session.setFloat(value, for: "USER:v"))
+      #expect(session.setFloat(value, for: Self.floatName))
       let snapshot = try session.snapshot(timeSeconds: 0)
       #expect(throws: Never.self, "\(value)") {
         _ = try NativeMacPolicy.evaluate(snapshot, compatibility: .compatible)
@@ -59,9 +60,8 @@
       }
     }
 
-    /// RC_MACOS_PLAYER_APP.md: a resolved value never fails the frame by itself. A negative fill
-    /// fraction lays out as no width and an infinite one as the parent's
-    /// (`NativeLayoutDimension.resolve`), as AppKit drew them before the frame policy checked them.
+    /// A negative fill fraction lays out as no width and an infinite one as the parent's
+    /// (`NativeLayoutDimension.resolve`): a resolved value never fails the frame by itself.
     @Test(arguments: NativeHostValueDocuments.unusualFillFractions)
     func aNegativeOrInfiniteFillFractionDraws(_ fraction: Float) throws {
       let frame = try NativeAppKitWindowController.renderFrame(
@@ -73,10 +73,8 @@
       #expect(width.isFinite && width >= 0 && width <= 100, "\(fraction): \(box)")
     }
 
-    /// A `DrawBitmapScaled` whose destination a host's value made non-finite or past `Int`'s
-    /// range draws nothing, as Skia rejects a non-finite rectangle (`SkCanvas::quickReject`), and
-    /// one merely huge scales in floating point: neither may trap converting to `Int`, and 4e18
-    /// wide by 2 high fits an `Int` but overflows the scaling's products.
+    /// A non-finite `DrawBitmapScaled` destination draws nothing, as Skia's `quickReject` rejects
+    /// it, and a huge one never traps converting to `Int` (4e18 by 2 overflows the scaling).
     @Test(arguments: values + [4e18])
     func aNonFiniteOrHugeBitmapDestinationDoesNotTrap(_ value: Float) throws {
       typealias Op = NativeSwiftWireOpcode
@@ -105,10 +103,8 @@
       }
     }
 
-    /// The comparison batch writes a frame's tree, values and records with `JSONSerialization`,
-    /// which raises on a non-finite number. A float the document computes as NaN or an infinity
-    /// (`0/0`, `±1/0`, as Java's float division gives them) is reported as Java's
-    /// `Float.toString` spells it.
+    /// A probed NaN or infinity (`0/0`, `±1/0`) is reported as Java's `Float.toString` spells it,
+    /// since `JSONSerialization` raises on a non-finite number.
     @Test func aNonFiniteProbedFloatIsReportedAsValidJSON() throws {
       typealias Op = NativeSwiftWireOpcode
       let wire = NativeTestWire()

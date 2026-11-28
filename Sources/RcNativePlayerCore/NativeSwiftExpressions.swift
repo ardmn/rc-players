@@ -250,7 +250,7 @@ enum NativeSwiftFloatExpression {
         case NativeSwiftFloatOperator.div: stack.append(first / second)
         case NativeSwiftFloatOperator.mod:
           stack.append(first.truncatingRemainder(dividingBy: second))
-        // AnimatedFloatExpression.java:817/821: `Math.min`/`Math.max` over floats.
+        // AnimatedFloatExpression.java:892/896: `Math.min`/`Math.max` over floats.
         case NativeSwiftFloatOperator.min: stack.append(javaMin(first, second))
         case NativeSwiftFloatOperator.max: stack.append(javaMax(first, second))
         default: stack.append(powf(first, second))
@@ -266,25 +266,25 @@ enum NativeSwiftFloatExpression {
         case NativeSwiftFloatOperator.sqrt: stack.append(sqrtf(value))
         case NativeSwiftFloatOperator.abs: stack.append(abs(value))
         case NativeSwiftFloatOperator.sign:
-          // AnimatedFloatExpression.java:837, `Math.signum`: a zero or NaN is its own sign.
+          // AnimatedFloatExpression.java:912, `Math.signum`: a zero or NaN is its own sign.
           stack.append(value == 0 || value.isNaN ? value : (value < 0 ? -1 : 1))
         case NativeSwiftFloatOperator.exp: stack.append(expf(value))
         case NativeSwiftFloatOperator.floor: stack.append(floorf(value))
         case NativeSwiftFloatOperator.log: stack.append(log10f(value))
         case NativeSwiftFloatOperator.ln: stack.append(logf(value))
-        // AnimatedFloatExpression.java:861, `(float) Math.round(float)`.
+        // AnimatedFloatExpression.java:936, `(float) Math.round(float)`.
         case NativeSwiftFloatOperator.round: stack.append(Float(nativeSwiftJavaRound(value)))
         case NativeSwiftFloatOperator.sin: stack.append(sinf(value))
         case NativeSwiftFloatOperator.cos: stack.append(cosf(value))
-        // AnimatedFloatExpression.java:873/885/889: tan, atan and atan2 run in double and are
-        // then cast, which differs from the float functions by an ulp for some operands.
+        // AnimatedFloatExpression.java:948/960/964: tan, atan and atan2 run in double, then cast;
+        // the float functions differ by an ulp for some operands.
         case NativeSwiftFloatOperator.tan: stack.append(Float(Foundation.tan(Double(value))))
         case NativeSwiftFloatOperator.asin: stack.append(asinf(value))
         case NativeSwiftFloatOperator.acos: stack.append(acosf(value))
         case NativeSwiftFloatOperator.atan: stack.append(Float(Foundation.atan(Double(value))))
         case NativeSwiftFloatOperator.cbrt:
-          // AnimatedFloatExpression.java:905, `Math.pow(x, 1 / 3.)`: NaN for a negative operand,
-          // unlike `cbrtf`. The Kotlin player's RcPlayerRpnOps.kt:456 computes the same.
+          // AnimatedFloatExpression.java:980, `Math.pow(x, 1 / 3.)`: NaN for a negative operand,
+          // unlike `cbrtf`.
           stack.append(Float(Foundation.pow(Double(value), 1.0 / 3.0)))
         case NativeSwiftFloatOperator.deg: stack.append(value * 57.29578)
         case NativeSwiftFloatOperator.rad: stack.append(value * 0.017453292)
@@ -293,9 +293,8 @@ enum NativeSwiftFloatExpression {
         case NativeSwiftFloatOperator.log2: stack.append(log2f(value))
         case NativeSwiftFloatOperator.inv: stack.append(1 / value)
         case NativeSwiftFloatOperator.fract:
-          // AnimatedFloatExpression.java:1077, `v - (int) v`, and RcPlayerRpnOps.kt:470: the
-          // fraction keeps the operand's sign, and Java's saturating cast reads NaN as 0, so NaN
-          // and the infinities stay themselves.
+          // AnimatedFloatExpression.java:1152, `v - (int) v`: the fraction keeps the operand's
+          // sign, and the saturating cast reads NaN as 0, so NaN and infinities stay themselves.
           stack.append(value - Float(nativeSwiftIntegerView(value)))
         default: stack.append(-value)
         }
@@ -322,7 +321,7 @@ enum NativeSwiftFloatExpression {
         let (first, second, third) = try pop3()
         stack.append(third > 0 ? second : first)
       case NativeSwiftFloatOperator.clamp:
-        // AnimatedFloatExpression.java:901, `Math.min(Math.max(a, c), b)`.
+        // AnimatedFloatExpression.java:976, `Math.min(Math.max(a, c), b)`.
         let (first, second, third) = try pop3()
         stack.append(javaMin(javaMax(first, third), second))
       case NativeSwiftFloatOperator.swap:
@@ -363,12 +362,12 @@ enum NativeSwiftFloatExpression {
         let list = arrayOperand(try pop1(), arrays) ?? []
         let sum: Float = list.reduce(0, +)
         switch operation {
-        // AndroidX folds with `Math.max` / `Math.min` (AnimatedFloatExpression.java:1009, :1025),
+        // AndroidX folds with `Math.max` / `Math.min` (AnimatedFloatExpression.java:1011, :1026),
         // so one NaN element makes the result NaN; Swift's `max()` / `min()` would skip it.
         case NativeSwiftFloatOperator.arrayMax:
-          stack.append(list.first.map { list.dropFirst().reduce($0, javaMax) } ?? 0)
+          stack.append(list.isEmpty ? 0 : list.dropFirst().reduce(list[0], javaMax))
         case NativeSwiftFloatOperator.arrayMin:
-          stack.append(list.first.map { list.dropFirst().reduce($0, javaMin) } ?? 0)
+          stack.append(list.isEmpty ? 0 : list.dropFirst().reduce(list[0], javaMin))
         case NativeSwiftFloatOperator.arraySum: stack.append(sum)
         case NativeSwiftFloatOperator.arrayAverage:
           stack.append(list.isEmpty ? 0 : sum / Float(list.count))
@@ -379,10 +378,8 @@ enum NativeSwiftFloatExpression {
           opcode: opcode, offset: offset, reason: "float expression operator \(operation)")
       }
     }
-    // The top of the stack, NaN and the infinities included, as AndroidX's
-    // `AnimatedFloatExpression.eval` returns `mStack[sp]` and the Kotlin player's evaluator returns
-    // it: a host may write any float, and `0 / 0` is a value like any other. An empty stack reads
-    // 0, as the Kotlin player's does where AndroidX's would index past it.
+    // The top of the stack, NaN and infinities included, as `AnimatedFloatExpression.eval` returns
+    // `mStack[sp]`; an empty stack reads 0 where AndroidX would index past it.
     return stack.last ?? 0
   }
 

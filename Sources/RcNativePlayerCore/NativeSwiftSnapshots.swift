@@ -252,10 +252,8 @@ public enum NativeSwiftTextFormatter {
       decimalExponent -= 1
     }
     while digits.count > 1, digits.last == "0" { digits.removeLast() }
-    // Java's `Float.toString` never settles for one significant digit: it prints the two-digit
-    // decimal closest to the exact value, so `Float.MIN_VALUE` is "1.4E-45" where the shortest
-    // digits are "1e-45" (checked against JDK 17, the fixture's JVM). Only a subnormal is coarse
-    // enough for that decimal to differ from `d.0`, so a normal value skips the formatting.
+    // Java's `Float.toString` prints at least two significant digits ("1.4E-45" for `MIN_VALUE`,
+    // not "1e-45"); only a subnormal's two-digit decimal can differ from `d.0`.
     if digits.count == 1, value.isSubnormal {
       let twoDigits = String(format: "%.1e", Double(value.magnitude))
       if Float(twoDigits) == value.magnitude, let marker = twoDigits.firstIndex(of: "e"),
@@ -359,10 +357,8 @@ public struct NativeSwiftDocumentSnapshot: Sendable {
   let conformanceShaderUniformNames: [Int: Set<String>]
   let conformanceConditionalTraces: [NativeSwiftConditionalTraceSnapshot]
 
-  /// The strings a host wrote that the frame holds: each text variable's value while the host's
-  /// write stands. A host counts each against its frame's text budget once, however many texts,
-  /// descriptions or events show it, as AndroidX lays a host's string out wherever the document
-  /// shows it (`AndroidRemoteContext.setNamedStringOverride`).
+  /// The host-written strings the frame holds. A host counts each once against its text budget,
+  /// however many texts, descriptions or events show it.
   public let hostStrings: Set<String>
 
   /// The wake a host should schedule: the document's own request, or the once-a-second refresh a
@@ -1041,9 +1037,8 @@ public struct NativeSwiftTextSnapshot: Sendable {
   /// The size text takes when its own is below 0 or NaN: a reset Android paint's, Skia's
   /// `SkPaintDefaults_TextSize` (12 pixels), which `Paint.setTextSize` then leaves in place.
   static let androidDefaultSize: Float = 12
-  /// The largest text size the players lay out: the Kotlin player's `RC_MAX_TEXT_SIZE_PX`. A glyph
-  /// a million pixels tall is past any screen, and far inside the range text metrics stay finite
-  /// in.
+  /// The largest text size the players lay out (Kotlin's `RC_MAX_TEXT_SIZE_PX`): past any screen,
+  /// yet far inside the range where text metrics stay finite.
   public static let maximumSize: Float = 1_000_000
   /// The text size a canvas paint holds until the document sets one: the Kotlin player's
   /// `RcPaintState.textSize`.
@@ -1051,8 +1046,7 @@ public struct NativeSwiftTextSnapshot: Sendable {
   /// The weight a NaN weight, or a weight variable with no value yet, takes: `FontWeight.Normal`.
   static let normalWeight: Float = 400
   public let style: Int
-  /// The font weight, 1...1000; NaN is the normal 400, as the Kotlin player's `rcFontWeight`
-  /// reads it.
+  /// The font weight, 1...1000; NaN is the normal 400.
   public let weight: Float
   public let familyID: Int
   public let familyName: String?
@@ -1075,11 +1069,8 @@ public struct NativeSwiftTextSnapshot: Sendable {
   ) {
     self.value = value
     self.colorARGB = colorARGB
-    // Any float a host writes reaches a size. Android's `Paint.setTextSize` ignores one below 0
-    // or NaN (hwui `jni/Paint.cpp:1001`, `if (textSize >= 0)`) on a paint AndroidX's
-    // `replacePaint` has just reset (`AndroidPaintContext.java:533`), so such text draws at
-    // Skia's default size in pixels (`SkPaintDefaults.h:20`). Every host renders the size it is
-    // given, so this init is the one owner of the rule.
+    // Android's `Paint.setTextSize` ignores a size below 0 or NaN (hwui `jni/Paint.cpp:1001`) on a
+    // just-reset paint (AndroidPaintContext.java:533), so such text draws at Skia's default size.
     let takesSize = size >= 0
     self.size = Self.androidSize(size, unset: Self.androidDefaultSize)
     self.sizeIsDensityTyped = takesSize && sizeIsDensityTyped
@@ -1094,10 +1085,9 @@ public struct NativeSwiftTextSnapshot: Sendable {
     self.fontSettings = fontSettings
   }
 
-  /// A text size as Android's `Paint.setTextSize` takes it, as the Kotlin player's
-  /// `rcTextSizePixels` does: `unset`, the size the paint already holds, for one below 0 or NaN,
-  /// and at most `maximumSize`, an infinity included. The Kotlin player caps the size in pixels,
-  /// after the density; this is in document units, before it.
+  /// A text size as Android's `Paint.setTextSize` takes it, in document units (Kotlin caps pixels).
+  /// - Parameter unset: The size the paint already holds, kept for a size below 0 or NaN.
+  /// - Returns: `size` capped at `maximumSize`, or `unset`.
   public static func androidSize(_ size: Float, unset: Float) -> Float {
     size >= 0 ? min(size, maximumSize) : unset
   }

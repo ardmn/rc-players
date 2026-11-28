@@ -40,22 +40,12 @@ import kotlin.test.assertTrue
 import org.junit.Test
 
 /**
- * The host values AndroidX accepts, run through AndroidX remote-core itself, and the Kotlin player
- * held to the same answers. AndroidX is the arbiter: its `setNamed*Override` take any float (NaN
- * and infinities included), any string and any integer, and store them as `RemoteComposeState`
- * does.
+ * The host values AndroidX's `setNamed*Override` accept (any float, string or integer), run through
+ * AndroidX remote-core, with the Kotlin player held to its answers. Where AndroidX throws, each
+ * test pins what the players do instead.
  *
- * Where AndroidX throws on a value a host may send, the players must not crash, and each test pins
- * what they do instead:
- * - a float expression that reads a NaN from a variable takes it for an operator and underflows its
- *   stack (`AnimatedFloatExpression.eval`); the players treat it as the value it is, which is what
- *   AndroidX does with a NaN the expression computes itself;
- * - a `TextMerge` longer than 16K throws; the players leave the merged text as it was;
- * - a dynamic float list sized outside 0..2000 throws; the players have no list at that id.
- *
- * The operator and text tables also go to `HOST_VALUE_FIXTURE` for the native Swift player's
- * `NativeSwiftHostValueParityTests`. Run with `-Prc.hostValueParity.update=true` to rewrite it; it
- * fails when the committed fixture differs from what AndroidX computes now.
+ * The operator and text tables are also the fixture of the Swift player's
+ * `NativeSwiftHostValueParityTests`; `-Prc.hostValueParity.update=true` rewrites it.
  */
 class AndroidxHostValueParityTest {
 
@@ -106,11 +96,9 @@ class AndroidxHostValueParityTest {
   }
 
   /**
-   * Every operator over every combination of three edge operands. AndroidX gets each operand
-   * computed on its stack (`0 0 /` for NaN, `1 0 /` for +inf), where a NaN is a value; the Kotlin
-   * evaluator reads each from a variable, as a host value reaches it. Operators AndroidX throws on
-   * for these operands (the array operators, with no array; `A_SUM_TILL` past its limit) must not
-   * throw in Kotlin, which reads 0 there.
+   * Every operator over every triple of edge operands: AndroidX computes each on its stack (`0 0 /`
+   * for NaN), Kotlin reads each from a variable, as a host value reaches it. Where AndroidX throws,
+   * Kotlin reads 0.
    */
   @Test
   fun everyOperatorTreatsNonFiniteOperandsAsAndroidXDoes() {
@@ -124,6 +112,7 @@ class AndroidxHostValueParityTest {
         compared += 1
       }
     }
+    // A floor under operators x 216 triples, so a table that silently emptied fails.
     assertTrue(compared > 10_000, "compared $compared")
   }
 
@@ -156,8 +145,8 @@ class AndroidxHostValueParityTest {
   }
 
   /**
-   * A merge within 16K is the concatenation on both; a longer one throws in AndroidX
-   * (`TextMerge.MAX_TEXT_LENGTH`) and leaves the merged text as it was in the Kotlin player.
+   * A merge within `TextMerge.MAX_TEXT_LENGTH` (TextMerge.java:41) concatenates on both; a longer
+   * one throws in AndroidX and leaves the merged text as it was in the Kotlin player.
    */
   @Test
   fun aMergeOverAndroidXsLimitThrowsThereAndChangesNothingHere() {
@@ -181,9 +170,8 @@ class AndroidxHostValueParityTest {
   }
 
   /**
-   * A dynamic list sized by a host float: NaN is a zero-length list (`(int) NaN`), and a size
-   * outside 0..2000 (an infinity, a negative) throws in AndroidX and leaves the Kotlin player with
-   * no list at that id.
+   * A NaN length is an empty list (`(int) NaN`); one outside 0..2000 throws in AndroidX
+   * (DataDynamicListFloat.java:74) and leaves the Kotlin player with no list at that id.
    */
   @Test
   fun aDynamicListSizedByANonFiniteHostFloat() {
@@ -270,15 +258,11 @@ class AndroidxHostValueParityTest {
       val again = OPERAND_TRIPLES.map { operands ->
         runCatching { evaluateOnStack(operands.flatMap(::produce) + operator) }.getOrNull()
       }
-      if (
-        results.zip(again).any { (a, b) ->
-          a?.toRawBits() != b?.toRawBits() && !(a!!.isNaN() && b!!.isNaN())
+      val deterministic =
+        results.zip(again).all { (a, b) ->
+          a?.toRawBits() == b?.toRawBits() || (a!!.isNaN() && b!!.isNaN())
         }
-      ) {
-        null
-      } else {
-        id to results
-      }
+      if (deterministic) id to results else null
     }
 
   /** [operator] over [operands], each read from a variable as a host value reaches it. */
@@ -426,13 +410,28 @@ class AndroidxHostValueParityTest {
       EDGE_OPERANDS.flatMap { b -> EDGE_OPERANDS.map { c -> floatArrayOf(a, b, c) } }
     }
 
-    private val TEXT_FORMATS: List<Triple<Int, Int, Int>> =
-      listOf(0, 5, 15, 16, 256, 512, 1024, 1024 or 5, 4096).flatMap { flags ->
-        listOf(Triple(2, 2, flags), Triple(6, 3, flags))
-      }
+    private const val NO_PADDING = TextFromFloat.PAD_AFTER_NONE or TextFromFloat.PAD_PRE_NONE
+
+    private val TEXT_FLAGS =
+      listOf(
+        TextFromFloat.PAD_AFTER_SPACE,
+        NO_PADDING,
+        TextFromFloat.PAD_AFTER_ZERO or TextFromFloat.PAD_PRE_ZERO,
+        TextFromFloat.GROUPING_BY3,
+        TextFromFloat.OPTIONS_NEGATIVE_PARENTHESES,
+        TextFromFloat.OPTIONS_ROUNDING,
+        TextFromFloat.LEGACY_MODE,
+        TextFromFloat.LEGACY_MODE or NO_PADDING,
+        TextFromFloat.FULL_FORMAT,
+      )
+
+    private val TEXT_FORMATS: List<Triple<Int, Int, Int>> = TEXT_FLAGS.flatMap { flags ->
+      listOf(Triple(2, 2, flags), Triple(6, 3, flags))
+    }
 
     private val LONG_TEXTS: List<String> =
       listOf(
+        // One past `Limits.MAX_STRING_SIZE` (Limits.java:42), a document string's limit.
         "x".repeat(4_001),
         "x".repeat(RcTextMerge.MAX_LENGTH - 1),
         "x".repeat(RcTextMerge.MAX_LENGTH),

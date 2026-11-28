@@ -3,11 +3,9 @@ import Testing
 
 @testable @_spi(Conformance) @_spi(RemoteComposeController) import RcNativePlayerCore
 
-/// Every value a host may write, as AndroidX's `setNamed*Override` takes it — NaN, the infinities
-/// and strings far over a document string's 4000 bytes — is accepted, and reaches each float and
-/// text consumer without trapping, hanging or failing the frame. The documents are the Kotlin
-/// `RcHostValueEdgeRenderTest`'s (`Fixtures/host-value-edges`), which the Kotlin player renders
-/// with the same values.
+/// Any value AndroidX's `setNamed*Override` takes (NaN, infinities, strings over 4000 bytes)
+/// reaches every consumer without failing the frame, on the Kotlin `RcHostValueEdgeRenderTest`
+/// documents.
 @Suite(.timeLimit(.minutes(2))) struct NativeSwiftHostValueEdgeTests {
   static let floats: [Float] = [.nan, .infinity, -.infinity, -0.0, 3e9]
   static let texts = [
@@ -47,13 +45,8 @@ import Testing
     for (value, expected) in cases {
       let session = try NativeSwiftDocumentSession.open(data: data)
       #expect(session.setFloat(value, for: HostValueEdgeFixtures.floatName))
-      let snapshot = try session.snapshot(timeSeconds: 0)
-      var offsets: [(Float, Float)] = []
-      var pending = [snapshot.root]
-      while let node = pending.popLast() {
-        offsets.append((node.offsetX, node.offsetY))
-        pending.append(contentsOf: node.children)
-      }
+      let root = try session.snapshot(timeSeconds: 0).root
+      let offsets = Self.nodes(root).map { ($0.offsetX, $0.offsetY) }
       #expect(offsets.allSatisfy { $0.0.isFinite && $0.1.isFinite }, "\(value): \(offsets)")
       #expect(
         offsets.contains { $0.0 == expected && $0.1 == expected }
@@ -68,14 +61,28 @@ import Testing
   /// (`SkPaintDefaults.h:20`). A size past 1e6, an infinity included, is 1e6, as the Kotlin
   /// player's `rcTextSizePixels` caps it (`RC_MAX_TEXT_SIZE_PX`).
   @Test func aHostTextSizeBelowZeroIsAndroidsDefaultSize() throws {
+    /// A text layout whose size is the host's float, declared 1.
+    func hostTextSizeDocument() -> Data {
+      let writer = Writer()
+      writer.header(width: 100, height: 60)
+      writer.u8(NativeSwiftWireOpcode.dataFloat).int(40).float(1)
+      writer.namedVariable(
+        id: 40, type: NativeSwiftNamedVariableType.float, name: HostValueEdgeFixtures.floatName)
+      writer.text(id: 5, "hello")
+      writer.u8(NativeSwiftWireOpcode.layoutRoot).int(1)
+      writer.textLayout(id: 5, textID: 5, color: 0xff00_0000, sizeWord: Writer.nanReference(40))
+      writer.u8(NativeSwiftWireOpcode.containerEnd)
+      return writer.data
+    }
     let cases: [(Float, Float)] = [
       (.nan, 12), (-.infinity, 12), (-1e30, 12), (-1, 12), (0, 0), (1e30, 1e6),
       (.infinity, 1e6), (1e6, 1e6), (18, 18),
     ]
     for (value, expected) in cases {
-      let session = try NativeSwiftDocumentSession.open(data: Self.hostTextSizeDocument())
+      let session = try NativeSwiftDocumentSession.open(data: hostTextSizeDocument())
       #expect(session.setFloat(value, for: HostValueEdgeFixtures.floatName), "\(value)")
-      let text = try Self.nodes(session.snapshot(timeSeconds: 0).root).compactMap(\.text).first
+      let root = try session.snapshot(timeSeconds: 0).root
+      let text = Self.nodes(root).compactMap(\.text).first
       #expect(text?.size == expected, "\(value): \(String(describing: text?.size))")
       if value.isNaN || value < 0 {
         #expect(text?.sizeIsDensityTyped == false, "\(value): Android's default is pixels")
@@ -86,13 +93,30 @@ import Testing
   /// A host's text weight takes the Kotlin player's `rcFontWeight`: NaN is the normal 400, and
   /// any other value is held to the 1...1000 `FontWeight` takes.
   @Test func aHostTextWeightIsNormalised() throws {
+    /// One 16 px text whose weight reads the host's float, declared 400.
+    func hostTextWeightDocument() -> Data {
+      let writer = Writer()
+      writer.header(width: 100, height: 60)
+      writer.u8(NativeSwiftWireOpcode.dataFloat).int(40).float(400)
+      writer.namedVariable(
+        id: 40, type: NativeSwiftNamedVariableType.float, name: HostValueEdgeFixtures.floatName)
+      writer.text(id: 5, "hello")
+      writer.u8(NativeSwiftWireOpcode.layoutRoot).int(1)
+      writer.u8(NativeSwiftWireOpcode.layoutText).int(5).int(0).int(5)
+        .int(Int(Int32(bitPattern: 0xff00_0000))).float(16).int(0).int(Writer.nanReference(40))
+        .int(-1).int(1).int(1).int(1)
+      writer.u8(NativeSwiftWireOpcode.containerEnd)
+      writer.u8(NativeSwiftWireOpcode.containerEnd)
+      return writer.data
+    }
     let cases: [(Float, Float)] = [
       (.nan, 400), (.infinity, 1_000), (-.infinity, 1), (1e30, 1_000), (-1, 1), (700, 700),
     ]
     for (value, expected) in cases {
-      let session = try NativeSwiftDocumentSession.open(data: Self.hostTextWeightDocument())
+      let session = try NativeSwiftDocumentSession.open(data: hostTextWeightDocument())
       #expect(session.setFloat(value, for: HostValueEdgeFixtures.floatName), "\(value)")
-      let text = try Self.nodes(session.snapshot(timeSeconds: 0).root).compactMap(\.text).first
+      let root = try session.snapshot(timeSeconds: 0).root
+      let text = Self.nodes(root).compactMap(\.text).first
       #expect(text?.weight == expected, "\(value): \(String(describing: text?.weight))")
     }
   }
@@ -129,25 +153,38 @@ import Testing
   /// The Kotlin player passes `NaN.dp`, `Dp.Unspecified`, to `widthIn(max =)` and `heightIn`
   /// (`RcComposePlayer.kt` `applyWidthRange`), which leaves the bound unset.
   @Test func aNaNSizeInMaximumIsUnbounded() throws {
+    let canvasID = 3
+    /// A canvas under a `widthIn` or `heightIn` from 0 to the host's float, declared 1.
+    func sizeInDocument(_ opcode: Int) -> Data {
+      let writer = Writer()
+      writer.header(width: 100, height: 60)
+      writer.u8(NativeSwiftWireOpcode.dataFloat).int(40).float(1)
+      writer.namedVariable(
+        id: 40, type: NativeSwiftNamedVariableType.float, name: HostValueEdgeFixtures.floatName)
+      writer.u8(NativeSwiftWireOpcode.layoutRoot).int(1)
+      writer.u8(NativeSwiftWireOpcode.layoutContent).int(2)
+      writer.u8(NativeSwiftWireOpcode.layoutCanvas).int(canvasID).int(30)
+      writer.u8(opcode).float(0).int(Writer.nanReference(40))
+      writer.u8(NativeSwiftWireOpcode.canvasOperations)
+      writer.u8(NativeSwiftWireOpcode.drawRect).float(0).float(0).float(40).float(40)
+      for _ in 0..<4 { writer.u8(NativeSwiftWireOpcode.containerEnd) }
+      return writer.data
+    }
     for opcode in [NativeSwiftWireOpcode.modifierWidthIn, NativeSwiftWireOpcode.modifierHeightIn] {
+      let isWidth = opcode == NativeSwiftWireOpcode.modifierWidthIn
       for (value, expected) in [(Float.nan, Float(-1)), (50, 50)] {
-        let session = try NativeSwiftDocumentSession.open(data: Self.sizeInDocument(opcode))
+        let session = try NativeSwiftDocumentSession.open(data: sizeInDocument(opcode))
         #expect(session.setFloat(value, for: HostValueEdgeFixtures.floatName))
-        let canvas = try Self.nodes(session.snapshot(timeSeconds: 0).root)
-          .first { $0.componentID == 3 }
-        let maximum =
-          opcode == NativeSwiftWireOpcode.modifierWidthIn
-          ? canvas?.maximumWidth : canvas?.maximumHeight
+        let root = try session.snapshot(timeSeconds: 0).root
+        let canvas = Self.nodes(root).first { $0.componentID == canvasID }
+        let maximum = isWidth ? canvas?.maximumWidth : canvas?.maximumHeight
         #expect(maximum == expected, "opcode \(opcode), \(value): \(String(describing: maximum))")
       }
     }
   }
 
-  /// A spring towards a host's NaN reads NaN, as AndroidX's `SpringStopEngine` and the Kotlin
-  /// `RcSpringAnimation` compute it, but it is final: it stops requesting frames, where both of
-  /// them repaint forever. A finite target afterwards settles the spring on it at rest, as
-  /// Kotlin's `settleAt` does, rather than leaving the NaN velocity AndroidX's `setInitialValue`
-  /// keeps, which would hold the value at NaN for good.
+  /// A spring towards a non-finite target reads it, as AndroidX's `SpringStopEngine` does, but stops
+  /// requesting frames; a finite target then settles it at rest, as Kotlin's `settleAt` does.
   @Test func aSpringTowardsANonFiniteTargetStopsAndRecovers() throws {
     for target in [Float.nan, .infinity, -.infinity] {
       let session = try NativeSwiftDocumentSession.open(data: Self.hostSpringDocument())
@@ -181,15 +218,15 @@ import Testing
     }
   }
 
-  /// AndroidX's `SpringStopEngine.compute` over-samples a frame in proportion to the spring's
-  /// natural frequency times the frame, `(int) (1 + 9 * (Math.sqrt(mStiffness / mMass) * dt * 4))`
-  /// capped at 1000 (`SpringStopEngine.java:231-232`, mass 1 at `:101`), as the Kotlin
-  /// `RcSpringAnimation.compute` does. Kotlin's `aSpringConvergesAtCoarseFrameIntervals`: the
-  /// `remote-m3` selection spring (stiffness 1400, critically damped) at 100 ms frames stays in
-  /// [0, 1] and settles, and every frame matches AndroidX's integrator.
+  /// Kotlin's `aSpringConvergesAtCoarseFrameIntervals`: AndroidX over-samples each frame by the
+  /// spring's frequency, capped at 1000 (`SpringStopEngine.java:231-232`, mass 1 at `:102`).
   @Test func aStiffSpringConvergesAtCoarseFrameIntervalsAsAndroidXDoes() throws {
+    // The `remote-m3` selection spring, critically damped: damping = 2 * sqrt(stiffness).
     let stiffness = 1_400.0
     let damping = Double(Float(74.83315))
+    let frameSeconds = 0.1
+    // Float rounding of the integrator against the Double reference.
+    let tolerance = 1e-3
     let session = try NativeSwiftDocumentSession.open(
       data: Self.hostSpringDocument(
         initial: 0, stiffness: Float(stiffness), damping: Float(damping)))
@@ -199,24 +236,21 @@ import Testing
     #expect(session.setFloat(1, for: HostValueEdgeFixtures.floatName))
     var reference = AndroidXSpring(stiffness: stiffness, damping: damping, target: 1)
     for _ in 0..<20 {
-      time += 0.1
+      time += frameSeconds
       _ = try session.snapshot(timeSeconds: time)
       let value = try #require(try session.probeValues(timeSeconds: time).floats[51])
-      let expected = reference.get(0.1)
+      let expected = reference.get(frameSeconds)
       #expect(value >= -0.01 && value <= 1.01, "the spring left [0, 1] at t=\(time): \(value)")
-      #expect(abs(Double(value) - expected) < 1e-3, "t=\(time): \(value), AndroidX \(expected)")
+      #expect(
+        abs(Double(value) - expected) < tolerance, "t=\(time): \(value), AndroidX \(expected)")
     }
     #expect(try session.probeValues(timeSeconds: time).floats[51] == 1)
     #expect(!(try session.snapshot(timeSeconds: time)).needsContinuousFrames)
   }
 
-  /// AndroidX runs `for (i = from; i < until; i += step)` (`LoopOperation.java:125`) and counts
-  /// each pass and each operation of its body, failing the frame past 20 000 in one paint
-  /// (`RemoteContext.incrementOpCount`); here a loop stops at that budget instead
-  /// (`maximumLoopOperationsPerFrame`), so a one-operation body runs 10 000 passes:
-  /// `RcPlayerStateTest.loopOperationHonorsTheIterationCap`'s cases. This player unrolls the loop
-  /// when it opens the document, reading the bounds from literals and document constants, which
-  /// cannot be NaN, so Kotlin's NaN cases have no counterpart here.
+  /// `RcPlayerStateTest.loopOperationHonorsTheIterationCap`'s cases: AndroidX counts a pass and each
+  /// body operation (`LoopOperation.java:125`) and fails the frame past 20 000; here the loop stops
+  /// there, so a one-operation body runs 10 000. Bounds are literals here, never NaN.
   @Test func aLoopStopsAtTheFramesOperationBudget() throws {
     let cases: [(from: Float, until: Float, step: Float, passes: Int)] = [
       (0, 1, 0.000_01, 10_000), (0, .infinity, 1, 10_000), (0, 1, 0, 10_000),
@@ -232,8 +266,8 @@ import Testing
       // A draw after the loop, so a document whose loop runs no pass still draws something.
       document.u8(NativeSwiftWireOpcode.drawRect).float(1).float(1).float(2).float(2)
       let label = "from \(from) until \(until) step \(step)"
-      let commands = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
-        .commands
+      let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
+      let commands = root.commands
       #expect(commands.count == passes + 1, "\(label): \(commands.count - 1) passes")
     }
   }
@@ -249,8 +283,8 @@ import Testing
       let document = Writer()
       document.header(width: 100, height: 100)
       build(document)
-      return try NativeSwiftDocumentSession.open(data: document.data).snapshot().root.commands
-        .count
+      let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
+      return root.commands.count
     }
     let budget = NativeSwiftDocumentDecoder.maximumLoopOperationsPerFrame
     #expect(budget == 20_000)
@@ -284,8 +318,9 @@ import Testing
       document.u8(NativeSwiftWireOpcode.containerEnd)
       document.u8(NativeSwiftWireOpcode.drawRect).int(Writer.nanReference(70)).float(0).float(1)
         .float(1)
-      let commands = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
-        .commands
+      let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
+      let commands = root.commands
+      // 10 000 capped passes plus the draw after the loop.
       #expect(commands.count == 10_001, "step \(step)")
       #expect(
         commands.last?.values.first == last,
@@ -301,54 +336,6 @@ import Testing
       pending.append(contentsOf: node.children)
     }
     return all
-  }
-
-  /// A text layout whose size is the host's float, declared 1.
-  static func hostTextSizeDocument() -> Data {
-    let writer = Writer()
-    writer.header(width: 100, height: 60)
-    writer.u8(NativeSwiftWireOpcode.dataFloat).int(40).float(1)
-    writer.namedVariable(
-      id: 40, type: NativeSwiftNamedVariableType.float, name: HostValueEdgeFixtures.floatName)
-    writer.text(id: 5, "hello")
-    writer.u8(NativeSwiftWireOpcode.layoutRoot).int(1)
-    writer.textLayout(id: 5, textID: 5, color: 0xff00_0000, sizeWord: Writer.nanReference(40))
-    writer.u8(NativeSwiftWireOpcode.containerEnd)
-    return writer.data
-  }
-
-  /// One 16 px text whose weight reads the host's float, declared 400.
-  static func hostTextWeightDocument() -> Data {
-    let writer = Writer()
-    writer.header(width: 100, height: 60)
-    writer.u8(NativeSwiftWireOpcode.dataFloat).int(40).float(400)
-    writer.namedVariable(
-      id: 40, type: NativeSwiftNamedVariableType.float, name: HostValueEdgeFixtures.floatName)
-    writer.text(id: 5, "hello")
-    writer.u8(NativeSwiftWireOpcode.layoutRoot).int(1)
-    writer.u8(NativeSwiftWireOpcode.layoutText).int(5).int(0).int(5)
-      .int(Int(Int32(bitPattern: 0xff00_0000))).float(16).int(0).int(Writer.nanReference(40))
-      .int(-1).int(1).int(1).int(1)
-    writer.u8(NativeSwiftWireOpcode.containerEnd)
-    writer.u8(NativeSwiftWireOpcode.containerEnd)
-    return writer.data
-  }
-
-  /// A canvas (id 3) under a `widthIn` or `heightIn` from 0 to the host's float, declared 1.
-  static func sizeInDocument(_ opcode: Int) -> Data {
-    let writer = Writer()
-    writer.header(width: 100, height: 60)
-    writer.u8(NativeSwiftWireOpcode.dataFloat).int(40).float(1)
-    writer.namedVariable(
-      id: 40, type: NativeSwiftNamedVariableType.float, name: HostValueEdgeFixtures.floatName)
-    writer.u8(NativeSwiftWireOpcode.layoutRoot).int(1)
-    writer.u8(NativeSwiftWireOpcode.layoutContent).int(2)
-    writer.u8(NativeSwiftWireOpcode.layoutCanvas).int(3).int(30)
-    writer.u8(opcode).float(0).int(Writer.nanReference(40))
-    writer.u8(NativeSwiftWireOpcode.canvasOperations)
-    writer.u8(NativeSwiftWireOpcode.drawRect).float(0).float(0).float(40).float(40)
-    for _ in 0..<4 { writer.u8(NativeSwiftWireOpcode.containerEnd) }
-    return writer.data
   }
 
   /// Float 51 is a spring (stiffness 40, damping 8) towards the host's float, declared 1.

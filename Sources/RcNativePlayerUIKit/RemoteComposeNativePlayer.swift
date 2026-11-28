@@ -1281,8 +1281,8 @@
     }
 
     /// Replaces the list a float-array named variable holds, and answers as ``setFloat(_:for:)``
-    /// does. Any value is taken, NaN and the infinities included, but there may be no more of them
-    /// than a float list holds (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000).
+    /// does. NaN and infinities are taken; more values than a float list holds (2000,
+    /// DataListFloat.java:47) are refused.
     @discardableResult
     public func setFloatArray(_ values: [Float], for name: String) async -> Bool {
       await submit(.setNamed(name, value: .floatArray(values)))
@@ -1969,10 +1969,8 @@
   }
 
   extension NativeSwiftNamedValue {
-    /// Whether `other` is this value, as Kotlin's `==` compares a boxed float: by
-    /// `Float.floatToIntBits`, so a NaN equals a NaN and 0 is not -0. The synthesized `==` is
-    /// IEEE's, under which a NaN is never itself, so a failed NaN write was not recognised as the
-    /// write that failed the session and was handed to the next one.
+    /// Whether `other` is this value as Kotlin's `==` compares a boxed float: a NaN equals a NaN
+    /// and 0 is not -0, unlike the synthesized IEEE `==`.
     func isSameValue(as other: Self) -> Bool {
       switch (self, other) {
       case (.float(let lhs), .float(let rhs)): return NativeSwiftKotlinFloat.equals(lhs, rhs)

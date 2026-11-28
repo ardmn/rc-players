@@ -16,9 +16,8 @@ func nativeSwiftIntegerView(_ value: Float) -> Int {
   Int(Int32(clamping: nativeSwiftClampedInt(value)))
 }
 
-/// `value` with NaN as 0 and each infinity as the largest finite float of its sign: how Java's
-/// `(int)` cast and `Math.round` read a float AndroidX's players convert, so a host's NaN or
-/// infinity reaches a layout field as a number rather than failing the frame.
+/// `value` with NaN as 0 and each infinity as the largest finite float of its sign, as Java's
+/// `(int)` cast and `Math.round` read it, so a host's NaN or infinity lays out as a number.
 func nativeSwiftSaturated(_ value: Float) -> Float {
   if value.isNaN { return 0 }
   return min(max(value, -.greatestFiniteMagnitude), .greatestFiniteMagnitude)

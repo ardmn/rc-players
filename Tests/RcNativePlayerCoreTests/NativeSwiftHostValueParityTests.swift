@@ -3,23 +3,16 @@ import Testing
 
 @testable @_spi(Conformance) @_spi(RemoteComposeController) import RcNativePlayerCore
 
-/// The native player held to what AndroidX remote-core computes for host values it accepts: NaN,
-/// the infinities and signed zeros read by every float operator, and NaN and infinities formatted
-/// by `TextFromFloat` (each row's value as AndroidX's state holds it after the host's write).
-/// `Fixtures/host-value-parity.tsv` is written by the Kotlin
-/// `AndroidxHostValueParityTest` (`:rc-player-compat-tests`), which runs AndroidX itself and holds
-/// the Kotlin player to the same table, so the three agree. Where AndroidX throws (an array
-/// operator with no array, `A_SUM_TILL` past its limit) the table holds the Kotlin player's value,
-/// marked `k`: the players do not crash there.
+/// Every float operator and `TextFromFloat` over NaN, infinities and signed zeros, against
+/// `Fixtures/host-value-parity.tsv`, which the Kotlin `AndroidxHostValueParityTest` writes from
+/// AndroidX itself. Rows where AndroidX throws hold the Kotlin player's value, marked `k`.
 @Suite struct NativeSwiftHostValueParityTests {
   private typealias Op = NativeSwiftWireOpcode
+  /// A NaN's bits whose low bits name the variable a float expression reads.
+  private static let nanReferenceBits: UInt32 = 0xff80_0000
 
-  /// The fixture's operators this player refuses rather than evaluates over the fixture's three
-  /// operands, so a document using one fails to open instead of drawing a value that differs from
-  /// AndroidX's. Most are not implemented (`unsupported`); `A_DEREF` refuses a missing list and
-  /// `CUBIC` a stack with fewer than its five operands (`malformed`, where AndroidX itself throws).
-  /// The parity test holds every one to a refusal over every operand, so implementing one without
-  /// moving it out of this list fails.
+  /// The fixture's operators this player refuses over three operands, so a document using one
+  /// fails to open rather than draw a value unlike AndroidX's.
   static let unimplementedOperators: [Int: String] = [
     NativeSwiftFloatOperator.arrayDeref: "A_DEREF: a missing list is refused, AndroidX reads 0",
     NativeSwiftFloatOperator.arraySpline: "A_SPLINE: no spline evaluator",
@@ -39,8 +32,9 @@ import Testing
     NativeSwiftFloatOperator.cmd2: "CMD2: only inside a particle loop, rewritten before evaluation",
     NativeSwiftFloatOperator.cmd3: "CMD3",
     NativeSwiftFloatOperator.cmd4: "CMD4",
-    68: "CMD5",
-    69: "CMD6",
+    // 68 and 69 have no AndroidX name (AnimatedFloatExpression.java:239-245).
+    68: "68: unnamed in AndroidX",
+    69: "69: unnamed in AndroidX",
     NativeSwiftFloatOperator.cubic: "CUBIC: five operands; with three AndroidX throws too",
     NativeSwiftFloatOperator.arraySplineLoop: "A_SPLINE_LOOP: no spline evaluator",
     NativeSwiftFloatOperator.arraySumTill: "A_SUM_TILL",
@@ -60,7 +54,7 @@ import Testing
     for (operation, expected) in fixture.operators {
       #expect(expected.count == triples.count, "operator \(operation)")
       let words =
-        (1...3).map { 0xff80_0000 | UInt32($0) }
+        (1...3).map { Self.nanReferenceBits | UInt32($0) }
         + [NativeSwiftFloatExpression.operatorWord(operation)]
       let excluded = Self.unimplementedOperators[operation] != nil
       for (operands, result) in zip(triples, expected) {
@@ -153,9 +147,10 @@ import Testing
         (NativeSwiftFloatOperator.arrayMax, expectedMax),
         (NativeSwiftFloatOperator.arrayMin, expectedMin),
       ] {
+        let listReference = Self.nanReferenceBits | UInt32(arrayID)
+        let words = [listReference, NativeSwiftFloatExpression.operatorWord(operation)]
         let actual = try NativeSwiftFloatExpression.evaluate(
-          [0xff80_0000 | UInt32(arrayID), NativeSwiftFloatExpression.operatorWord(operation)],
-          values: [:], arrays: [arrayID: list], opcode: 0, offset: 0)
+          words, values: [:], arrays: [arrayID: list], opcode: 0, offset: 0)
         #expect(
           HostValueParityFixture.same(actual, expected),
           "operator \(operation) over \(list): \(actual), AndroidX \(expected)")
