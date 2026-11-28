@@ -418,27 +418,44 @@ struct ParsedDrawCommand {
       || (path?.sourceReferences(anyOf: componentValueIDs) ?? false)
   }
 
+  /// Whether `word` reads a document variable (not one of the player's ids) that `values` lacks.
+  private static func readsUnwrittenDocumentVariable(_ word: UInt32, values: [Int: Float]) -> Bool
+  {
+    guard let id = NativeSwiftFloatExpression.readID(word) else { return false }
+    return id >= NativeSwiftSystemVariables.firstDocumentID && values[id] == nil
+  }
+
   func resolve(
     values: [Int: Float], integers: [Int: Int], colors: [Int: UInt32], texts: [Int: String],
     matrices: [Int: ParsedMatrixExpression]
   ) throws
     -> NativeSwiftDrawCommandSnapshot
   {
+    let isTextOnCircle = kind == NativeSwiftDrawKind.textOnCircle
     let resolvedValues =
       staticValues
       ?? words.enumerated().map { index, word in
-        nanSentinelIndices.contains(index)
-          ? .nan : NativeSwiftFloatExpression.resolve(word, values: values)
+        // On the circle an unwritten document variable is NaN, as Kotlin's `RcPlayerState.resolve`
+        // leaves it, so the circle draws nothing rather than round the origin.
+        let isNaN =
+          nanSentinelIndices.contains(index)
+          || (isTextOnCircle && Self.readsUnwrittenDocumentVariable(word, values: values))
+        return isNaN ? .nan : NativeSwiftFloatExpression.resolve(word, values: values)
       }
     let resolvedPath = try path?.resolve(values: values, integers: integers) ?? []
-    // MATRIX_FROM_PATH draws as the matrix measured off its path, not as the path itself.
+    let commandValues: [Float] =
+      switch kind {
+      // MATRIX_FROM_PATH draws as the matrix measured off its path, not as the path itself.
+      case NativeSwiftDrawKind.matrixFromPath:
+        NativeSwiftPathMeasure(resolvedPath).matrix(
+          fraction: resolvedValues.first ?? 0, flags: matrixFlags)
+      case NativeSwiftDrawKind.textOnCircle: NativeSwiftTextOnCircle.drawableValues(resolvedValues)
+      default: resolvedValues
+      }
     let isPathMatrix = kind == NativeSwiftDrawKind.matrixFromPath
     return NativeSwiftDrawCommandSnapshot(
       kind: kind,
-      values: isPathMatrix
-        ? NativeSwiftPathMeasure(resolvedPath).matrix(
-          fraction: resolvedValues.first ?? 0, flags: matrixFlags)
-        : resolvedValues,
+      values: commandValues,
       colorARGB: try resolvePaintColor(colors: colors),
       alpha: alphaWord.map { NativeSwiftFloatExpression.resolve($0, values: values) }
         ?? min(max(NativeSwiftFloatExpression.resolve(paint.alpha, values: values), 0), 1),

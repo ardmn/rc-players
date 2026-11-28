@@ -113,10 +113,12 @@
           }
         }
         for command in node.commands {
-          try budget.recordCommand(pathElementCount: command.path.count, limits: limits)
+          try budget.recordCommand(
+            pathElementCount: command.path.count, strings: command.typesetStrings, limits: limits)
           try budget.validateNumbers(
             command.geometryValues.map(Double.init)
               + [Double(command.strokeWidth), Double(command.alpha)]
+              + command.typesetTextSizes.map(Double.init)
               + command.path.flatMap { $0.values.map(Double.init) },
             componentID: node.componentID, field: "draw", limits: limits)
         }
@@ -416,6 +418,8 @@
     let filterQuality: Int?
     let usesComponentGeometry: Bool
     let offscreenTarget: NativeSwiftOffscreenTargetSnapshot?
+    /// The circle a `DrawTextOnCircle` draws on, resolved once per snapshot; nil for other kinds.
+    let textOnCircle: NativeSwiftTextOnCircle?
 
     init(_ snapshot: NativeSwiftDrawCommandSnapshot) {
       kind = snapshot.kind
@@ -427,10 +431,12 @@
       strokeCap = snapshot.strokeCap
       strokeJoin = snapshot.strokeJoin
       blendMode = snapshot.blendMode
-      textSize = 16
+      // Only the circle draws its string here; canvas `DrawText` carries none.
+      textOnCircle = NativeSwiftTextOnCircle(drawing: snapshot)
+      textSize = textOnCircle == nil ? 16 : CGFloat(snapshot.textSize)
       textSizeIsDensityTyped = false
       textWeight = 400
-      text = nil
+      text = textOnCircle == nil ? nil : snapshot.text
       path = snapshot.path.map {
         NativePathElement(kind: $0.kind, values: $0.values.map(CGFloat.init))
       }
@@ -493,6 +499,7 @@
       filterQuality = nil
       usesComponentGeometry = false
       offscreenTarget = nil
+      textOnCircle = nil
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
@@ -512,7 +519,7 @@
         && Floats.same(lhs.shaderMatrix, rhs.shaderMatrix)
         && lhs.filterQuality == rhs.filterQuality
         && lhs.usesComponentGeometry == rhs.usesComponentGeometry
-        && lhs.offscreenTarget == rhs.offscreenTarget
+        && lhs.offscreenTarget == rhs.offscreenTarget && lhs.textOnCircle == rhs.textOnCircle
     }
 
     /// The shader's local matrix as a Core Graphics affine transform, or identity when the paint
@@ -2166,7 +2173,8 @@
       for command: NativeDrawCommand,
       font: UIFont,
       scale: CGFloat,
-      layoutDirection: UIUserInterfaceLayoutDirection
+      layoutDirection: UIUserInterfaceLayoutDirection,
+      keepingColorAlpha: Bool = false
     ) -> NSAttributedString {
       let paragraph = NSMutableParagraphStyle()
       paragraph.alignment = alignment(
@@ -2180,9 +2188,11 @@
       paragraph.lineBreakMode =
         command.textStyle.maxLines > 1
         ? .byWordWrapping : lineBreakMode(command.textStyle.overflow)
+      // The paint alpha replaces the colour's unless the context already carries it.
+      let color = keepingColorAlpha ? command.color : command.color.withAlphaComponent(command.alpha)
       var attributes: [NSAttributedString.Key: Any] = [
         .font: font,
-        .foregroundColor: command.color.withAlphaComponent(command.alpha),
+        .foregroundColor: color,
         .paragraphStyle: paragraph,
         .kern: command.textStyle.letterSpacing * font.pointSize,
       ]
@@ -2193,7 +2203,7 @@
         attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
       }
       if command.isStroke {
-        attributes[.strokeColor] = command.color.withAlphaComponent(command.alpha)
+        attributes[.strokeColor] = color
         attributes[.strokeWidth] = max(command.strokeWidth / font.pointSize * 100, 0.1)
       }
       return NSAttributedString(string: command.text ?? "", attributes: attributes)
@@ -2529,6 +2539,7 @@
         paint(path.cgPath, command, context)
       case NativeSwiftDrawKind.arc, NativeSwiftDrawKind.sector: drawArc(command, context)
       case NativeSwiftDrawKind.text: drawText(command)
+      case NativeSwiftDrawKind.textOnCircle: drawTextOnCircle(command, context)
       case NativeSwiftDrawKind.path, NativeSwiftDrawKind.tweenPath:
         paint(
           NativePathBuilder.make(command.path), command, context,
@@ -2631,11 +2642,7 @@
     private func drawText(_ command: NativeDrawCommand) {
       guard command.blendMode != NativeSwiftPaintBlendMode.destination else { return }
       guard command.text != nil, let context = UIGraphicsGetCurrentContext() else { return }
-      let font = NativeTextAttributes.font(for: command, scale: 1, fontNames: fontNames)
-      let attributed = NativeTextAttributes.string(
-        for: command, font: font, scale: 1,
-        layoutDirection: effectiveUserInterfaceLayoutDirection)
-      let line = CTLineCreateWithAttributedString(attributed)
+      let line = textLine(command)
       var ascent: CGFloat = 0
       var descent: CGFloat = 0
       var leading: CGFloat = 0
@@ -2655,6 +2662,26 @@
       context.textPosition = CGPoint(x: x, y: baseline)
       CTLineDraw(line, context)
       context.restoreGState()
+    }
+
+    /// Draws a `DrawTextOnCircle`: the string typeset as `drawText` does, laid on its circle.
+    private func drawTextOnCircle(_ command: NativeDrawCommand, _ context: CGContext) {
+      guard command.blendMode != NativeSwiftPaintBlendMode.destination,
+        let circle = command.textOnCircle, let text = command.text, !text.isEmpty
+      else { return }
+      // `draw` already put the paint alpha on the context.
+      NativeTextOnCircle.draw(
+        textLine(command, keepingColorAlpha: true), along: circle, in: context)
+    }
+
+    /// The command's string typeset with the canvas's fonts.
+    private func textLine(_ command: NativeDrawCommand, keepingColorAlpha: Bool = false) -> CTLine {
+      let font = NativeTextAttributes.font(for: command, scale: 1, fontNames: fontNames)
+      return CTLineCreateWithAttributedString(
+        NativeTextAttributes.string(
+          for: command, font: font, scale: 1,
+          layoutDirection: effectiveUserInterfaceLayoutDirection,
+          keepingColorAlpha: keepingColorAlpha))
     }
 
     private func drawImage(_ command: NativeDrawCommand, _ context: CGContext) {

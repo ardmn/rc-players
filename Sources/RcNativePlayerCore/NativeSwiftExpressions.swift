@@ -146,8 +146,13 @@ enum NativeSwiftFloatExpression {
   private static let operatorOffset = 0x0031_0000
 
   static func resolve(_ word: UInt32, values: [Int: Float]) -> Float {
-    guard isEncoded(word) else { return Float(bitPattern: word) }
-    return values[Int(word & referenceMask)] ?? 0
+    guard let id = readID(word) else { return Float(bitPattern: word) }
+    return values[id] ?? 0
+  }
+
+  /// The id `resolve` reads `word` from, or nil when `word` is a literal.
+  static func readID(_ word: UInt32) -> Int? {
+    isEncoded(word) ? Int(word & referenceMask) : nil
   }
 
   /// The exact word AndroidX writes for an operator, `asNan(OFFSET + operation)`: a negative NaN.

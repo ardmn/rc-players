@@ -130,13 +130,16 @@ public enum NativeMacPolicy {
         ].map(Double.init), componentID: node.componentID, field: "layout",
         limits: executionLimits)
       for command in node.commands {
-        try budget.recordCommand(pathElementCount: command.path.count, limits: executionLimits)
+        try budget.recordCommand(
+          pathElementCount: command.path.count, strings: command.typesetStrings,
+          limits: executionLimits)
         try budget.validateNumbers(
           command.geometryValues.map(Double.init), componentID: node.componentID,
           field: "draw geometry",
           limits: executionLimits)
         try budget.validateNumbers(
-          [command.alpha, command.strokeWidth].map(Double.init), componentID: node.componentID,
+          ([command.alpha, command.strokeWidth] + command.typesetTextSizes).map(Double.init),
+          componentID: node.componentID,
           field: "paint", limits: executionLimits)
         for element in command.path {
           try budget.validateNumbers(

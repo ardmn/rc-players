@@ -3732,6 +3732,7 @@ private final class NativeMacCanvasView: NSView {
       if command.kind == NativeSwiftDrawKind.sector { path.closeSubpath() }
       paint(path, command, context)
     case NativeSwiftDrawKind.text: drawText(command, context)
+    case NativeSwiftDrawKind.textOnCircle: drawTextOnCircle(command, context)
     case NativeSwiftDrawKind.path, NativeSwiftDrawKind.tweenPath:
       paint(path(command.path), command, context)
     case NativeSwiftDrawKind.bitmap: drawImage(command, context)
@@ -3916,26 +3917,7 @@ private final class NativeMacCanvasView: NSView {
   }
 
   private func drawText(_ command: NativeMacDrawCommand, _ context: CGContext) {
-    guard let text = command.text else { return }
-    let size = max(CGFloat(command.textSize), 1)
-    let font =
-      conformanceFontName.flatMap { NSFont(name: $0, size: size) }
-      ?? NSFont.systemFont(ofSize: size)
-    let paragraph = NSMutableParagraphStyle()
-    if command.textFlags & NativeSwiftDrawTextAnchoredFlag.textRTL != 0 {
-      paragraph.baseWritingDirection = .rightToLeft
-    }
-    let string = NSAttributedString(
-      string: text,
-      attributes: [
-        .font: font,
-        // The colour keeps its own alpha; the paint alpha is already the context's alpha (`draw`
-        // sets it), so replacing the colour's alpha with it both dropped the colour's alpha and
-        // applied the paint alpha twice.
-        .foregroundColor: NativeMacComponentView.color(command.color),
-        .paragraphStyle: paragraph,
-      ])
-    let line = CTLineCreateWithAttributedString(string)
+    guard let line = textLine(command) else { return }
     var ascent: CGFloat = 0
     var descent: CGFloat = 0
     var leading: CGFloat = 0
@@ -3957,6 +3939,35 @@ private final class NativeMacCanvasView: NSView {
     context.textPosition = CGPoint(x: x, y: baseline)
     CTLineDraw(line, context)
     context.restoreGState()
+  }
+
+  /// Draws a `DrawTextOnCircle`: the string typeset as `drawText` does, laid on its circle.
+  private func drawTextOnCircle(_ command: NativeMacDrawCommand, _ context: CGContext) {
+    guard let circle = NativeSwiftTextOnCircle(drawing: command), let line = textLine(command)
+    else { return }
+    NativeTextOnCircle.draw(line, along: circle, in: context)
+  }
+
+  /// The command's string typeset in its font and colour; nil when it has no text.
+  private func textLine(_ command: NativeMacDrawCommand) -> CTLine? {
+    guard let text = command.text, !text.isEmpty else { return nil }
+    let size = max(CGFloat(command.textSize), 1)
+    let font =
+      conformanceFontName.flatMap { NSFont(name: $0, size: size) }
+      ?? NSFont.systemFont(ofSize: size)
+    let paragraph = NSMutableParagraphStyle()
+    if command.textFlags & NativeSwiftDrawTextAnchoredFlag.textRTL != 0 {
+      paragraph.baseWritingDirection = .rightToLeft
+    }
+    let string = NSAttributedString(
+      string: text,
+      attributes: [
+        .font: font,
+        // Keeps the colour's alpha: `draw` already put the paint alpha on the context.
+        .foregroundColor: NativeMacComponentView.color(command.color),
+        .paragraphStyle: paragraph,
+      ])
+    return CTLineCreateWithAttributedString(string)
   }
 }
 

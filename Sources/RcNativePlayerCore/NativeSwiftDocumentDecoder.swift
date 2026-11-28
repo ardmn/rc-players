@@ -1313,10 +1313,16 @@ enum NativeSwiftDocumentDecoder {
             kind: NativeSwiftDrawKind.textOnPath, words: [horizontal, vertical], paint: paint,
             path: path, textID: textID))
       case NativeSwiftWireOpcode.drawTextOnCircle:
+        // AndroidX `DrawTextOnCircle.read`: textId, centerX, centerY, radius, startAngle,
+        // warpRadiusOffset, then the alignment and placement bytes.
         let textID = try input.int("draw text circle text id")
-        let words = try (0..<5).map { _ in try input.word("draw text circle value") }
-        _ = try input.u8("draw text circle alignment")
-        _ = try input.u8("draw text circle placement")
+        let geometry = try (0..<NativeSwiftTextOnCircle.ValueIndex.geometryCount).map { _ in
+          try input.word("draw text circle value")
+        }
+        let alignment = try input.u8("draw text circle alignment")
+        let placement = try input.u8("draw text circle placement")
+        // Carried as literal floats after the geometry, in `ValueIndex` order.
+        let words = geometry + [Float(alignment).bitPattern, Float(placement).bitPattern]
         try drawingNode().commands.append(
           ParsedDrawCommand(
             kind: NativeSwiftDrawKind.textOnCircle, words: words, paint: paint, textID: textID))
