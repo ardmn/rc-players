@@ -33,11 +33,11 @@ import Testing
     }
   }
 
-  /// A marquee whose velocity a host sets to NaN, 0 or below stands still instead of failing the
-  /// frame: Kotlin's `androidXMarqueeOffset` gives 0 for a duration that is not finite and
-  /// positive, and AndroidX's `MarqueeModifierOperation.paint` (java:180) divides by the raw
-  /// velocity.
-  @Test func aHostMarqueeVelocityThatIsNotPositiveStandsStill() throws {
+  /// A marquee whose velocity a host sets to NaN or 0 stands still instead of failing the frame, as
+  /// Kotlin's `androidXMarqueeOffset` does for a duration that is not finite and positive
+  /// (AndroidX's `MarqueeModifierOperation.paint`, java:180, divides by the raw velocity and draws
+  /// at a NaN offset for NaN); a negative velocity scrolls as its magnitude does.
+  @Test func aHostMarqueeVelocityWithoutAFiniteSweepStandsStill() throws {
     typealias Op = NativeSwiftWireOpcode
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -50,14 +50,25 @@ import Testing
     document.u8(Op.modifierMarquee).int(-1).int(0).float(0).float(0).float(0)
       .int(Writer.nanReference(70))
     document.u8(Op.containerEnd).u8(Op.containerEnd)
-    for value: Float in [.nan, 0, -30, -.infinity] {
+    func marquee(velocity: Float) throws -> NativeSwiftMarqueeSnapshot {
       let session = try NativeSwiftDocumentSession.open(data: document.data)
-      #expect(session.setFloat(value, for: "USER:velocity"))
+      #expect(session.setFloat(velocity, for: "USER:velocity"))
       let snapshot = try session.snapshot(timeSeconds: 5)
-      let marquee = try #require(Self.nodes(snapshot.root).compactMap(\.marquee).first)
-      #expect(
-        marquee.offset(overflowDistance: 200, density: 1, elapsedSeconds: 5) == 0, "\(value)")
+      return try #require(Self.nodes(snapshot.root).compactMap(\.marquee).first)
     }
+    for value: Float in [.nan, 0] {
+      #expect(
+        try marquee(velocity: value).offset(overflowDistance: 200, density: 1, elapsedSeconds: 5)
+          == 0, "\(value)")
+    }
+    // A negative velocity only flips the sign of AndroidX's phase, which feeds a cosine: it sweeps
+    // as its magnitude does (MarqueeModifierOperation.java:180-184).
+    let forwards = try marquee(velocity: 30).offset(
+      overflowDistance: 200, density: 1, elapsedSeconds: 2.5)
+    #expect(forwards != 0)
+    #expect(
+      try marquee(velocity: -30).offset(overflowDistance: 200, density: 1, elapsedSeconds: 2.5)
+        == forwards)
   }
 
   /// A host write equal to the value an expression gives its id changes nothing, so the expression

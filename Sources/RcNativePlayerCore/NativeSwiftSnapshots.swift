@@ -946,7 +946,9 @@ public struct NativeSwiftMarqueeSnapshot: Equatable, Sendable {
     let initialDelaySeconds = initialDelayMillis / 1_000
     let sinceStartSeconds = Float(elapsedSeconds) - initialDelaySeconds
     guard sinceStartSeconds > initialDelaySeconds else { return 0 }
-    let durationSeconds = overflowDistance / (density * velocity)
+    // AndroidX divides by the signed velocity, but its phase only feeds a cosine, so a negative
+    // velocity sweeps exactly as its magnitude does.
+    let durationSeconds = overflowDistance / (density * velocity.magnitude)
     guard durationSeconds.isFinite, durationSeconds > 0 else { return 0 }
     let phase = sinceStartSeconds.truncatingRemainder(dividingBy: durationSeconds) / durationSeconds
     return -overflowDistance * ((1 - cos(phase * 2 * Float.pi)) / 2)
