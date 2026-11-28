@@ -103,6 +103,7 @@ name.
 | --- | --- | --- |
 | Document | `RemoteDocument(width:height:displayScale:accessibilityLabel:)`, `encode() throws(RemoteEncodingError)` | modern `Header` with `DOC_WIDTH`, `DOC_HEIGHT`, `DOC_DENSITY_AT_GENERATION`, `DOC_CONTENT_DESCRIPTION` |
 | Stacks | `RemoteVStack`, `RemoteHStack` (alignment, spacing, distribution), `RemoteZStack` (alignment), `RemoteSpacer`, `RemoteForEach` | `ColumnLayout`, `RowLayout`, `BoxLayout`, `LayoutContent`, `ContainerEnd` |
+| Scrolling | `RemoteScrollView(.vertical / .horizontal, position:, initialOffset:, pageCount:)`; `RemoteScrollPosition` with `offset`, `maximumOffset` and `contentLength` to read | a `ColumnLayout` or `RowLayout` with `ClipRectModifierOperation`, `ScrollModifierOperation` and its position as a `TouchExpression`; paging as its even-notch stop |
 | State layouts | `RemoteSwitch` over a `RemoteBool`, a `Bool` variable, a `RemoteStateValue` enum variable or a `RemoteInt` range, written as a Swift `switch` or `if`; `RemoteIf(condition) { } else: { }` | `StateLayout` with one box per state |
 | Text | `RemoteText`; `font(_:)` taking a `RemoteFont` (`.body`, `.headline`, …, `.system(size:weight:)`), `fontWeight`, `bold`, `italic`, `foregroundStyle`, `multilineTextAlignment`, `lineLimit`, `truncationMode`, all environment values that reach every text inside | `TextLayout` |
 | Environment | `RemoteEnvironmentKey`, `RemoteEnvironmentValues`, `environment(_:_:)`, `RemoteEnvironmentReader`, `tint` | nothing: read while writing |
@@ -183,6 +184,35 @@ name.
 
   ![Hierarchical styles](../../renders/swift-creation/hierarchical-cmp-jvm.png)
 
+- **A scroll view is AndroidX's scroll modifier.** `RemoteScrollView` fills the space it is
+  offered, as SwiftUI's does, and lays its children out along its axis as an unspaced stack. It
+  writes what AndroidX's `verticalScroll` and `horizontalScroll` write: a clip, the scroll
+  modifier, and the position as a touch expression that follows the drag and decelerates after a
+  fling, so the player scrolls without the host. `initialOffset` starts it scrolled. The source
+  is [`Scroll.swift.txt`](../../renders/swift-creation/Scroll.swift.txt); rendered by the CMP
+  player, at the top and 200 points down, and a carousel at 0 and 110 points:
+
+  | `RemoteScrollView` | `initialOffset: 200` |
+  | --- | --- |
+  | ![](../../renders/swift-creation/scroll-top-cmp-jvm.png) | ![](../../renders/swift-creation/scroll-offset-cmp-jvm.png) |
+
+  ![Carousel](../../renders/swift-creation/carousel-cmp-jvm.png)
+  ![Carousel scrolled](../../renders/swift-creation/carousel-offset-cmp-jvm.png)
+
+- **A scroll position is read, not set.** `RemoteScrollPosition` is a scroll's identity, as
+  SwiftUI's `ScrollPosition` is: its `offset`, `maximumOffset` and `contentLength` are the
+  floats the player writes as it scrolls (in pixels, read in points), so a header can fade or a
+  page indicator follow. A document cannot move a scroll: the players own the position once it
+  starts. `pageCount` snaps to that many equal pages of the content, AndroidX's even notches,
+  which is SwiftUI's paging when each page is as long as the scroll view.
+
+  | Offset read back | Paged, starting on page 2 |
+  | --- | --- |
+  | ![](../../renders/swift-creation/scroll-position-cmp-jvm.png) | ![](../../renders/swift-creation/scroll-paging-cmp-jvm.png) |
+
+  The native player follows the offset; it does not yet fill `maximumOffset` or `contentLength`,
+  which read 0 there, nor snap pages.
+
 - **An integer is also a float, so it is written as text.** The players keep each integer as a
   float too, so `"\(page + 1) of 4"` formats the integer's own id with `TextFromFloat`, and
   `RemoteFloat(count)` reads it in float arithmetic. A float read as an integer
@@ -223,8 +253,8 @@ name.
 
 ## Not yet
 
-- Flow, scroll, `CoreText` styling (letter spacing, line height, font axes), animation specs,
-  gradients and touch-down/up handlers.
+- Flow, setting a scroll's position from the document, `CoreText` styling (letter spacing, line
+  height, font axes), animation specs, gradients and touch-down/up handlers.
 - A rounded background with uneven corners still clips: the wire's `DrawRoundRect` takes one
   radius.
 - `frame(maxWidth:)` with a finite cap: `RemoteMaxLength` is the offered space or a fraction of it.
