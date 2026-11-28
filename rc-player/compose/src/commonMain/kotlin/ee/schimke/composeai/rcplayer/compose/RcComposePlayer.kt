@@ -4503,8 +4503,9 @@ private fun Modifier.applyAndroidXScroll(
     var lastPosition: Int? = null
     // The range and viewport last published, so only a change to them re-evaluates their readers.
     var publishedExtents: Pair<Int, Int>? = null
-    snapshotFlow { scrollState.value to scrollState.maxValue }
-      .collect { (position, maximum) ->
+    // The viewport is watched too: content that fits can change it with the range unmoved.
+    snapshotFlow { Triple(scrollState.value, scrollState.maxValue, scrollState.viewportSize) }
+      .collect { (position, maximum, viewport) ->
         operation.position.referencedId?.let { state.setFloat(it, position.toFloat()) }
         operation.max.referencedId?.let { state.setFloat(it, maximum.toFloat()) }
         // The scroll's touch expression asks for a haptic as the position crosses its stops.
@@ -4522,10 +4523,8 @@ private fun Modifier.applyAndroidXScroll(
             )
             ?.takeIf { moved }
             ?.let { state.performHapticFeedback(RcHapticFeedback(it)) }
-        operation.notchMax.referencedId?.let {
-          state.setFloat(it, (maximum + scrollState.viewportSize).toFloat())
-        }
-        val contentExtent = (maximum + scrollState.viewportSize).toFloat()
+        operation.notchMax.referencedId?.let { state.setFloat(it, (maximum + viewport).toFloat()) }
+        val contentExtent = (maximum + viewport).toFloat()
         geometryComponentIds.forEach { componentId ->
           if (operation.direction == RcScrollModifier.VERTICAL) {
             state.publishComponentContentSize(componentId, height = contentExtent)
@@ -4535,7 +4534,7 @@ private fun Modifier.applyAndroidXScroll(
         }
         // What reads the published range is re-evaluated only on an invalidation; a frame that
         // only moves the position leaves it as it was.
-        val extents = maximum to scrollState.viewportSize
+        val extents = maximum to viewport
         if (extents != publishedExtents) {
           publishedExtents = extents
           invalidate()

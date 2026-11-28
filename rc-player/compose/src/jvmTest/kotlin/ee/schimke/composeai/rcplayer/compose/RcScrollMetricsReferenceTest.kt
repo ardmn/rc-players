@@ -136,10 +136,11 @@ class RcScrollMetricsReferenceTest {
   private companion object {
     // jvmTest runs in rc-player/compose, two levels below the repository root.
     const val REPO_ROOT = "../.."
-    const val PAGED_PATH = "$REPO_ROOT/renders/swift-creation/scroll-metrics-paged.rc"
-    const val LIST_PATH = "$REPO_ROOT/renders/swift-creation/scroll-metrics-list.rc"
-    const val EXPECTED_PATH =
-      "$REPO_ROOT/Tests/RcNativePlayerUIKitTests/Fixtures/scroll-metrics.expected.json"
+    // The Swift tests' own fixtures, so both players read the same bytes.
+    const val FIXTURES = "$REPO_ROOT/Tests/RcNativePlayerUIKitTests/Fixtures"
+    const val PAGED_PATH = "$FIXTURES/scroll-metrics-paged.rc"
+    const val LIST_PATH = "$FIXTURES/scroll-metrics-list.rc"
+    const val EXPECTED_PATH = "$FIXTURES/scroll-metrics.expected.json"
 
     // Keys of the shared expected file.
     const val PAGED = "paged"
