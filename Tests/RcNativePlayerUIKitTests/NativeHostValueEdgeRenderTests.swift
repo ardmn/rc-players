@@ -185,15 +185,16 @@
 
     @Test func aNonFiniteDrawIsDroppedAndAHugeOneClamped() {
       let limits = RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10)
-      func rect(_ values: [Float], strokeWidth: Float = 1, path: [Float] = [])
-        -> NativeSwiftDrawCommandSnapshot
+      func rect(
+        _ values: [Float], strokeWidth: Float = 1, isStroke: Bool = false, path: [Float] = []
+      ) -> NativeSwiftDrawCommandSnapshot
       {
         let elements =
           path.isEmpty
           ? [] : [NativeSwiftPathElementSnapshot(kind: NativeSwiftPathCommand.move, values: path)]
         return NativeSwiftDrawCommandSnapshot(
           kind: NativeSwiftDrawKind.rect, values: values, colorARGB: 0xff00_00ff, alpha: 1,
-          strokeWidth: strokeWidth, isStroke: false, strokeCap: .butt, strokeJoin: .miter,
+          strokeWidth: strokeWidth, isStroke: isStroke, strokeCap: .butt, strokeJoin: .miter,
           blendMode: .sourceOver, path: elements,
           pathWinding: .nonZero, image: nil, textureImageID: nil, textureTileModeX: 0,
           textureTileModeY: 0, shaderMatrix: nil, filterQuality: nil,
@@ -203,7 +204,9 @@
       #expect(limits.isDrawable(rect([0, 0, 5, 5])))
       #expect(!limits.isDrawable(rect([0, .nan, 5, 5])))
       #expect(!limits.isDrawable(rect([0, 0, .infinity, 5])))
-      #expect(!limits.isDrawable(rect([0, 0, 5, 5], strokeWidth: .nan)))
+      // Only a stroke reads the width (Skia's `SkCanvas` rejects a stroke's infinite bounds).
+      #expect(limits.isDrawable(rect([0, 0, 5, 5], strokeWidth: .infinity)))
+      #expect(!limits.isDrawable(rect([0, 0, 5, 5], strokeWidth: .infinity, isStroke: true)))
       #expect(!limits.isDrawable(rect([0, 0, 5, 5], path: [-.infinity, 0])))
       let clamped = NativeDrawCommand(rect([-1e9, 0, 1e9, 5], path: [1e9, -1e9]), limits: limits)
       #expect(clamped.values == [-10, 0, 10, 5])
