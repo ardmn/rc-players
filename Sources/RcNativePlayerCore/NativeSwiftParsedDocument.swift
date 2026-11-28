@@ -373,7 +373,7 @@ struct ParsedDrawCommand {
   let nanSentinelIndices: Set<Int>
   /// Word positions where any NaN, the sentinel or a variable's value, means "no value"
   /// (`DrawTextAnchored.paint`'s `Float.isNaN(mOutPanY)`); the snapshot's `unsetValueIndices`.
-  let nanMeansUnsetIndices: Set<Int>
+  let nanMeansUnsetIndices: [Int]
   /// A `DrawToBitmap` redirect's target. Final at decode but for the component ids it names, which
   /// may be variables and are resolved with the frame's (or a function call's) values.
   let offscreenTarget: NativeSwiftOffscreenTargetSnapshot?
@@ -384,15 +384,14 @@ struct ParsedDrawCommand {
     kind: Int, words: [UInt32], paint: ParsedPaint, path: ParsedPath? = nil,
     image: ParsedImageDraw? = nil, alphaWord: UInt32? = nil, textID: Int? = nil,
     textStart: Int? = nil, textEnd: Int? = nil, textFlags: Int = 0,
-    nanSentinelIndices: Set<Int> = [], offscreenTarget: NativeSwiftOffscreenTargetSnapshot? = nil,
+    nanSentinelIndices: [Int] = [], offscreenTarget: NativeSwiftOffscreenTargetSnapshot? = nil,
     matrixFlags: Int = 0
   ) {
     self.kind = kind
     self.words = words
     nanMeansUnsetIndices = nanSentinelIndices.filter(words.indices.contains)
-    self.nanSentinelIndices = nanMeansUnsetIndices.filter {
-      NativeSwiftFloatExpression.referenceID(words[$0]) == 0
-    }
+    self.nanSentinelIndices = Set(
+      nanMeansUnsetIndices.filter { NativeSwiftFloatExpression.referenceID(words[$0]) == 0 })
     staticValues = words.contains { NativeSwiftFloatExpression.referenceID($0) != nil }
       ? nil : words.map(Float.init(bitPattern:))
     self.paint = paint
@@ -492,7 +491,7 @@ struct ParsedDrawCommand {
         return String(decoding: units[lower..<upper], as: UTF16.self)
       }, textSize: NativeSwiftFloatExpression.resolve(paint.textSize, values: values),
       textFlags: textFlags,
-      unsetValueIndices: nanMeansUnsetIndices.filter { resolvedValues[$0].isNaN }.sorted(),
+      unsetValueIndices: nanMeansUnsetIndices.filter { resolvedValues[$0].isNaN },
       offscreenTarget: offscreenTarget?.resolvingComponents(values: values, integers: integers))
   }
 
