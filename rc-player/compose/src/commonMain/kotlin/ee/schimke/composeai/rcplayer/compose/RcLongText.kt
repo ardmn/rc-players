@@ -138,12 +138,13 @@ internal fun rcVisibleTextPrefix(
             Constraints(minWidth = constraints.minWidth, maxWidth = constraints.maxWidth),
         )
       val settled = laidOut.lineCount - RC_UNSETTLED_PREFIX_LINES
-      val settledLinesOverflow =
+      if (
         settled > 0 &&
+          laidOut.multiParagraph.intrinsics.maxIntrinsicWidth >= constraints.maxWidth &&
           (settled > maxLines || laidOut.getLineBottom(settled - 1) > constraints.maxHeight)
-      val fillsBoxWidth =
-        laidOut.multiParagraph.intrinsics.maxIntrinsicWidth >= constraints.maxWidth
-      if (settledLinesOverflow && fillsBoxWidth) return text.substring(0, cut)
+      ) {
+        return text.substring(0, cut)
+      }
     }
     length *= 4
   }

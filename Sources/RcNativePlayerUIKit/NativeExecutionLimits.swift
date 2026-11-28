@@ -13,13 +13,13 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   public var maximumPathElementCount: Int
   /// The UTF-8 bytes of text one frame may lay out, each also a unit of `maximumFrameWork`. A
   /// document's string counts each place it is shown; a host's counts once, at most
-  /// `longestDocumentTextBytes`, so it renders at any length. The 128 KiB default holds two.
+  /// `longestDocumentTextBytes`, so one renders at any length. The 128 KiB default holds two such.
   public var maximumTextBytes: Int
   /// The largest view or canvas side. The document's own size over it is refused; the UIKit
   /// player clamps a resolved exact width or height to it instead (`layoutDimension`).
   public var maximumCanvasDimension: Double
-  /// The largest coordinate magnitude: resolved layout values and draw coordinates are clamped to
-  /// it rather than refusing the frame; a transform's operands and angles are not.
+  /// The largest coordinate magnitude: resolved layout values, and on UIKit draw coordinates, are
+  /// clamped to it rather than refusing the frame; a transform's operands and angles are not.
   public var maximumCoordinateMagnitude: Double
   public var maximumFrameWork: Int
 
@@ -101,8 +101,8 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   func isDrawable(_ command: NativeSwiftDrawCommandSnapshot) -> Bool {
     let geometryIsFinite = command.geometryValues.allSatisfy(\.isFinite)
     let paintIsFinite = command.strokeWidth.isFinite && command.alpha.isFinite
-    let pathIsFinite = command.path.allSatisfy { $0.values.allSatisfy(\.isFinite) }
-    return geometryIsFinite && paintIsFinite && pathIsFinite
+    return geometryIsFinite && paintIsFinite
+      && command.path.allSatisfy { $0.values.allSatisfy(\.isFinite) }
   }
 
   private static func clamped(_ value: CGFloat, to bound: Double) -> CGFloat {

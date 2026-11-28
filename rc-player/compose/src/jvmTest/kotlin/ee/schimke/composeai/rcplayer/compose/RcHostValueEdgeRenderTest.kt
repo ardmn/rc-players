@@ -452,8 +452,9 @@ class RcHostValueEdgeRenderTest {
     private const val FRAME_NANOS = 16_000_000L
 
     /**
-     * A case's frames, composition included. A loop nest the host could run forever stops at
-     * AndroidX's `Limits.MAX_OP_COUNT` operations a frame, a few milliseconds of rects.
+     * The time limit for a case's frames, composition included. A loop nest the host could run
+     * forever stops at AndroidX's `Limits.MAX_OP_COUNT` operations a frame, a few milliseconds of
+     * rects.
      */
     private const val MAX_RENDER_MILLIS = 3_000L
 

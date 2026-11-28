@@ -5701,8 +5701,8 @@ internal fun rcFontWeight(resolved: Float): Int =
   if (resolved.isNaN()) RC_NORMAL_TEXT_WEIGHT else resolved.javaRoundToInt().coerceIn(1, 1000)
 
 /**
- * [rcFontWeight] unrounded, for the native snapshot; NaN is normal, as `coerceIn` would keep it.
- * Swift twin: `NativeSwiftTextSnapshot.normalWeight`.
+ * [rcFontWeight] unrounded, for the native snapshot; NaN reads normal, since `coerceIn` would keep
+ * the NaN. Swift twin: `NativeSwiftTextSnapshot.normalWeight`.
  */
 internal fun rcTextWeight(resolved: Float): Float =
   if (resolved.isNaN()) RC_NORMAL_TEXT_WEIGHT.toFloat() else resolved.coerceIn(1f, 1000f)

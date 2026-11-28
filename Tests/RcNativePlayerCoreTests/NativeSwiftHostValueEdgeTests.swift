@@ -249,8 +249,8 @@ import Testing
   }
 
   /// `RcPlayerStateTest.loopOperationHonorsTheIterationCap`'s cases: AndroidX counts a pass and each
-  /// body operation (`LoopOperation.java:125`) and fails the frame past 20 000; here the loop stops
-  /// there, so a one-operation body runs 10 000. Bounds are literals here, never NaN.
+  /// body operation (`LoopOperation.java:126-140`) and fails the frame past 20 000; here the loop
+  /// stops there, so a one-operation body runs 10 000. Bounds are literals here, never NaN.
   @Test func aLoopStopsAtTheFramesOperationBudget() throws {
     let cases: [(from: Float, until: Float, step: Float, passes: Int)] = [
       (0, 1, 0.000_01, 10_000), (0, .infinity, 1, 10_000), (0, 1, 0, 10_000),

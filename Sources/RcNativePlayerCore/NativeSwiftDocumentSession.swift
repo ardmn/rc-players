@@ -1533,8 +1533,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// and clamped to 32 bits — `RcPlayerState.storeFloat`, as AndroidX
   /// `RemoteComposeState.updateFloat` / `overrideFloat` publish both. Integer expressions, a state
   /// layout's index and visibility read the integer view.
-  /// A value `==` the one held (an unset id holds 0) is not written, as in AndroidX, so a zero over
-  /// a zero keeps its sign; NaN is always written.
+  ///
+  /// A value `==` the one held (an unset id holds 0) keeps the held float, so a zero over a zero
+  /// keeps its sign, as Kotlin's `storeFloat` does; NaN is always written.
   private func storeFloat(_ id: Int, _ value: Float) {
     // After an integer write with no document float, the id shows the integer as a float.
     let previous = floatOverrides[id] ?? floats[id] ?? integers[id].map(Float.init) ?? 0

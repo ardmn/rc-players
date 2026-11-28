@@ -134,7 +134,7 @@ class RcFlatLayoutTest {
               listOf(
                 RcFloatWord.literal(0f),
                 RcFloatWord.literal(0f),
-                // AndroidX `DIV`.
+                // AndroidX `DIV` (AnimatedFloatExpression.java:47).
                 RcFloatExpressionEvaluator.operatorWord(RcFloatExpressionEvaluator.OFFSET + 4),
               ),
               null,

@@ -96,7 +96,7 @@ class RcNativeSnapshotTextValuesTest {
     RcCoreText(
       textId = TEXT_ID,
       properties =
-        // Property ids: 1 component id, 5 font size, 7 font weight.
+        // TextStyle.java:48,52,54: 1 component id, 5 font size, 7 font weight.
         listOf(
           RcTextStyleProperty.IntValue(1, 5),
           RcTextStyleProperty.FloatValue(5, size),
@@ -110,7 +110,7 @@ class RcNativeSnapshotTextValuesTest {
     const val TEXT_ID = 101
     val NAN = reference(NAN_ID)
     val INFINITY = reference(INFINITY_ID)
-    /** AndroidX `DIV`. */
+    /** AndroidX `DIV` (AnimatedFloatExpression.java:47). */
     val DIVIDE = RcFloatExpressionEvaluator.operatorWord(RcFloatExpressionEvaluator.OFFSET + 4)
 
     fun literal(value: Float) = RcFloatWord.literal(value)

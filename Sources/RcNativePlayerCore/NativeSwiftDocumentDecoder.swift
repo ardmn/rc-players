@@ -17,6 +17,7 @@ enum NativeSwiftDocumentDecoder {
   private static let maximumNestingDepth = 256
   /// The loop operations one frame may run, all loops together (`MAX_OP_COUNT`, Limits.java:24).
   /// Past it AndroidX fails the frame (RemoteContext.java:1146); here the next pass stops instead.
+  /// AndroidX also counts a frame's other operations; only loops count here.
   static let maximumLoopOperationsPerFrame = 20_000
   /// The refusal when a for-each or a loop needs more generated ids than the macro range holds.
   private static let macroIDsExhausted = "LOOM macro generated-id range is exhausted"
@@ -861,7 +862,7 @@ enum NativeSwiftDocumentDecoder {
         if let id = NativeSwiftFloatExpression.referenceID(word), let replacement = mappings[id] {
           replaceWord(
             at: offset,
-            with: (word & ~UInt32(0x003f_ffff)) | UInt32(truncatingIfNeeded: replacement))
+            with: (word & ~UInt32(lastMacroGeneratedID)) | UInt32(truncatingIfNeeded: replacement))
         }
       }
       func declaredID(at offset: Int, name: String) throws {
