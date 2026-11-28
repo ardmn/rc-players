@@ -423,16 +423,16 @@ public constructor(bytes: ByteArray) {
     return updateResult(actions.isNotEmpty(), timeSeconds, frameAlreadyBegun = true)
   }
 
-  /** Set a declared float named value. Unqualified names use the `USER:` namespace. */
+  /**
+   * Set a declared float named value, any float, as AndroidX's `overrideFloat` takes it
+   * (RemoteComposeState.java:314). Unqualified names use the `USER:` namespace.
+   */
   @Throws(IllegalArgumentException::class)
   public fun setFloat(
     name: String,
     value: Float,
     timeSeconds: Float = state.animationTimeSeconds,
-  ): RcNativeSessionUpdate {
-    require(value.isFinite()) { "Native named float must be finite" }
-    return setNamedValue(name, RcNamedValue.FloatValue(value), timeSeconds)
-  }
+  ): RcNativeSessionUpdate = setNamedValue(name, RcNamedValue.FloatValue(value), timeSeconds)
 
   /** Set a declared string named value. Unqualified names use the `USER:` namespace. */
   @Throws(IllegalArgumentException::class)

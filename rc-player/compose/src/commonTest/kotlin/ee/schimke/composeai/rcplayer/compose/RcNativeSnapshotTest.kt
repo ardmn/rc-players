@@ -290,6 +290,34 @@ class RcNativeSnapshotTest {
     assertTrue(click.snapshot.diagnostics.none { it.opcode == RcOpcodes.MODIFIER_CLICK })
   }
 
+  /**
+   * A host float may be any float, NaN and the infinities included, as AndroidX's `overrideFloat`
+   * takes it (RemoteComposeState.java:314).
+   */
+  @Test
+  fun retainedSessionTakesANonFiniteNamedFloat() {
+    val document =
+      RcDocument(
+        RcHeader(RcVersion(0, 1, 0)),
+        listOf(
+          RcFloatConstant(20, RcFloatWord.literal(2f)),
+          RcNamedVariable(20, RcNamedVariable.FLOAT_TYPE, "USER:width"),
+          RcDraw4(
+            RcOpcodes.DRAW_RECT,
+            RcFloatWord(0x7fc00000 or 20),
+            RcFloatWord.literal(0f),
+            RcFloatWord.literal(10f),
+            RcFloatWord.literal(10f),
+          ),
+        ),
+      )
+    val session = RcNativeSnapshotSession(RcDocumentCodec.encode(document))
+
+    for (value in listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+      assertTrue(session.setFloat("width", value).accepted, "$value")
+    }
+  }
+
   /** A write the snapshot refuses, a `CoreText` line-height multiplier of -1, is rolled back. */
   @Test
   fun retainedSessionRollsBackNamedValueAfterInvalidSnapshot() {
