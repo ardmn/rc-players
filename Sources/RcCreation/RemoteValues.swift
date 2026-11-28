@@ -75,6 +75,8 @@ public struct RemoteFloat: Hashable, Sendable, ExpressibleByFloatLiteral,
     case canvasSize(RemoteCanvasAxis)
     /// The same, in pixels: what the writer scales a size to.
     case canvasPixels(RemoteCanvasAxis)
+    /// An integer read through its float view: the players keep each integer as a float as well.
+    case integerView(RemoteInt.Node)
     case unary(Operator, Node)
     case binary(Operator, Node, Node)
   }
@@ -85,15 +87,15 @@ public struct RemoteFloat: Hashable, Sendable, ExpressibleByFloatLiteral,
 
     var code: Int32 {
       switch self {
-      case .add: FloatExpressionOperator.add
-      case .subtract: FloatExpressionOperator.sub
-      case .multiply: FloatExpressionOperator.mul
-      case .divide: FloatExpressionOperator.div
-      case .modulo: FloatExpressionOperator.mod
-      case .minimum: FloatExpressionOperator.min
-      case .maximum: FloatExpressionOperator.max
-      case .absolute: FloatExpressionOperator.abs
-      case .sign: FloatExpressionOperator.sign
+      case .add: FloatExpressionOperator.idAdd
+      case .subtract: FloatExpressionOperator.idSub
+      case .multiply: FloatExpressionOperator.idMul
+      case .divide: FloatExpressionOperator.idDiv
+      case .modulo: FloatExpressionOperator.idMod
+      case .minimum: FloatExpressionOperator.idMin
+      case .maximum: FloatExpressionOperator.idMax
+      case .absolute: FloatExpressionOperator.idAbs
+      case .sign: FloatExpressionOperator.idSign
       }
     }
   }
@@ -193,6 +195,19 @@ extension RemoteFloat.Node {
     switch self {
     case .canvasSize, .canvasPixels: true
     case .constant, .variable, .system, .declared: false
+    case .integerView(let integer): integer.readsCanvasSize
+    case .unary(_, let operand): operand.readsCanvasSize
+    case .binary(_, let lhs, let rhs): lhs.readsCanvasSize || rhs.readsCanvasSize
+    }
+  }
+}
+
+extension RemoteInt.Node {
+  /// Whether the integer reads the size of the canvas being drawn, through a float it truncates.
+  var readsCanvasSize: Bool {
+    switch self {
+    case .constant, .variable: false
+    case .floatView(let float): float.readsCanvasSize
     case .unary(_, let operand): operand.readsCanvasSize
     case .binary(_, let lhs, let rhs): lhs.readsCanvasSize || rhs.readsCanvasSize
     }
@@ -320,6 +335,17 @@ public struct RemoteString: Hashable, Sendable, ExpressibleByStringInterpolation
         RemoteString(RemoteFloat(variable), decimals: decimals, integerDigits: integerDigits))
     }
 
+    /// An integer, as its digits: `"\(page + 1) of \(count)"`.
+    public mutating func appendInterpolation(_ number: RemoteInt) {
+      // Ten digits: every Int32, so none is cut to the formatter's default nine.
+      parts.append(RemoteString(RemoteFloat(number), decimals: 0, integerDigits: 10))
+    }
+
+    /// An `Int` variable's live value, as its digits.
+    public mutating func appendInterpolation(_ variable: RemoteVariable<Int>) {
+      appendInterpolation(RemoteInt(variable))
+    }
+
     /// A Swift string, as a constant.
     public mutating func appendInterpolation(_ text: String) { parts.append(RemoteString(text)) }
 
@@ -344,9 +370,9 @@ public enum RemoteVisibility: Hashable, Sendable, RemoteVariableValue {
 
   var wire: Int32 {
     switch self {
-    case .visible: Int32(WireExpressionConstants.visibilityVisible)
-    case .invisible: Int32(WireExpressionConstants.visibilityInvisible)
-    case .gone: Int32(WireExpressionConstants.visibilityGone)
+    case .visible: ComponentVisibility.visible
+    case .invisible: ComponentVisibility.invisible
+    case .gone: ComponentVisibility.gone
     }
   }
 }
