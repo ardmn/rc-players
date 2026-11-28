@@ -61,4 +61,27 @@ import Testing
     }
     #expect(try Self.keptDraws(panX, .nan).allSatisfy { $0.kind != NativeSwiftDrawKind.text })
   }
+
+  /// A host's stroke width as Skia takes it (`SkPaint::setStrokeWidth` keeps the width it had for
+  /// one not `>= 0`, SkPaint.cpp:159, and Android's `Paint.setStrokeWidth` calls it): NaN or a
+  /// negative width is the reset paint's 0, a hairline; an infinite one strokes nothing, as Skia
+  /// rejects its infinite bounds. A fill never reads the width, so it always draws.
+  @Test func aHostStrokeWidthStopsOnlyTheStrokesSkiaStops() throws {
+    typealias Paint = NativeSwiftPaintCommand
+    let document = Self.canvas { wire in
+      wire.u8(Op.paintValues).int(3).int(Paint.strokeWidth).int(Self.reference(Self.floatID))
+        .int(Paint.style | NativeSwiftPaintStyle.stroke << 16)
+      wire.u8(Op.drawRect).float(0).float(0).float(10).float(10)
+      wire.u8(Op.paintValues).int(1).int(Paint.style | NativeSwiftPaintStyle.fill << 16)
+      wire.u8(Op.drawRect).float(20).float(0).float(30).float(10)
+    }
+    let cases: [(width: Float, strokes: [Float])] = [
+      (.nan, [0]), (-1, [0]), (-.infinity, [0]), (.infinity, []), (2, [2]),
+    ]
+    for (width, strokes) in cases {
+      let rects = try Self.keptDraws(document, width).filter { $0.kind == NativeSwiftDrawKind.rect }
+      #expect(rects.filter(\.isStroke).map(\.strokeWidth) == strokes, "\(width)")
+      #expect(rects.filter { !$0.isStroke }.count == 1, "\(width): the fill")
+    }
+  }
 }

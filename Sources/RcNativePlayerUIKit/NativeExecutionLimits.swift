@@ -98,10 +98,11 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   private static let arcAngleIndices = 4...5
 
   /// Whether a draw command's geometry, paint and path are all finite: Skia draws nothing for a
-  /// non-finite shape (`SkCanvas::quickReject`).
+  /// non-finite shape (`SkCanvas::quickReject`). Only a stroke reads the stroke width.
   func isDrawable(_ command: NativeSwiftDrawCommandSnapshot) -> Bool {
     let geometryIsFinite = command.geometryValues.allSatisfy(\.isFinite)
-    let paintIsFinite = command.strokeWidth.isFinite && command.alpha.isFinite
+    let strokeIsFinite = !command.isStroke || command.strokeWidth.isFinite
+    let paintIsFinite = strokeIsFinite && command.alpha.isFinite
     return geometryIsFinite && paintIsFinite
       && command.path.allSatisfy { $0.values.allSatisfy(\.isFinite) }
   }

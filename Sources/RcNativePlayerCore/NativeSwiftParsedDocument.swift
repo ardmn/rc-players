@@ -446,7 +446,8 @@ struct ParsedDrawCommand {
       colorARGB: try resolvePaintColor(colors: colors),
       alpha: alphaWord.map { NativeSwiftFloatExpression.resolve($0, values: values) }
         ?? min(max(NativeSwiftFloatExpression.resolve(paint.alpha, values: values), 0), 1),
-      strokeWidth: NativeSwiftFloatExpression.resolve(paint.strokeWidth, values: values),
+      strokeWidth: Self.skiaStrokeWidth(
+        NativeSwiftFloatExpression.resolve(paint.strokeWidth, values: values)),
       isStroke: paint.isStroke,
       strokeCap: paint.strokeCap,
       strokeJoin: paint.strokeJoin,
@@ -494,6 +495,11 @@ struct ParsedDrawCommand {
       unsetValueIndices: nanMeansUnsetIndices.filter { resolvedValues[$0].isNaN }.sorted(),
       offscreenTarget: offscreenTarget?.resolvingComponents(values: values, integers: integers))
   }
+
+  /// A stroke width as Skia keeps it: `SkPaint::setStrokeWidth` ignores a width not `>= 0`
+  /// (SkPaint.cpp:159), so NaN or a negative one leaves the reset paint's 0, a hairline. Skia keeps
+  /// the paint's previous width; this core has only the latest word, so it takes the default.
+  private static func skiaStrokeWidth(_ width: Float) -> Float { width >= 0 ? width : 0 }
 
   private func resolvePaintColor(colors: [Int: UInt32]) throws -> UInt32 {
     let destination = paint.colorID.flatMap { colors[$0] } ?? paint.colorARGB
