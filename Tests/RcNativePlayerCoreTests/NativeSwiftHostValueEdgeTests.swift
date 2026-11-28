@@ -60,6 +60,28 @@ import Testing
     }
   }
 
+  /// A host write equal to the value an expression gives its id changes nothing, so the expression
+  /// keeps driving it: AndroidX's `overrideFloat` writes and marks an override only for a value
+  /// `!=` the one held (RemoteComposeState.java:318-324).
+  @Test func aHostWriteEqualToAnExpressionsValueLeavesItDriven() throws {
+    typealias Op = NativeSwiftWireOpcode
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(70).float(0)
+    document.namedVariable(id: 70, type: NativeSwiftNamedVariableType.float, name: "USER:sum")
+    document.u8(Op.dataFloat).int(71).float(5)
+    document.namedVariable(id: 71, type: NativeSwiftNamedVariableType.float, name: "USER:input")
+    // 70 = input + 0.
+    document.u8(Op.animatedFloat).int(70).int(3).int(Writer.nanReference(71)).float(0)
+      .int(Writer.floatOperator(NativeSwiftFloatOperator.add))
+    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    #expect(try session.probeValues(timeSeconds: 0).floats[70] == 5)
+    #expect(session.setFloat(5, for: "USER:sum"))
+    #expect(session.setFloat(9, for: "USER:input"))
+    #expect(try session.probeValues(timeSeconds: 0).floats[70] == 9)
+  }
+
   /// A host offset reaches the snapshot as a finite number: NaN reads 0 and an infinity is held at
   /// the largest finite float of its sign, as the Kotlin player's `javaRoundToInt` reads it and as
   /// `resolvedFloat` saturates a padding.

@@ -16,6 +16,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private var texts: [Int: String]
   private var floats: [Int: Float]
   private var floatOverrides: [Int: Float] = [:]
+  /// Every float as the last resolution left it, expressions' outputs included: AndroidX's
+  /// `mFloatMap` after a paint, which `overrideFloat` compares a host's value against.
+  private var heldFloats: [Int: Float] = [:]
   /// The longs a host has set by name, over the document's `LongConstant`s.
   private var longOverrides: [Int: Int64] = [:]
   /// The float arrays a host has set by name, over the lists the document keeps at those ids.
@@ -232,6 +235,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     texts = other.texts
     floats = other.floats
     floatOverrides = other.floatOverrides
+    heldFloats = other.heldFloats
     longOverrides = other.longOverrides
     floatArrayOverrides = other.floatArrayOverrides
     colors = other.colors
@@ -612,7 +616,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       // for any float the host sent (EventHandlerModifierOperation.java:112).
       for (id, value) in zip(handler.dataIDs, data) where id != 0 {
         staticSnapshotCache = nil
-        storeFloat(id, value)
+        overrideFloat(id, value)
       }
       var values = try resolvedFloats(timeSeconds: timeSeconds)
       if let condition = handler.condition {
@@ -924,7 +928,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     let id = variable.id
     switch value {
     case .float(let value):
-      storeFloat(id, value)
+      overrideFloat(id, value)
     case .text(let value):
       texts[id] = value
       writtenIntegerAndTextIDs.insert(id)
@@ -1521,6 +1525,15 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     integers[id] = nativeSwiftIntegerView(value)
   }
 
+  /// A host's float write, AndroidX's `RemoteComposeState.overrideFloat` (java:318-324): nothing
+  /// for the value the id holds now, an expression's output included, so the expression keeps
+  /// driving it; otherwise `storeFloat`. NaN is never equal to itself and is always written.
+  private func overrideFloat(_ id: Int, _ value: Float) {
+    let held = floatOverrides[id] ?? heldFloats[id] ?? floats[id] ?? integers[id].map(Float.init)
+    guard value != (held ?? 0) else { return }
+    storeFloat(id, value)
+  }
+
   /// The longest text a `TextMerge` may produce, in UTF-16 units (`MAX_TEXT_LENGTH`,
   /// TextMerge.java:41); Kotlin's `RcTextMerge.MAX_LENGTH`.
   static let maximumTextMergeLength = 16 * 1024
@@ -1970,6 +1983,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       }
       for (index, outputID) in operation.outputIDs.enumerated() { result[outputID] = output[index] }
     }
+    heldFloats = result
     return result
   }
 
