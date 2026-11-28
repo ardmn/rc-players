@@ -175,7 +175,8 @@ import Testing
   // MARK: - The text budget
 
   /// A string counts at most the longest text a document can make by itself, a `TextMerge`
-  /// result of 16K UTF-16 units of at most 3 bytes each; a host's longer string renders.
+  /// result of 16K UTF-16 units of at most 3 bytes each, and costs at most one host placement's
+  /// work; a host's longer string renders.
   @Test func aStringCountsAtMostTheLongestDocumentText() throws {
     #expect(
       RemoteComposeNativeExecutionLimits.longestDocumentTextBytes
@@ -184,7 +185,9 @@ import Testing
     var budget = NativeFrameBudget()
     try budget.recordStrings(
       [String(repeating: "\u{1F600}", count: 50_000)], limits: .default)
-    #expect(budget.textBytes == longest && budget.work == longest)
+    #expect(
+      budget.textBytes == longest
+        && budget.work == RemoteComposeNativeExecutionLimits.hostStringPlacementWork)
     // A document's own text counts in full, and repeating it still runs out of budget.
     let documentText = String(repeating: "x", count: 4_000)
     var repeated = NativeFrameBudget()
