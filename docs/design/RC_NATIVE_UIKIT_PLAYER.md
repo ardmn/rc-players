@@ -179,7 +179,8 @@ existing demand-driven `CADisplayLink` only while that moving system value is re
 
 Safety rules are part of the boundary: byte reads are checked, UTF-8 is strict, strings,
 collections, and operation counts are capped, component identifiers are unique, nesting must
-balance, dimensions and paint values must be finite, and malformed supported input fails closed.
+balance, dimensions and paint values the document writes must be finite, and malformed supported
+input fails closed. A host's value may be any float and is read as AndroidX reads it.
 `NativeSwiftCoreError` distinguishes unsupported operation families from malformed bytes, and both
 fail closed at the public player boundary.
 
@@ -455,11 +456,15 @@ The Swift core resolves those deferred values rather than declining them. Text s
 width and height, padding, corner radius, min/max constraints and row/column spacing are all kept as
 the raw wire word and resolved with `NativeSwiftFloatExpression.resolve` at snapshot time — the same
 path draw commands have always taken — so a `RemoteDensity.Host` capture renders at whatever
-`setHostDensity` supplied. The validation those fields used to get while parsing moved with them: a
-size that resolves non-positive, or a dimension that resolves non-finite, throws a typed
-`NativeSwiftCoreError` instead of reaching UIKit. The explicit refusal survives where a field
-genuinely cannot resolve later — `floatWord(_:requireLiteral: true)`, which is what a background
-written as colour channels rather than a colour id still uses.
+`setHostDensity` supplied. A value that resolves non-finite does not fail the frame, since a host
+may write any float. An exact width or height of NaN sizes the component by its content and one of
++inf fills what the parent allows, as the Kotlin player's `Dp.Unspecified` and Compose's constraints
+take them; any other dimension, padding or spacing reads NaN as 0 and an infinity as the largest
+finite float of its sign. A text size below 0 or NaN is the 12 pixels an Android paint keeps, and
+one past 1e6 (an infinity included) is 1e6, as the Kotlin player caps it, autosize bounds too; a
+NaN `widthIn` / `heightIn` maximum is no bound, the Kotlin player's `Dp.Unspecified`. The explicit
+refusal survives where a field genuinely cannot resolve later — `floatWord(_:requireLiteral: true)`,
+which is what a background written as colour channels rather than a colour id still uses.
 
 This also closed a quieter bug on the way. A Row read its spacing with `requireLiteral: false` and
 stored the reference word's raw bits into a plain `Float`, so a computed `spacedBy` laid out at
@@ -822,6 +827,12 @@ canvas dimensions, finite coordinate magnitude, and total frame work. Every init
 input-produced frame passes the same typed validation before view reconciliation or Core Graphics.
 Custom components require an explicit host registry; documents never instantiate arbitrary
 Objective-C classes by name.
+
+Loops (`LoopStart`) are unrolled once, at decode, within one budget for the whole document: 20,000
+loop operations, AndroidX's per-frame `MAX_OP_COUNT`. This is a known divergence: AndroidX counts
+from zero on every paint and only the loops that paint, so there a loop in a GONE component or under
+a false conditional leaves the budget to the others; here it still spends its share (the Kotlin
+player keeps each loop's last count, which differs the same way once a loop stops).
 
 ## Evolution plan
 

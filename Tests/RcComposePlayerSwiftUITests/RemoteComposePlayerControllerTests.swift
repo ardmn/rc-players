@@ -89,12 +89,8 @@ import Testing
     #expect(!controller.setInteger(1, for: "epoch"))
     #expect(!controller.setInteger(1, for: "missing"))
     #expect(!controller.setBoolean(true, for: "missing"))
-    #expect(!controller.setFloat(.nan, for: "progress"))
-    #expect(!controller.setFloat(.infinity, for: "progress"))
     #expect(!controller.setInteger(Int(Int32.max) + 1, for: "count"))
     #expect(!controller.setInteger(Int(Int32.min) - 1, for: "count"))
-    let tooLong = String(repeating: "x", count: NativeSwiftDocumentDecoder.maximumStringBytes + 1)
-    #expect(!controller.setString(tooLong, for: "title"))
 
     // What was accepted reaches the native player under the declared name, with its type intact:
     // a colour, an integer and a boolean stay apart.
@@ -114,6 +110,20 @@ import Testing
     #expect(applied["USER:enabled"] == .boolean(false))
     #expect(controller.setInteger(Int(Int32.min), for: "count"))
     #expect(applied["USER:count"] == .integer(Int32.min))
+
+    // Any float and any string length are taken, as AndroidX's setNamedFloatOverride and
+    // overrideText take them (the 4000-byte limit is a wire limit only, Limits.java:42).
+    #expect(controller.setFloat(.infinity, for: "progress"))
+    #expect(applied["USER:progress"] == .float(.infinity))
+    #expect(controller.setFloat(.nan, for: "progress"))
+    if case .float(let stored) = applied["USER:progress"] {
+      #expect(stored.isNaN)
+    } else {
+      Issue.record("NaN did not reach the player: \(String(describing: applied["USER:progress"]))")
+    }
+    let long = String(repeating: "x", count: NativeSwiftDocumentDecoder.maximumStringBytes + 1)
+    #expect(controller.setString(long, for: "title"))
+    #expect(applied["USER:title"] == .text(long))
   }
 
   @Test func aNewDocumentDropsTheValuesItCannotTake() {

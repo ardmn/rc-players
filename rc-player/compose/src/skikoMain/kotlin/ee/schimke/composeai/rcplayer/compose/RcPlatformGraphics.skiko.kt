@@ -109,3 +109,5 @@ internal actual fun rcRuntimeShaderSupported(source: String): Boolean = runCatch
   .isSuccess
 
 internal actual val rcChildLayersMissModulatedAlpha: Boolean = true
+
+internal actual val rcTextBreaksLinesGreedily: Boolean = true

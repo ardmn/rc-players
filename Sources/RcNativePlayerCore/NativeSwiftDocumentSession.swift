@@ -16,6 +16,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private var texts: [Int: String]
   private var floats: [Int: Float]
   private var floatOverrides: [Int: Float] = [:]
+  /// Every float as the last resolution left it, expressions' outputs included: AndroidX's
+  /// `mFloatMap` after a paint, which `overrideFloat` compares a host's value against.
+  private var heldFloats: [Int: Float] = [:]
   /// The longs a host has set by name, over the document's `LongConstant`s.
   private var longOverrides: [Int: Int64] = [:]
   /// The float arrays a host has set by name, over the lists the document keeps at those ids.
@@ -48,6 +51,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// The ids a float expression computes: their float view is the expression's, which an integer
   /// write that changes nothing leaves as it was.
   private let floatExpressionIDs: Set<Int>
+  /// Every id a document operation computes a float for (expressions, text lengths, time and
+  /// colour attributes, component values, lookups, integer expressions, matrix outputs): a host
+  /// write equal to its value leaves it computed.
+  private let computedFloatIDs: Set<Int>
   /// Set once a document operation is seen writing `EPOCH_SECOND`'s id itself.
   private var documentClaimsEpochSecond = false
   /// The colours a host has set by name, which a theme switch leaves alone.
@@ -56,6 +63,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// of the document's own actions — as opposed to ones only the document's computations fill (a
   /// text operation's output, an integer expression). A float write is in `floatOverrides`.
   private var writtenIntegerAndTextIDs: Set<Int> = []
+  /// The text slots holding a host's string (set by name or by a custom component) and not since
+  /// overwritten by the document or cleared; their values are the snapshot's `hostStrings`.
+  private var hostTextIDs: Set<Int> = []
   private var floatAnimationRuntimes: [Int: NativeSwiftFloatAnimationRuntime] = [:]
   private var particleSystems: [Int: NativeSwiftParticleSystemRuntime] = [:]
   /// AndroidX's per-impulse "first frame in the window" bit, and each impulse's phase at the frame
@@ -97,6 +107,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
     self.imageSizeByID = imageSizeByID
     floatExpressionIDs = Set(document.expressions.map(\.id))
+    computedFloatIDs = Self.computedFloatIDs(of: document)
     var slotIDs = Set(document.integers.keys)
     slotIDs.formUnion(document.integerExpressionOrder)
     slotIDs.formUnion(document.idLookups.map(\.outputID))
@@ -229,6 +240,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     texts = other.texts
     floats = other.floats
     floatOverrides = other.floatOverrides
+    heldFloats = other.heldFloats
     longOverrides = other.longOverrides
     floatArrayOverrides = other.floatArrayOverrides
     colors = other.colors
@@ -240,9 +252,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     wireOrderedExpressions = other.wireOrderedExpressions
     imageSizeByID = other.imageSizeByID
     floatExpressionIDs = other.floatExpressionIDs
+    computedFloatIDs = other.computedFloatIDs
     documentClaimsEpochSecond = other.documentClaimsEpochSecond
     hostSetColors = other.hostSetColors
     writtenIntegerAndTextIDs = other.writtenIntegerAndTextIDs
+    hostTextIDs = other.hostTextIDs
     hostDensity = other.hostDensity
     hostFontScale = other.hostFontScale
     floatAnimationRuntimes = other.floatAnimationRuntimes.mapValues { $0.detachedCopy() }
@@ -455,7 +469,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       conformanceAnimationSpecOrder: document.animationSpecOrder,
       conformancePathIDs: document.pathIDs, conformancePathTweenIDs: document.pathTweenIDs,
       conformanceShaderUniformNames: document.shaderUniformNames,
-      conformanceConditionalTraces: document.conditionalTraces)
+      conformanceConditionalTraces: document.conditionalTraces,
+      hostStrings: Set(hostTextIDs.compactMap { texts[$0] }))
     if canReuseStaticSnapshot(timeSeconds: timeSeconds, wallClock: wallClock) {
       staticSnapshotCache = StaticSnapshotCache(
         measuredComponents: measuredComponents, snapshot: snapshot)
@@ -603,10 +618,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     var events: [NativeSwiftEvent] = []
     for handler in document.eventHandlers where handler.type == type && handler.filter == metadata {
       try resolveIntegerExpressions()
-      // The reference's `overrideFloat`, which publishes both numeric views as `storeFloat` does.
-      for (id, value) in zip(handler.dataIDs, data) where id != 0 && value.isFinite {
+      // The reference's `overrideFloat`, which publishes both numeric views as `storeFloat` does,
+      // for any float the host sent (EventHandlerModifierOperation.java:112).
+      for (id, value) in zip(handler.dataIDs, data) where id != 0 {
         staticSnapshotCache = nil
-        storeFloat(id, value)
+        overrideFloat(id, value)
       }
       var values = try resolvedFloats(timeSeconds: timeSeconds)
       if let condition = handler.condition {
@@ -694,12 +710,15 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       case .integerValue(let targetID, let value):
         storeActionInteger(targetID, value)
       case .floatValue(let targetID, let value):
-        let resolved = NativeSwiftFloatExpression.resolve(value, values: values)
-        if resolved.isFinite { storeActionFloat(targetID, resolved) }
+        // Any float, as AndroidX's `overrideFloat` writes it
+        // (ValueFloatChangeActionOperation.java:85).
+        storeActionFloat(targetID, NativeSwiftFloatExpression.resolve(value, values: values))
       case .textValue(let targetID, let textID):
         if let text = texts[textID] {
           texts[targetID] = text
           writtenIntegerAndTextIDs.insert(targetID)
+          // A document write: the slot is no longer the host's, even when it copies a host string.
+          hostTextIDs.remove(targetID)
         }
       case .hostAction(let id):
         events.append(.action(id: id))
@@ -915,10 +934,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     let id = variable.id
     switch value {
     case .float(let value):
-      storeFloat(id, value)
+      overrideFloat(id, value)
     case .text(let value):
       texts[id] = value
       writtenIntegerAndTextIDs.insert(id)
+      hostTextIDs.insert(id)
     case .color(let argb):
       colors[id] = argb
       hostSetColors.insert(id)
@@ -947,12 +967,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   }
 
   /// Writes one float slot by id, for a gesture that moves a document's own value — a scroll's
-  /// offset is addressed by id rather than by name.
+  /// offset is addressed by id rather than by name. Takes any float, as AndroidX's `touchDrag`
+  /// loads a touch position (CoreDocument.java:2076).
   @discardableResult
   public func setFloat(_ value: Float, forID id: Int) -> Bool {
     stateLock.lock()
     defer { stateLock.unlock() }
-    guard value.isFinite else { return false }
     storeFloat(id, value)
     staticSnapshotCache = nil
     return true
@@ -981,8 +1001,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     set(.long(value), for: name)
   }
 
-  /// Replaces the list a named float array holds. The values must be finite, and no more than a
-  /// document's float list may hold.
+  /// Replaces the list a named float array holds, NaN and infinities included.
+  /// Refuses more values than a document's float list may hold.
   public func setFloatArray(_ values: [Float], for name: String) -> Bool {
     set(.floatArray(values), for: name)
   }
@@ -1013,6 +1033,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case NativeSwiftNamedVariableType.string:
       texts[id] = document.texts[id]
       writtenIntegerAndTextIDs.remove(id)
+      hostTextIDs.remove(id)
     case NativeSwiftNamedVariableType.color:
       // No longer the host's, so the document's dark palette applies to it again.
       colors[id] = document.colors[id]
@@ -1047,6 +1068,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     else { return false }
     texts[property.valueBits] = value
     writtenIntegerAndTextIDs.insert(property.valueBits)
+    hostTextIDs.insert(property.valueBits)
     staticSnapshotCache = nil
     return true
   }
@@ -1089,41 +1111,36 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   ) throws -> NativeSwiftNodeSnapshot {
     let text: NativeSwiftTextSnapshot?
     if let source = node.text {
-      // `size > 0` used to be a parse-time guard. It still holds, but a computed size has no value
-      // to check until here, so the check moved with it rather than being dropped.
-      let size = try resolvedFloat(
-        source.sizeWord, NativeSwiftWireField.textSize, values: values, positive: true)
-      let weight = resolveOptionalFloat(source.weightWord, values: values) ?? 400
+      // `NativeSwiftTextSnapshot.init` reads a NaN or negative size as Android's 12 px and holds
+      // the weight to 1...1000, NaN as 400.
+      let size = NativeSwiftFloatExpression.resolve(source.sizeWord, values: values)
+      let sizeIsDensityTyped = NativeSwiftTextSnapshot.isDensityTypedFontSize(
+        source.sizeWord, densityBehavior: document.densityBehavior)
+      // A weight variable with no value yet keeps the normal weight.
+      let weight =
+        if let weightID = NativeSwiftFloatExpression.referenceID(source.weightWord) {
+          values[weightID] ?? NativeSwiftTextSnapshot.normalWeight
+        } else {
+          Float(bitPattern: source.weightWord)
+        }
       text = NativeSwiftTextSnapshot(
         value: texts[source.textID] ?? "",
         colorARGB: source.colorID.flatMap { resolvedColors[$0] } ?? source.colorARGB,
         size: size,
         style: source.style,
-        weight: min(max(weight, 1), 1_000),
+        weight: weight,
         familyID: source.familyID,
         familyName: texts[source.familyID],
         alignment: source.alignment,
         overflow: source.overflow,
         maximumLines: source.maximumLines,
-        autosize: try source.autosize.map { range in
-          // An unset bound is -1 on the wire (or absent). The Compose player's defaults: 400 for
-          // the maximum, 4 for the minimum, and the minimum never above the maximum.
-          var minimum: Float = -1
-          if let word = range.minimumWord {
-            minimum = try resolvedFloat(word, "autosize minimum", values: values)
-          }
-          var maximum: Float = -1
-          if let word = range.maximumWord {
-            maximum = try resolvedFloat(word, "autosize maximum", values: values)
-          }
-          let resolvedMaximum = maximum > 0 ? maximum : 400
-          return NativeSwiftTextAutosize(
-            minimumFontSize: min(minimum > 0 ? minimum : 4, resolvedMaximum),
-            maximumFontSize: resolvedMaximum)
+        autosize: source.autosize.map { range in
+          NativeSwiftTextAutosize.resolved(
+            minimum: range.minimumWord.map { resolvedFloat($0, values: values) },
+            maximum: range.maximumWord.map { resolvedFloat($0, values: values) })
         },
         fontSettings: fontSettings(source, values: values),
-        sizeIsDensityTyped: NativeSwiftTextSnapshot.isDensityTypedFontSize(
-          source.sizeWord, densityBehavior: document.densityBehavior))
+        sizeIsDensityTyped: sizeIsDensityTyped)
     } else {
       text = nil
     }
@@ -1187,22 +1204,17 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         })
     }
 
-    let maximumWidth = try resolvedFloat(
-      node.maximumWidthWord, NativeSwiftWireField.maximumWidth, values: values)
-    let maximumHeight = try resolvedFloat(
-      node.maximumHeightWord, NativeSwiftWireField.maximumHeight, values: values)
-    let cornerRadii = try node.cornerRadiusWords.map {
-      try resolvedFloat($0, NativeSwiftWireField.cornerRadius, values: values)
+    let maximumWidth = resolvedMaximum(node.maximumWidthWord, values: values)
+    let maximumHeight = resolvedMaximum(node.maximumHeightWord, values: values)
+    let cornerRadii = node.cornerRadiusWords.map {
+      resolvedFloat($0, values: values)
     }
     let cornerRadius = cornerRadii.max() ?? 0
 
-    let resolvedWidth = try resolvedDimension(
-      node.widthWord, type: stateLayoutDimension(node, isWidth: true), NativeSwiftWireField.width,
-      values: values)
-    let resolvedHeight = try resolvedDimension(
-      node.heightWord, type: stateLayoutDimension(node, isWidth: false),
-      NativeSwiftWireField.height,
-      values: values)
+    let resolvedWidth = resolvedDimension(
+      node.widthWord, type: stateLayoutDimension(node, isWidth: true), values: values)
+    let resolvedHeight = resolvedDimension(
+      node.heightWord, type: stateLayoutDimension(node, isWidth: false), values: values)
 
     return NativeSwiftNodeSnapshot(
       kind: node.kind,
@@ -1243,20 +1255,14 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       padding: node.stateIndexID != nil
         ? NativeSwiftInsets()
         : NativeSwiftInsets(
-          left: try resolvedFloat(
-            node.paddingWords.left, NativeSwiftWireField.paddingLeft, values: values),
-          top: try resolvedFloat(
-            node.paddingWords.top, NativeSwiftWireField.paddingTop, values: values),
-          right: try resolvedFloat(
-            node.paddingWords.right, NativeSwiftWireField.paddingRight, values: values),
-          bottom: try resolvedFloat(
-            node.paddingWords.bottom, NativeSwiftWireField.paddingBottom, values: values)),
-      minimumWidth: try resolvedFloat(
-        node.minimumWidthWord, NativeSwiftWireField.minimumWidth, values: values),
-      maximumWidth: maximumWidth > 1_000_000 ? -1 : maximumWidth,
-      minimumHeight: try resolvedFloat(
-        node.minimumHeightWord, NativeSwiftWireField.minimumHeight, values: values),
-      maximumHeight: maximumHeight > 1_000_000 ? -1 : maximumHeight,
+          left: resolvedFloat(node.paddingWords.left, values: values),
+          top: resolvedFloat(node.paddingWords.top, values: values),
+          right: resolvedFloat(node.paddingWords.right, values: values),
+          bottom: resolvedFloat(node.paddingWords.bottom, values: values)),
+      minimumWidth: resolvedFloat(node.minimumWidthWord, values: values),
+      maximumWidth: maximumWidth > 1_000_000 ? NativeSwiftNodeSnapshot.noMaximum : maximumWidth,
+      minimumHeight: resolvedFloat(node.minimumHeightWord, values: values),
+      maximumHeight: maximumHeight > 1_000_000 ? NativeSwiftNodeSnapshot.noMaximum : maximumHeight,
       cornerRadius: cornerRadius,
       clipsToBounds: node.clipsToBounds,
       graphicsLayer: node.graphicsLayer.isEmpty
@@ -1280,20 +1286,25 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
             .map { value in
               value.isFinite ? nativeSwiftClampedInt(value) : NativeSwiftCompositingStrategy.auto
             } ?? NativeSwiftCompositingStrategy.auto),
-      offsetX: node.offsetXWord.map { NativeSwiftFloatExpression.resolve($0, values: values) } ?? 0,
-      offsetY: node.offsetYWord.map { NativeSwiftFloatExpression.resolve($0, values: values) } ?? 0,
+      // Saturated like a padding: the Kotlin player rounds an offset with Java's `Math.round`,
+      // which reads NaN as 0 and holds an infinity at its bound.
+      offsetX: node.offsetXWord.map {
+        nativeSwiftSaturated(NativeSwiftFloatExpression.resolve($0, values: values))
+      } ?? 0,
+      offsetY: node.offsetYWord.map {
+        nativeSwiftSaturated(NativeSwiftFloatExpression.resolve($0, values: values))
+      } ?? 0,
       zIndex: node.zIndexWord.map { NativeSwiftFloatExpression.resolve($0, values: values) } ?? 0,
       visibility: visibility,
       backgroundARGB: node.backgroundColorID.flatMap { resolvedColors[$0] } ?? node.backgroundARGB,
       borderARGB: node.borderColorID.flatMap { resolvedColors[$0] } ?? node.borderARGB,
-      borderWidth: try resolvedFloat(
-        node.borderWidthWord, NativeSwiftWireField.borderWidth, values: values),
+      borderWidth: resolvedFloat(node.borderWidthWord, values: values),
       horizontalPositioning: node.horizontalPositioning,
       verticalPositioning: node.verticalPositioning,
       animationID: node.animationID,
       animationSpecID: node.animationSpecID,
       animationSpec: node.animationSpec,
-      spacing: try resolvedFloat(node.spacingWord, "spacing", values: values),
+      spacing: resolvedFloat(node.spacingWord, values: values),
       stateIndex: node.stateIndexID.flatMap { indexID in
         // Clamped against the *branches*, not the wrapper: the normal shape wraps every
         // alternative in one content node, and clamping against that would always report 0.
@@ -1304,8 +1315,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       flowMaximumItems: node.flowMaximumItems,
       flowMaximumLines: node.flowMaximumLines,
       isCollapsible: node.isCollapsible,
-      collapsiblePriority: try node.collapsiblePriorityWord.map {
-        try resolvedFloat($0, NativeSwiftWireField.collapsiblePriority, values: values)
+      collapsiblePriority: node.collapsiblePriorityWord.map {
+        resolvedFloat($0, values: values)
       },
       collapsiblePriorityOrientation: node.collapsiblePriorityOrientation,
       scrollDirection: node.scrollDirection,
@@ -1318,20 +1329,15 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       scrollMaximum: node.scrollMaximumWord.map {
         NativeSwiftFloatExpression.resolve($0, values: values)
       } ?? 0,
-      // Refused as the Kotlin player's support check refuses it: every float finite and the
-      // velocity positive. A zero velocity would hold the content still while the document kept
-      // asking for frames.
-      marquee: try node.marqueeVelocityWord.map {
+      // A NaN, zero or negative velocity holds the content still rather than failing the frame
+      // (`NativeSwiftMarqueeSnapshot.offset`, Kotlin's `androidXMarqueeOffset`).
+      marquee: node.marqueeVelocityWord.map {
         NativeSwiftMarqueeSnapshot(
           iterations: node.marqueeIterations, animationMode: node.marqueeAnimationMode,
-          repeatDelayMillis: try resolvedFloat(
-            node.marqueeRepeatDelayWord, NativeSwiftWireField.marqueeRepeatDelay, values: values),
-          initialDelayMillis: try resolvedFloat(
-            node.marqueeInitialDelayWord, NativeSwiftWireField.marqueeInitialDelay, values: values),
-          spacing: try resolvedFloat(
-            node.marqueeSpacingWord, NativeSwiftWireField.marqueeSpacing, values: values),
-          velocity: try resolvedFloat(
-            $0, NativeSwiftWireField.marqueeVelocity, values: values, positive: true))
+          repeatDelayMillis: resolvedFloat(node.marqueeRepeatDelayWord, values: values),
+          initialDelayMillis: resolvedFloat(node.marqueeInitialDelayWord, values: values),
+          spacing: resolvedFloat(node.marqueeSpacingWord, values: values),
+          velocity: resolvedFloat($0, values: values))
       },
       text: text,
       custom: custom,
@@ -1403,8 +1409,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   }
 
   private func resolvedDimension(
-    _ word: UInt32, type: Int, _ field: String, values: [Int: Float]
-  ) throws -> (type: Int, value: Float) {
+    _ word: UInt32, type: Int, values: [Int: Float]
+  ) -> (type: Int, value: Float) {
     if NativeSwiftDimensionType.isFill(type) && word == Float.nan.bitPattern {
       return (type, 1)
     }
@@ -1414,7 +1420,14 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       }
       return (type, value)
     }
-    return (type, try resolvedFloat(word, field, values: values))
+    // An exact size the Kotlin player hands Compose as `Dp`: NaN is `Dp.Unspecified`, which sizes
+    // the component by its content, and an infinity is constrained to what the parent allows.
+    if NativeSwiftDimensionType.isExact(type) {
+      let value = NativeSwiftFloatExpression.resolve(word, values: values)
+      if value.isNaN { return (NativeSwiftDimensionType.wrap, 0) }
+      if value == .infinity { return (NativeSwiftDimensionType.fill, 1) }
+    }
+    return (type, resolvedFloat(word, values: values))
   }
 
   private func stateLayoutDimension(_ node: ParsedNode, isWidth: Bool) -> Int {
@@ -1466,12 +1479,6 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
   }
 
-  /// Resolves a float field that a document may either state outright or compute.
-  ///
-  /// A literal word is its own bit pattern, so `resolve` is a strict generalisation of the eager
-  /// `Float` these fields used to hold; a NaN-boxed word is a reference into `values`. Validation
-  /// that used to run while parsing runs here, because a computed field has nothing to validate
-  /// until it resolves — and failing here is what keeps a garbage value from reaching UIKit.
   /// A `CoreText`'s font settings with their tags and values resolved. A tag with no text, or a
   /// value that does not resolve to a number, is dropped, as the Compose player drops it.
   private func fontSettings(
@@ -1486,28 +1493,62 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     return settings
   }
 
-  private func resolvedFloat(
-    _ word: UInt32, _ field: String, values: [Int: Float], positive: Bool = false
-  ) throws -> Float {
+  /// A layout or text field's float: NaN reads 0 and an infinity saturates, as Java's `Math.round`
+  /// and `(int)` read it.
+  private func resolvedFloat(_ word: UInt32, values: [Int: Float]) -> Float {
+    nativeSwiftSaturated(NativeSwiftFloatExpression.resolve(word, values: values))
+  }
+
+  /// A `widthIn` / `heightIn` maximum: NaN is no bound (`noMaximum`), as the Kotlin player's
+  /// `applyWidthRange` passes `Dp.Unspecified`; any other value saturates.
+  private func resolvedMaximum(_ word: UInt32, values: [Int: Float]) -> Float {
     let value = NativeSwiftFloatExpression.resolve(word, values: values)
-    guard value.isFinite else {
-      throw NativeSwiftCoreError.malformed(offset: 0, reason: "\(field) resolved to \(value)")
-    }
-    guard !positive || value > 0 else {
-      throw NativeSwiftCoreError.malformed(
-        offset: 0, reason: "\(field) resolved to \(value), which is not positive")
-    }
-    return value
+    return value.isNaN ? NativeSwiftNodeSnapshot.noMaximum : nativeSwiftSaturated(value)
   }
 
   /// A float write: the float view, and the integer view under the same id, truncated toward zero
   /// and clamped to 32 bits — `RcPlayerState.storeFloat`, as AndroidX
   /// `RemoteComposeState.updateFloat` / `overrideFloat` publish both. Integer expressions, a state
   /// layout's index and visibility read the integer view.
+  ///
+  /// A value `==` the one held (an unset id holds 0) keeps the held float, so a zero over a zero
+  /// keeps its sign, as Kotlin's `storeFloat` does; NaN is always written.
   private func storeFloat(_ id: Int, _ value: Float) {
-    floatOverrides[id] = value
+    // After an integer write with no document float, the id shows the integer as a float.
+    let previous = floatOverrides[id] ?? floats[id] ?? integers[id].map(Float.init) ?? 0
+    floatOverrides[id] = value == previous ? previous : value
     integers[id] = nativeSwiftIntegerView(value)
   }
+
+  /// A host's float write, AndroidX's `RemoteComposeState.overrideFloat` (java:318-324): nothing
+  /// for the value a computed id (`computedFloatIDs`, or one no document float seeds, as a clock)
+  /// holds now, so it stays computed; otherwise `storeFloat`. An equal write to a document's plain
+  /// float is still stored, which only records it for a reopened session (`writtenNamedValues`).
+  /// NaN is never equal to itself and is always written.
+  private func overrideFloat(_ id: Int, _ value: Float) {
+    let isComputed =
+      floatOverrides[id] == nil && (computedFloatIDs.contains(id) || floats[id] == nil)
+    guard !(isComputed && value == heldFloats[id]) else { return }
+    storeFloat(id, value)
+  }
+
+  /// The ids `computedFloatIDs` holds. O(the document's operations), once per open.
+  private static func computedFloatIDs(of document: ParsedDocument) -> Set<Int> {
+    var ids = Set(document.expressions.map(\.id))
+    ids.formUnion(document.textLengths.map(\.outputID))
+    ids.formUnion(document.timeAttributes.map(\.outputID))
+    ids.formUnion(document.colorAttributes.map(\.outputID))
+    ids.formUnion(document.componentValues.map(\.valueID))
+    ids.formUnion(document.idLookups.map(\.outputID))
+    ids.formUnion(document.dataMapLookups.map(\.outputID))
+    ids.formUnion(document.integerExpressionOrder)
+    for operation in document.matrixVectorMath { ids.formUnion(operation.outputIDs) }
+    return ids
+  }
+
+  /// The longest text a `TextMerge` may produce, in UTF-16 units (`MAX_TEXT_LENGTH`,
+  /// TextMerge.java:41); Kotlin's `RcTextMerge.MAX_LENGTH`.
+  static let maximumTextMergeLength = 16 * 1024
 
   /// An integer write — `RcPlayerState.setInteger`, as AndroidX `RemoteComposeState.updateInteger`:
   /// nothing for the integer the id already holds, else both views, the float being the integer.
@@ -1769,10 +1810,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // expression that reads a measured value see it. Evaluation is pure, so repeating it is safe.
     //
     // This first pass is deliberately tolerant. An expression that reads a binding the measurement
-    // below has not produced yet resolves that reference to zero, which can divide to a non-finite
-    // result that `evaluate` rejects — correctly, but not yet. Dropping it here leaves the id
-    // unset, exactly as it was before this pass existed; the authoritative pass after the
-    // measurement evaluates it for real and throws if it is still bad.
+    // below has not produced yet resolves that reference to zero; a NaN or an infinity from that is
+    // a value like any other, but an expression that fails (a list read past its end) is dropped
+    // here, which leaves the id unset, exactly as it was before this pass existed. The
+    // authoritative pass after the measurement evaluates it for real and throws if it still fails.
     //
     // The first pass only changes what the second computes when something sits between them to
     // read it -- a component-value binding -- or when an expression reads an id that the same or a
@@ -1954,6 +1995,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       }
       for (index, outputID) in operation.outputIDs.enumerated() { result[outputID] = output[index] }
     }
+    heldFloats = result
     return result
   }
 
@@ -2036,7 +2078,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
           value, digitsBefore: conversion.digitsBefore, digitsAfter: conversion.digitsAfter,
           flags: conversion.flags)
       case .merge(let merge):
-        texts[merge.outputID] = (texts[merge.leftID] ?? "") + (texts[merge.rightID] ?? "")
+        let merged = (texts[merge.leftID] ?? "") + (texts[merge.rightID] ?? "")
+        // AndroidX throws past the limit; the output keeps its old text.
+        if merged.utf16.count <= Self.maximumTextMergeLength { texts[merge.outputID] = merged }
       case .lookupInt(let lookup):
         guard let ids = document.idLists[lookup.listID], !ids.isEmpty else { continue }
         let index = min(max(integers[lookup.indexID] ?? 0, 0), ids.count - 1)

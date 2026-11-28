@@ -74,15 +74,22 @@ public enum NativeTexturePolicy {
     guard width > 0, height > 0 else { return }
     let determinant =
       shaderTransform.a * shaderTransform.d - shaderTransform.b * shaderTransform.c
-    guard determinant != 0 else { return }
+    // A shader matrix a host's NaN or infinity reached maps the bitmap nowhere, as a singular one
+    // does: nothing is painted.
+    guard determinant != 0, determinant.isFinite,
+      [shaderTransform.tx, shaderTransform.ty].allSatisfy(\.isFinite)
+    else { return }
     let mirror = mirrors(tileModeX: tileModeX, tileModeY: tileModeY)
     let clip = context.boundingBoxOfClipPath
     guard !clip.isEmpty, !clip.isInfinite, !clip.isNull else { return }
     let clipInBitmap = clip.applying(shaderTransform.inverted())
-    let minX = Int(floor(clipInBitmap.minX / width))
-    let maxX = Int(floor(clipInBitmap.maxX / width))
-    let minY = Int(floor(clipInBitmap.minY / height))
-    let maxY = Int(floor(clipInBitmap.maxY / height))
+    // The tile range, in floating point until it is known to be small: a nearly singular matrix
+    // maps the clip past any `Int`, and `Int(_:)` traps on that and on NaN.
+    let minX = floor(clipInBitmap.minX / width)
+    let maxX = floor(clipInBitmap.maxX / width)
+    let minY = floor(clipInBitmap.minY / height)
+    let maxY = floor(clipInBitmap.maxY / height)
+    guard [minX, maxX, minY, maxY].allSatisfy(\.isFinite) else { return }
 
     func drawTile(_ x: Int, _ y: Int) {
       context.saveGState()
@@ -104,12 +111,16 @@ public enum NativeTexturePolicy {
     }
     let columns = maxX - minX + 1
     let rows = maxY - minY + 1
-    guard columns > 0, rows > 0, columns * rows <= maximumTiles else {
+    // Past `Int32` a tile index has no computable position.
+    let indexBound = CGFloat(Int32.max)
+    guard columns > 0, rows > 0, columns * rows <= CGFloat(maximumTiles),
+      [minX, maxX, minY, maxY].allSatisfy({ abs($0) <= indexBound })
+    else {
       drawTile(0, 0)
       return
     }
-    for y in minY...maxY {
-      for x in minX...maxX { drawTile(x, y) }
+    for y in Int(minY)...Int(maxY) {
+      for x in Int(minX)...Int(maxX) { drawTile(x, y) }
     }
   }
 }

@@ -1,6 +1,7 @@
 package ee.schimke.composeai.rcplayer.runtime
 
 import kotlin.math.PI
+import kotlin.math.absoluteValue
 import kotlin.math.cos
 
 /**
@@ -27,7 +28,9 @@ public fun androidXMarqueeOffset(
   val initialDelaySeconds = initialDelayMillis / 1_000f
   val sinceStartSeconds = timeSeconds - initialDelaySeconds
   if (sinceStartSeconds <= initialDelaySeconds) return 0f
-  val durationSeconds = overflowDistance / (density * velocity)
+  // AndroidX divides by the signed velocity, but its phase only feeds a cosine, so a negative
+  // velocity sweeps exactly as its magnitude does.
+  val durationSeconds = overflowDistance / (density * velocity.absoluteValue)
   if (!durationSeconds.isFinite() || durationSeconds <= 0f) return 0f
   val phase = (sinceStartSeconds % durationSeconds) / durationSeconds
   return -overflowDistance * ((1f - cos(phase * 2f * PI.toFloat())) / 2f)

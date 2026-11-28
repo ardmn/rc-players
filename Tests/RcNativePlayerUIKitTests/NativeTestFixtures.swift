@@ -1,4 +1,6 @@
 import Foundation
+import RcNativePlayerCore
+import RcNativePlayerTestDocuments
 
 /// The platform tests' fixtures, copied into this test bundle by the manifest's `.copy("Fixtures")`.
 ///
@@ -23,4 +25,62 @@ enum NativeTestFixtures {
   static func data(_ name: String) throws -> Data {
     try Data(contentsOf: url(name))
   }
+}
+
+/// Documents the UIKit and AppKit host-value suites both build.
+enum NativeHostValueDocuments {
+  /// The id of the box in ``fillBox(fraction:)``.
+  static let fillBoxID = 10
+
+  /// A 100×100 document whose box (``fillBoxID``), 10 high, fills `fraction` of its width.
+  static func fillBox(fraction: Float) -> Data {
+    typealias Op = NativeSwiftWireOpcode
+    let wire = NativeTestWire()
+    wire.header(width: 100, height: 100)
+    wire.u8(Op.layoutRoot).int(1)
+    wire.u8(Op.layoutBox).int(fillBoxID).int(-1).int(1).int(1)
+    wire.u8(Op.modifierWidth).int(NativeSwiftDimensionType.fill).float(fraction)
+    wire.u8(Op.modifierHeight).int(NativeSwiftDimensionType.exact).float(10)
+    wire.u8(Op.layoutContent).int(fillBoxID + 100)
+    wire.u8(Op.containerEnd)
+    wire.u8(Op.containerEnd)
+    wire.u8(Op.containerEnd)
+    return wire.data
+  }
+
+  /// The id of the text in ``hostTextSizeAndWeight()``.
+  static let hostTextID = 20
+  /// The float both the text's size and weight read in ``hostTextSizeAndWeight()``.
+  static let hostTextFloatName = "USER:v"
+
+  /// A 100×60 document showing one text (``hostTextID``) whose font size and weight both read
+  /// the host float ``hostTextFloatName``, declared 16.
+  static func hostTextSizeAndWeight() -> Data {
+    typealias Op = NativeSwiftWireOpcode
+    let wire = NativeTestWire()
+    wire.header(width: 100, height: 60)
+    let floatID = 700
+    let textID = 701
+    wire.u8(Op.dataFloat).int(floatID).float(16)
+      .named(floatID, NativeTestWire.NamedType.float, hostTextFloatName)
+    wire.u8(Op.dataText).int(textID).utf8("hello")
+    wire.u8(Op.layoutRoot).int(1)
+    // A NaN whose low bits name the float it reads.
+    let reference = Int(Int32(bitPattern: 0xff80_0000 | UInt32(floatID)))
+    // TextLayout: component, animation, text, colour, size, style, weight, family, alignment,
+    // overflow, maximum lines.
+    wire.u8(Op.layoutText).int(hostTextID).int(0).int(textID)
+      .int(NativeTestDocuments.opaqueBlack).int(reference).int(0).int(reference).int(-1).int(1)
+      .int(1).int(1)
+    wire.u8(Op.containerEnd)
+    wire.u8(Op.containerEnd)
+    return wire.data
+  }
+
+  /// The host floats a text size or weight may read that AndroidX draws: Android's `Paint`
+  /// ignores a NaN or negative size (hwui `jni/Paint.cpp:1001`) and keeps a reset paint's 12 px.
+  static let unusualTextSizesAndWeights: [Float] = [.nan, .infinity, -.infinity, 1e30, -1]
+
+  /// The fill fractions a host or a document may resolve that AndroidX lays out.
+  static let unusualFillFractions: [Float] = [-0.5, -.infinity, .infinity, .nan]
 }

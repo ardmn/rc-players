@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 
+@testable import RcNativePlayerCore
 @testable import RcNativePlayerUIKit
 
 @Suite struct NativeExecutionLimitsTests {
@@ -59,21 +60,12 @@ import Testing
         limits: RemoteComposeNativeExecutionLimits(maximumFrameWork: 4))
     }
 
+    // A resolved coordinate is never refused: layout reads NaN as 0, a draw keeps it for
+    // `isDrawable`, and both hold the rest to the coordinate limit.
+    let coordinates = RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10)
+    #expect(coordinates.layoutCoordinate(.nan) == 0 && coordinates.layoutCoordinate(-11) == -10)
+    #expect(coordinates.drawCoordinate(.nan).isNaN && coordinates.drawCoordinate(.infinity) == 10)
     let numbers = NativeFrameBudget()
-    expect(.nonFiniteValue(componentID: 42, field: "path")) {
-      try numbers.validateNumbers(
-        [.nan], componentID: 42, field: "path", limits: .default)
-    }
-    expect(
-      .coordinateTooLarge(
-        componentID: 7, field: "draw", actual: 11, maximum: 10)
-    ) {
-      try numbers.validateNumbers(
-        [11], componentID: 7, field: "draw",
-        limits: RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10))
-    }
-    try numbers.validateFinite(
-      [400], componentID: 7, field: "paint")
     expect(.canvasTooLarge(actual: 101, maximum: 100)) {
       try numbers.validateCanvasDimensions(
         [101], limits: RemoteComposeNativeExecutionLimits(maximumCanvasDimension: 100))
@@ -81,23 +73,10 @@ import Testing
     expect(.invalidCanvasDimension(actual: 0)) {
       try numbers.validateDocumentDimensions([0, 100], limits: .default)
     }
-    expect(.invalidGradientStop(componentID: 9, actual: -0.1)) {
-      try numbers.validateGradientStops([-0.1, 1], componentID: 9)
+    // A non-finite size is an invalid dimension on every path; `nonFiniteValue` is never thrown.
+    expect(.invalidCanvasDimension(actual: .infinity)) {
+      try numbers.validateCanvasDimensions([.infinity], limits: .default)
     }
-    let strictCoordinates = RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 0.5)
-    try numbers.validateLayoutDimension(
-      value: 1, type: 1, componentID: 9, field: "width", limits: strictCoordinates)
-    try numbers.validateLayoutDimension(
-      value: 2, type: 3, componentID: 9, field: "width", limits: strictCoordinates)
-    expect(.coordinateTooLarge(componentID: 9, field: "width", actual: 1, maximum: 0.5)) {
-      try numbers.validateLayoutDimension(
-        value: 1, type: 0, componentID: 9, field: "width", limits: strictCoordinates)
-    }
-    expect(.invalidDimensionValue(componentID: 9, field: "width", actual: -1)) {
-      try numbers.validateLayoutDimension(
-        value: -1, type: 1, componentID: 9, field: "width", limits: .default)
-    }
-
     var work = NativeFrameBudget()
     expect(.frameWorkExceeded(actual: 3, maximum: 2)) {
       try work.recordCommand(

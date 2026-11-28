@@ -243,6 +243,23 @@ tasks
   }
 
 tasks.withType<Test>().configureEach {
+  // `RcHostValueEdgeRenderTest` checks the documents the native Swift player's
+  // `NativeSwiftHostValueEdgeTests` renders, and rewrites them with
+  // `-Prc.hostValueEdges.update=true`.
+  val hostValueEdges = rootProject.file("Tests/RcNativePlayerCoreTests/Fixtures/host-value-edges")
+  systemProperty("rc.hostValueEdges.fixtures", hostValueEdges.absolutePath)
+  // An input, so editing a fixture runs the check again rather than leaving the task up to date.
+  inputs
+    .dir(hostValueEdges)
+    .withPropertyName("hostValueEdgeFixtures")
+    .withPathSensitivity(PathSensitivity.RELATIVE)
+    .optional()
+  val updateProperty = "rc.hostValueEdges.update"
+  (project.findProperty(updateProperty) as String?)?.let {
+    systemProperty(updateProperty, it)
+    // Rewriting the fixtures is the point of the run, whatever was checked before.
+    outputs.upToDateWhen { false }
+  }
   (project.findProperty("rc.textOnCircle.out") as String?)?.let {
     systemProperty("rc.textOnCircle.out", it)
   }

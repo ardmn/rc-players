@@ -79,10 +79,21 @@ the application is inactive or the view is detached and observes AppKit's Reduce
 Decorative continuous animation pauses under Reduce Motion.
 
 Malformed or over-budget input is reported in the control window. Safety is independent of
-compatibility: both modes enforce a 16 MiB encoded-document limit, finite and bounded geometry,
-20,000 nodes, 256 levels of nesting, 50,000 draw commands, 100,000 path elements, 16 KiB of text,
-and 200,000 work units per frame. Validation runs before the initial AppKit hierarchy is created and again before animated
-or event-driven snapshots replace the current frame. Host events share that frame budget and are
+compatibility: both modes enforce a 16 MiB encoded-document limit, a bounded document size, 20,000
+nodes, 256 levels of nesting, 50,000 draw commands, 100,000 path elements, 192 KiB of text, and
+200,000 work units per frame. A document's own string counts at every place it is shown; a host's
+string counts once per frame, at most 48 KiB (the longest a document can make by itself), so four
+distinct host strings of any length fit when the frame shows no other text. Every place a string is
+shown, canvas text draws included, also costs work: a document string its bytes, a host string at
+most 4 KiB, so a document can show a long host string in about 48 places per frame, not thousands. A
+resolved value never fails the frame, as AndroidX takes every host value. Layout floats are
+normalised as on UIKit: NaN reads 0, the rest is held within the coordinate limit, and a negative
+fill fraction lays out as no width, an infinite one as the parent's. A non-finite draw value stops
+only what it stops on AndroidX's Skia canvas: a non-finite transform or intersecting clip path draws
+nothing until its restore, a non-finite clip rectangle is ignored, and any other non-finite draw is
+dropped.
+Validation runs before the initial AppKit hierarchy is created and again before animated or
+event-driven snapshots replace the current frame. Host events share that frame budget and are
 validated before delivery.
 
 The pure-Swift decoder rejects unsupported or malformed operation families instead of silently

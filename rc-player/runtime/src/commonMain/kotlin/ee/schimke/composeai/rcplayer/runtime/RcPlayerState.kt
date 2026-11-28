@@ -73,7 +73,15 @@ import ee.schimke.composeai.rcplayer.protocol.RcWakeIn
 import ee.schimke.composeai.rcplayer.trace.RcTraceCategory
 import ee.schimke.composeai.rcplayer.trace.rcTrace
 
-private const val MAX_LOOP_ITERATIONS = 10_000
+/**
+ * The loop operations a frame may run in all ([RcPlayerState.forEachLoopValue]): AndroidX
+ * `Limits.MAX_OP_COUNT` (Limits.java:24, androidx-main 4cd983e99fe). AndroidX counts every pass and
+ * every body operation at every depth (LoopOperation.java:126-140), from zero each paint
+ * (CoreDocument.java:2357), and throws past it; here the loop stops. AndroidX also counts a frame's
+ * other operations; only loops count here. The Swift player's twin is
+ * `NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument`, spent once per document at decode.
+ */
+private const val MAX_LOOP_OPERATIONS_PER_FRAME = 20_000
 
 /**
  * The `sp` size AndroidX publishes as `RemoteContext.ID_FONT_SIZE`, before density and font scale.
@@ -968,35 +976,67 @@ private constructor(
   }
 
   /**
-   * Runs AndroidX's ascending exclusive-upper-bound loop with a hard resource bound.
+   * Runs AndroidX's loop, `for (i = from; i < until; i += step)`, within the frame's
+   * [MAX_LOOP_OPERATIONS_PER_FRAME]; a pass costs one plus its [bodyOperations].
    *
-   * Java's loop condition is always `index < until`; negative steps therefore only produce zero
-   * iterations unless they would enter an infinite loop. Dynamic zero/non-finite steps are caught
-   * here because AndroidX only validates literal values while decoding.
+   * A host's NaN bound runs what Java's loop runs, and a loop that never ends stops when the budget
+   * is spent. Compose redraws only what changed, so each outermost document loop starts with what
+   * the loops before it in document order last left. A pass runs only if it fits whole; a loop
+   * outside the document has the whole budget. Known limitation: a loop that stops running (false
+   * conditional, GONE) keeps its last count, where AndroidX counts per paint. Cost: O(L) per
+   * outermost loop for L document loops.
    */
-  public fun forEachLoopValue(operation: RcLoopOperation, block: (Float) -> Unit) {
-    val from = resolve(operation.from)
+  public fun forEachLoopValue(
+    operation: RcLoopOperation,
+    bodyOperations: Int,
+    block: (Float) -> Unit,
+  ) {
     val until = resolve(operation.until)
     val step = resolve(operation.step)
-    require(from.isFinite() && until.isFinite() && step.isFinite()) {
-      "Loop bounds and step must be finite"
+    var value = resolve(operation.from)
+    val passCost = 1 + bodyOperations.coerceAtLeast(0)
+    val ordinal = if (loopDepth == 0) documentLoops.indexOfFirst { it === operation } else -1
+    if (loopDepth == 0) {
+      val usedByEarlierLoops = (0 until ordinal).sumOf { loopOperationsUsed[it] }
+      loopOperationsLeft = MAX_LOOP_OPERATIONS_PER_FRAME - usedByEarlierLoops
     }
-    if (!(from < until)) return
-    require(step > 0f) { "Loop step must be positive when from < until" }
-    var value = from
-    var iterations = 0
-    while (value < until) {
-      require(iterations++ < MAX_LOOP_ITERATIONS) { "Loop exceeds $MAX_LOOP_ITERATIONS iterations" }
-      if (operation.indexVariableId != 0) {
-        setFloat(operation.indexVariableId, value)
-        loopDependents(operation.indexVariableId).forEach(::applyFloatExpression)
+    val budgetAtStart = loopOperationsLeft
+    loopDepth++
+    try {
+      while (value < until && loopOperationsLeft >= passCost) {
+        loopOperationsLeft -= passCost
+        if (operation.indexVariableId != 0) {
+          setFloat(operation.indexVariableId, value)
+          loopDependents(operation.indexVariableId).forEach(::applyFloatExpression)
+        }
+        block(value)
+        value += step
       }
-      block(value)
-      val next = value + step
-      require(next > value) { "Loop step does not advance the index" }
-      value = next
+    } finally {
+      loopDepth--
+      if (ordinal >= 0) loopOperationsUsed[ordinal] = budgetAtStart - loopOperationsLeft
     }
   }
+
+  /** The v4.1.0 form: each pass costs one, as for a loop with no body. */
+  @Deprecated(
+    "Pass the loop body's operation count, which AndroidX charges per pass.",
+    ReplaceWith("forEachLoopValue(operation, bodyOperations = 0, block)"),
+  )
+  public fun forEachLoopValue(operation: RcLoopOperation, block: (Float) -> Unit): Unit =
+    forEachLoopValue(operation, bodyOperations = 0, block)
+
+  /** How deep [forEachLoopValue] is nested, and the operations its outermost loop has left. */
+  private var loopDepth = 0
+  private var loopOperationsLeft = 0
+
+  /** The document's loops, in document order: the order AndroidX spends a frame's budget in. */
+  private val documentLoops: List<RcLoopOperation> by lazy {
+    document.operations.filterIsInstance<RcLoopOperation>()
+  }
+
+  /** The operations each of [documentLoops] used, with every loop in it, when it last ran. */
+  private val loopOperationsUsed: IntArray by lazy { IntArray(documentLoops.size) }
 
   private val loopDependentExpressions = mutableMapOf<Int, List<RcFloatExpression>>()
 
@@ -1054,8 +1094,8 @@ private constructor(
       // over a value computed later in the frame draws, and the next pass fills it in.
       is RcTextMerge -> {
         val value = texts[operation.leftId].orEmpty() + texts[operation.rightId].orEmpty()
-        require(value.length <= 16 * 1024) { "TextMerge output exceeds AndroidX's 16K limit" }
-        texts[operation.outId] = value
+        // AndroidX throws on a merge longer than its limit; the merged text stays as it was.
+        if (value.length <= RcTextMerge.MAX_LENGTH) texts[operation.outId] = value
       }
       is RcTextLength ->
         setFloat(operation.outId, texts[operation.textId].orEmpty().length.toFloat())
@@ -1145,12 +1185,13 @@ private constructor(
       }
       is RcDynamicFloatList -> {
         val length = resolve(operation.length).toInt()
-        require(length in 0..RcFloatList.MAX_VALUES) {
-          "Dynamic float-list length $length is outside AndroidX's 0..${RcFloatList.MAX_VALUES} range"
-        }
         val existing = dynamicFloatLists[operation.id]
-        if (existing == null || existing.size != length) {
-          dynamicFloatLists[operation.id] = FloatArray(length)
+        when {
+          // AndroidX throws on a length outside 0..MAX_VALUES (a host's infinity, say); here the id
+          // holds no list, as the native Swift player's has none.
+          length !in 0..RcFloatList.MAX_VALUES -> dynamicFloatLists.remove(operation.id)
+          existing == null || existing.size != length ->
+            dynamicFloatLists[operation.id] = FloatArray(length)
         }
       }
       is RcUpdateDynamicFloatList -> {
@@ -1381,10 +1422,9 @@ private constructor(
             // AndroidX's flat stream runs where it stands; skipping the body left that colour
             // unset. Only that shape is replayed here (see [isThemedColorLoop]): colours that come
             // out the same however often the loop runs. Any other
-            // loop is the draw pass's alone, so nothing stateful in it runs twice. A loop whose
-            // bounds do not resolve to a finite, advancing range is left to the draw pass to
-            // report, and one under the other theme's marker does not run, as the draw pass skips
-            // it.
+            // loop is the draw pass's alone, so nothing stateful in it runs twice. Whatever its
+            // bounds, a loop here runs under the draw pass's cap ([forEachLoopValue]), and one
+            // under the other theme's marker does not run, as the draw pass skips it.
             val theme = currentTheme
             val visible =
               requestedTheme == RcTheme.UNSPECIFIED ||
@@ -1392,7 +1432,9 @@ private constructor(
                 theme == requestedTheme
             if (visible) {
               runCatching {
-                forEachLoopValue(loop) { applyScope(node.children, theme, applyDirect = true) }
+                forEachLoopValue(loop, node.children.size) {
+                  applyScope(node.children, theme, applyDirect = true)
+                }
               }
             }
           }
@@ -1580,6 +1622,9 @@ private constructor(
   }
 
   public fun applyFloatExpression(operation: RcFloatExpression) {
+    // Only a document action pins the id; a host write does not yet, unlike AndroidX's
+    // overrideFloat
+    // and the Swift player (a known limitation).
     if (operation.id in overriddenFloats) return
     // Inputs unchanged since its last evaluation: its value stands, as Compose's `derivedStateOf`
     // keeps a value whose dependencies did not move. The inputs are read through the observed maps,
@@ -2086,8 +2131,11 @@ private constructor(
 
   // AndroidX RemoteComposeState.updateFloat publishes both numeric views. Integer expressions
   // consume float results (including comparisons) through the same ID, truncating toward zero.
+  // AndroidX writes only a value `!=` the one it holds (RemoteComposeState.java:300; unset is 0),
+  // so a zero over a zero keeps its sign; NaN is never equal to itself and is always written.
   private fun storeFloat(id: Int, value: Float) {
-    floats[id] = value
+    val previous = floats[id] ?: 0f
+    floats[id] = if (value == previous) previous else value
     integers[id] = value.toInt()
   }
 
@@ -2385,12 +2433,12 @@ private constructor(
    * every document declares every name; throwing made each host filter its map against the
    * document's `RcNamedVariable`s before handing it over. A declared name written with an
    * incompatible type is still an error — that is a host bug, not a document that happens not to
-   * use the value. A float array no float list could hold ([RcFloatList.canHold]: a value that is
-   * not finite, or more than [RcFloatList.MAX_VALUES] of them) is ignored instead, and the variable
-   * keeps its value: such an array is data, a sensor gap or a long series, not a host bug, and it
-   * reaches here from inside composition, where a throw crashes the app. A host that needs to know
-   * checks [RcFloatList.canHold] first, as the iOS controller's `setFloatArray` does to answer
-   * `false`.
+   * use the value. Any value AndroidX's `setNamed*Override` takes is taken here: a float may be NaN
+   * or infinite, and a string any length. A float array no float list could hold
+   * ([RcFloatList.canHold]: more than [RcFloatList.MAX_VALUES] values) is ignored instead, and the
+   * variable keeps its value: such an array is data, a long series, not a host bug, and it reaches
+   * here from inside composition, where a throw crashes the app. A host that needs to know checks
+   * [RcFloatList.canHold] first, as the iOS controller's `setFloatArray` does to answer `false`.
    */
   public fun setNamedValue(hostName: String, value: RcNamedValue) {
     val name = resolveName(hostName)
@@ -2417,8 +2465,8 @@ private constructor(
       // AndroidX's `setNamedBooleanOverride` is an integer override of 1 or 0.
       is RcNamedValue.BooleanValue ->
         setNamedValue(name, RcNamedValue.Integer(if (value.value) 1 else 0))
-      // An array no float list could hold is ignored, not thrown: a host's map reaches here from
-      // inside composition, where a throw crashes the app. The iOS controller and the native
+      // An array longer than a float list holds is ignored, not thrown: a host's map reaches here
+      // from inside composition, where a throw crashes the app. The iOS controller and the native
       // Swift player refuse the same arrays.
       is RcNamedValue.FloatArrayValue ->
         if (RcFloatList.canHold(value.values)) {

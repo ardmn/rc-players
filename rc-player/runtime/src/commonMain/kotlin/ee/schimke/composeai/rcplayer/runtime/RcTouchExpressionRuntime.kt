@@ -4,7 +4,6 @@ import ee.schimke.composeai.rcplayer.protocol.RcFloatWord
 import ee.schimke.composeai.rcplayer.protocol.RcHapticType
 import ee.schimke.composeai.rcplayer.protocol.RcTouchExpression
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 /** Stateful, platform-neutral evaluation of AndroidX touch expressions. */
 public class RcTouchExpressionRuntime(
@@ -57,7 +56,7 @@ public class RcTouchExpressionRuntime(
           val step = (notchMaximum - minimum) / count
           if (step == 0f) minimum
           else {
-            var snapped = minimum + ((currentValue - minimum) / step).roundToInt() * step
+            var snapped = minimum + ((currentValue - minimum) / step).javaRoundToInt() * step
             if (operation.stopMode == RcTouchExpression.STOP_NOTCHES_SINGLE_EVEN) {
               snapped = snapped.coerceIn(valueAtDown - step, valueAtDown + step)
             }

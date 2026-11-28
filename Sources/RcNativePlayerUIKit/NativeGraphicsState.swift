@@ -444,3 +444,100 @@ enum NativeGradientRenderer {
     }
   }
 }
+
+/// A node's draw commands as AndroidX's `Canvas` treats a non-finite value: AndroidX and hwui pass
+/// the floats to Skia unchecked, so Skia decides. Saves and restores are always kept.
+///
+/// - A matrix command with a non-finite operand drops every draw up to its restore, as Skia rejects
+///   draws under a non-finite matrix (`SkCanvas::quickReject`). A NaN pivot x is "no pivot"
+///   (AndroidPaintContext.java:1473, :1495), not an operand.
+/// - A clip rectangle with a non-finite edge is ignored (`SkCanvas::clipRect`).
+/// - An intersecting clip path with a non-finite point clips its scope away; a difference one is
+///   ignored.
+/// - Any other command with non-finite geometry or paint draws nothing (`isDrawable`).
+/// - A `DrawToBitmap` redirect switches to that canvas's own save stack, kept per bitmap id.
+enum NativeCanvasCommands {
+  static func drawable(
+    _ commands: [NativeSwiftDrawCommandSnapshot],
+    limits: RemoteComposeNativeExecutionLimits = .default
+  ) -> [NativeSwiftDrawCommandSnapshot] {
+    // Whether each open save scope of the canvas being drawn draws nothing, its own node's scope at
+    // the bottom; the other canvases' stacks, by bitmap id, while drawing is redirected elsewhere.
+    var suppressed = [false]
+    var canvas = NativeSwiftDrawToBitmapID.mainCanvas
+    var otherCanvases: [Int: [Bool]] = [:]
+    var kept: [NativeSwiftDrawCommandSnapshot] = []
+    kept.reserveCapacity(commands.count)
+    for command in commands {
+      switch command.kind {
+      case NativeSwiftDrawKind.matrixSave:
+        suppressed.append(suppressed[suppressed.count - 1])
+        kept.append(command)
+      case NativeSwiftDrawKind.matrixRestore:
+        if suppressed.count > 1 { suppressed.removeLast() }
+        kept.append(command)
+      case NativeSwiftDrawKind.drawToBitmap:
+        let target = command.offscreenTarget?.bitmapID ?? NativeSwiftDrawToBitmapID.mainCanvas
+        if target != canvas {
+          otherCanvases[canvas] = suppressed
+          suppressed = otherCanvases.removeValue(forKey: target) ?? [false]
+          canvas = target
+        }
+        kept.append(command)
+      default:
+        guard !suppressed[suppressed.count - 1] else { continue }
+        switch effect(of: command, limits: limits) {
+        case .draws: kept.append(command)
+        case .ignored: break
+        case .suppressesScope: suppressed[suppressed.count - 1] = true
+        }
+      }
+    }
+    return kept
+  }
+
+  private enum Effect {
+    case draws
+    case ignored
+    case suppressesScope
+  }
+
+  private static func effect(
+    of command: NativeSwiftDrawCommandSnapshot, limits: RemoteComposeNativeExecutionLimits
+  ) -> Effect {
+    let values = command.values
+    switch command.kind {
+    case NativeSwiftDrawKind.matrixTranslate, NativeSwiftDrawKind.matrixSkew,
+      NativeSwiftDrawKind.matrixFromPath:
+      return values.allSatisfy(\.isFinite) ? .draws : .suppressesScope
+    case NativeSwiftDrawKind.matrixScale:
+      return operands(values, pivotAt: scalePivotIndex).allSatisfy(\.isFinite)
+        ? .draws : .suppressesScope
+    case NativeSwiftDrawKind.matrixRotate:
+      return operands(values, pivotAt: rotatePivotIndex).allSatisfy(\.isFinite)
+        ? .draws : .suppressesScope
+    case NativeSwiftDrawKind.clipRect:
+      return values.allSatisfy(\.isFinite) ? .draws : .ignored
+    case NativeSwiftDrawKind.clipPath:
+      // The renderers read the region operation as an integer.
+      guard let regionOp = values.first.flatMap({ Int(exactly: $0) }) else { return .ignored }
+      guard command.path.allSatisfy({ $0.values.allSatisfy(\.isFinite) }) else {
+        return regionOp == NativeSwiftClipRegionOp.difference ? .ignored : .suppressesScope
+      }
+      return .draws
+    default:
+      return limits.isDrawable(command) ? .draws : .ignored
+    }
+  }
+
+  /// Where `MatrixScale`'s pivot starts in `[scaleX, scaleY, centerX, centerY]`.
+  private static let scalePivotIndex = 2
+  /// Where `MatrixRotate`'s pivot starts in `[angle, pivotX, pivotY]`.
+  private static let rotatePivotIndex = 1
+
+  /// The values the matrix depends on: all of them, or those before the pivot when its x is NaN,
+  /// which AndroidX reads as no pivot, ignoring its y too.
+  private static func operands(_ values: [Float], pivotAt index: Int) -> ArraySlice<Float> {
+    index < values.count && values[index].isNaN ? values.prefix(index) : values[...]
+  }
+}

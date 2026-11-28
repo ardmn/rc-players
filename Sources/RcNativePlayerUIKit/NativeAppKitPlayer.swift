@@ -615,13 +615,33 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
       ]
     }
     return NativeMacRenderedFrame(
-      png: png, tree: player.layoutTree(),
+      png: png, tree: player.layoutTree().map(jsonSafe),
       values: values.isEmpty
         ? nil
-        : try reportedValues(
-           session: session, timeSeconds: timeSeconds, wallClock: wallClock, request: values),
-      records: records,
+        : jsonSafe(
+          try reportedValues(
+            session: session, timeSeconds: timeSeconds, wallClock: wallClock, request: values)),
+      records: jsonSafe(records),
       inputHandled: inputHandled)
+  }
+
+  /// `object` with every non-finite number spelled as Java's `Float.toString` spells it, as
+  /// `rc2json` does: `JSONSerialization` raises on one and has no option to spell it.
+  static func jsonSafe(_ object: [String: Any]) -> [String: Any] {
+    object.mapValues(jsonSafe(any:))
+  }
+
+  private static func jsonSafe(any value: Any) -> Any {
+    switch value {
+    case let number as NSNumber where CFGetTypeID(number) == CFNumberGetTypeID():
+      let double = number.doubleValue
+      guard !double.isFinite else { return value }
+      if double.isNaN { return "NaN" }
+      return double < 0 ? "-Infinity" : "Infinity"  // lint-ok: the core's spelling is internal
+    case let object as [String: Any]: return jsonSafe(object)
+    case let array as [Any]: return array.map(jsonSafe(any:))
+    default: return value
+    }
   }
 
   /// The conformance draw log is the decoded canvas stream in wire order. Its checks are ordered
@@ -1590,8 +1610,8 @@ private final class NativeMacDocumentView: NSView {
           "id": view.node.componentID,
           "kind": kind,
           "x": Double(
-            frame.origin.x - parentPadding.left - CGFloat(view.node.offsetX) - parentShift),
-          "y": Double(frame.origin.y - parentPadding.top - CGFloat(view.node.offsetY)),
+            frame.origin.x - parentPadding.left - view.layoutNode.offset.x - parentShift),
+          "y": Double(frame.origin.y - parentPadding.top - view.layoutNode.offset.y),
           "width": Double(frame.size.width),
           "height": Double(frame.size.height),
           "depth": depth,
@@ -2625,7 +2645,7 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
   /// constraint it was measured under gave — as Compose chooses it — so layout reuses it rather than
   /// searching again inside the box it produced, where "strictly shorter" would pick a smaller one.
   private var autosizedTexts: [MacAvailableSpace: MacAutosizedText] = [:]
-  /// Whether the marquee's content overflows, so it moves and needs frames.
+  /// Whether the marquee can move (`NativeSwiftMarqueeSnapshot.moves`), so it needs frames.
   private var marqueeMoves = false
   private(set) var componentChildren: [NativeMacComponentView]
   private var inputView: NativeMacInputView?
@@ -2947,7 +2967,11 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
 
   private static func canvasCommands(for node: NativeMacNode) -> [NativeMacDrawCommand] {
     let promotesImage = node.kind == .image
-    return node.commands.filter { !(promotesImage && $0.kind == NativeSwiftDrawKind.bitmap) }
+    let commands = node.commands.filter {
+      !(promotesImage && $0.kind == NativeSwiftDrawKind.bitmap)
+    }
+    // Drops what a non-finite value stops drawing on AndroidX's Canvas.
+    return NativeCanvasCommands.drawable(commands, limits: NativeMacPolicy.executionLimits)
   }
 
   private static func labelTexts(for node: NativeMacNode) -> [NativeSwiftTextSnapshot] {
@@ -2959,7 +2983,9 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
     for node: NativeMacNode, images: [Int: NSImage]
   ) -> [(image: NSImage, draw: NativeSwiftImageDrawSnapshot, alpha: Float)] {
     guard node.kind == .image else { return [] }
-    return node.commands.compactMap {
+    let commands = NativeCanvasCommands.drawable(
+      node.commands, limits: NativeMacPolicy.executionLimits)
+    return commands.compactMap {
       command -> (image: NSImage, draw: NativeSwiftImageDrawSnapshot, alpha: Float)? in
       guard command.kind == NativeSwiftDrawKind.bitmap, let draw = command.image,
         let image = images[draw.imageID]
@@ -3281,7 +3307,7 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
               marquee.offset(
                 overflowDistance: max(overflow, 0), density: 1,
                 elapsedSeconds: documentView?.marqueeElapsedSeconds ?? 0)),
-            moves: overflow > 0 && overflow.isFinite)
+            moves: marquee.moves(overflowDistance: overflow, density: 1))
           label.frame = NSRect(
             x: content.minX + marqueeOffset - inset, y: content.minY,
             width: max(content.width, natural) + inset * 2, height: height)
@@ -3319,13 +3345,13 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
       marquee.offset(
         overflowDistance: max(overflow, 0), density: 1,
         elapsedSeconds: documentView?.marqueeElapsedSeconds ?? 0))
-    setMarquee(offset: offset, moves: overflow > 0 && overflow.isFinite)
+    setMarquee(offset: offset, moves: marquee.moves(overflowDistance: overflow, density: 1))
     guard offset != 0 else { return }
     for child in componentChildren { child.frame.origin.x += offset }
   }
 
   /// Records where the marquee is and whether it can move, telling the document view when the
-  /// latter changes: frames are requested only while some marquee overflows.
+  /// latter changes: frames are requested only while some marquee can move.
   private func setMarquee(offset: CGFloat, moves: Bool) {
     marqueeOffset = offset
     guard marqueeMoves != moves else { return }
@@ -3333,7 +3359,7 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
     documentView?.marqueeDemandChanged()
   }
 
-  /// Whether this component or any below it has a marquee whose content overflows.
+  /// Whether this component or any below it has a marquee that can move.
   var hasMovingMarquee: Bool {
     marqueeMoves || componentChildren.contains { $0.hasMovingMarquee }
   }
@@ -3414,8 +3440,8 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
   /// (§2.7: padding is modifier translation, not the layout manager's assignment).
   var insets: MacInsets {
     MacInsets(
-      top: CGFloat(node.paddingTop), left: CGFloat(node.paddingLeft),
-      bottom: CGFloat(node.paddingBottom), right: CGFloat(node.paddingRight))
+      top: layoutNode.padding.top, left: layoutNode.padding.left,
+      bottom: layoutNode.padding.bottom, right: layoutNode.padding.right)
   }
   private var contentRect: CGRect {
     CGRect(
@@ -3673,12 +3699,14 @@ private final class NativeMacCanvasView: NSView {
     case NativeSwiftDrawKind.matrixRestore: context.restoreGState()
     case NativeSwiftDrawKind.matrixTranslate: context.translateBy(x: v[0], y: v[1])
     case NativeSwiftDrawKind.matrixScale:
-      let pivot = CGPoint(x: v[2].isNaN ? 0 : v[2], y: v[3].isNaN ? 0 : v[3])
+      // A NaN centre x is no pivot (AndroidPaintContext.java:1473).
+      let pivot = v[2].isNaN ? CGPoint.zero : CGPoint(x: v[2], y: v[3])
       context.translateBy(x: pivot.x, y: pivot.y)
       context.scaleBy(x: v[0], y: v[1])
       context.translateBy(x: -pivot.x, y: -pivot.y)
     case NativeSwiftDrawKind.matrixRotate:
-      let pivot = CGPoint(x: v[1].isNaN ? 0 : v[1], y: v[2].isNaN ? 0 : v[2])
+      // A NaN pivot x is no pivot (AndroidPaintContext.java:1495).
+      let pivot = v[1].isNaN ? CGPoint.zero : CGPoint(x: v[1], y: v[2])
       context.translateBy(x: pivot.x, y: pivot.y)
       context.rotate(by: v[0] * .pi / 180)
       context.translateBy(x: -pivot.x, y: -pivot.y)
@@ -3807,7 +3835,7 @@ private final class NativeMacCanvasView: NSView {
     // overflow it, while a malformed or fixed draw must never leak outside it.
     context.saveGState()
     context.clip(to: destination)
-    let target = scaledImageDestination(
+    let target = NativeImageGeometry.destination(
       source: source, destination: destination, scaleType: draw.scaleType,
       scaleFactor: CGFloat(draw.scaleFactor))
     // The paint's filter quality, bilinear when it named none, as the reference players filter;
@@ -3846,51 +3874,6 @@ private final class NativeMacCanvasView: NSView {
     return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
   }
 
-  private func scaledImageDestination(
-    source: NSRect, destination: NSRect, scaleType: Int, scaleFactor: CGFloat
-  ) -> NSRect {
-    guard source.width > 0, source.height > 0, destination.width >= 0, destination.height >= 0,
-      scaleFactor.isFinite
-    else { return .zero }
-    let sourceWidth = Int(source.width)
-    let sourceHeight = Int(source.height)
-    let destinationWidth = Int(destination.width)
-    let destinationHeight = Int(destination.height)
-    guard sourceWidth > 0, sourceHeight > 0, destinationWidth >= 0, destinationHeight >= 0 else {
-      return .zero
-    }
-    var width = destinationWidth
-    var height = destinationHeight
-    switch scaleType {
-    case NativeSwiftImageScaleType.none: width = sourceWidth; height = sourceHeight
-    case NativeSwiftImageScaleType.inside:
-      if !(destinationHeight > sourceHeight && destinationWidth > sourceWidth) {
-        if sourceWidth * destinationHeight > destinationWidth * sourceHeight {
-          height = destinationWidth * sourceHeight / sourceWidth
-        } else { width = destinationHeight * sourceWidth / sourceHeight }
-      } else { width = sourceWidth; height = sourceHeight }
-    case NativeSwiftImageScaleType.fitWidth: height = destinationWidth * sourceHeight / sourceWidth
-    case NativeSwiftImageScaleType.fitHeight: width = destinationHeight * sourceWidth / sourceHeight
-    case NativeSwiftImageScaleType.fit:
-      if sourceWidth * destinationHeight > destinationWidth * sourceHeight {
-        height = destinationWidth * sourceHeight / sourceWidth
-      } else { width = destinationHeight * sourceWidth / sourceHeight }
-    case NativeSwiftImageScaleType.crop:
-      if sourceWidth * destinationHeight < destinationWidth * sourceHeight {
-        height = destinationWidth * sourceHeight / sourceWidth
-      } else { width = destinationHeight * sourceWidth / sourceHeight }
-    case NativeSwiftImageScaleType.fillBounds: break
-    case NativeSwiftImageScaleType.fixed:
-      width = Int(CGFloat(sourceWidth) * scaleFactor)
-      height = Int(CGFloat(sourceHeight) * scaleFactor)
-    default: return .zero
-    }
-    return NSRect(
-      x: destination.minX + CGFloat((destinationWidth - width) / 2),
-      y: destination.minY + CGFloat((destinationHeight - height) / 2), width: CGFloat(width),
-      height: CGFloat(height))
-  }
-
   private func path(_ commands: [NativeMacPathCommand]) -> CGPath {
     let path = CGMutablePath()
     for item in commands {
@@ -3917,7 +3900,11 @@ private final class NativeMacCanvasView: NSView {
 
   private func drawText(_ command: NativeMacDrawCommand, _ context: CGContext) {
     guard let text = command.text else { return }
-    let size = max(CGFloat(command.textSize), 1)
+    // A command carries only its own size, so a NaN or negative one falls back to the paint's
+    // default rather than, as in the Kotlin player, the size the paint held before.
+    let paintSize = NativeSwiftTextSnapshot.androidSize(
+      command.textSize, unset: NativeSwiftTextSnapshot.paintDefaultSize)
+    let size = max(CGFloat(paintSize), 1)
     let font =
       conformanceFontName.flatMap { NSFont(name: $0, size: size) }
       ?? NSFont.systemFont(ofSize: size)

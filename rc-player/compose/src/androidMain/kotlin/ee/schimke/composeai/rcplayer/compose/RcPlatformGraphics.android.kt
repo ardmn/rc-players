@@ -179,3 +179,5 @@ private object RcPathConicApi34 {
 }
 
 internal actual val rcChildLayersMissModulatedAlpha: Boolean = false
+
+internal actual val rcTextBreaksLinesGreedily: Boolean = false

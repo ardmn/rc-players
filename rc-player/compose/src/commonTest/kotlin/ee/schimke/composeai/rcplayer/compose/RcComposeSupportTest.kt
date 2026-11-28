@@ -129,6 +129,28 @@ class RcComposeSupportTest {
     assertEquals(30f, rcTextFontSizePixels(variable, 30f, 2f, RcHeader.DENSITY_BEHAVIOR_DP))
   }
 
+  /**
+   * Android's `Paint.setTextSize` ignores a NaN or negative size (`Paint.cpp:1001`) and takes any
+   * other; Skia's layout throws on NaN and on an infinity's metrics, so a huge size is capped.
+   */
+  @Test
+  fun aTextSizeIsWhatAndroidsPaintTakesWithinTheCap() {
+    for (ignored in listOf(Float.NaN, -5f, -1e30f, Float.NEGATIVE_INFINITY)) {
+      assertEquals(RC_DEFAULT_TEXT_SIZE_PX, rcTextSizePixels(ignored), "$ignored")
+      assertEquals(20f, rcTextSizePixels(ignored, previous = 20f), "$ignored")
+    }
+    assertEquals(0f, rcTextSizePixels(0f))
+    assertEquals(36f, rcTextSizePixels(36f))
+    for (huge in listOf(1e30f, Float.MAX_VALUE, Float.POSITIVE_INFINITY)) {
+      assertEquals(RC_MAX_TEXT_SIZE_PX, rcTextSizePixels(huge), "$huge")
+    }
+    val variable = RcFloatWord(0x7f800000 or 42)
+    assertEquals(
+      RC_DEFAULT_TEXT_SIZE_PX,
+      rcTextFontSizePixels(variable, Float.NaN, 2f, RcHeader.DENSITY_BEHAVIOR_DP),
+    )
+  }
+
   @Test
   fun dimensionConstraintsRetainTheirAndroidXLegacyException() {
     assertEquals(52f, rcDimensionConstraintDp(52f, 2f, RcHeader.DENSITY_BEHAVIOR_LEGACY))
@@ -370,30 +392,34 @@ class RcComposeSupportTest {
     assertTrue(document.composeSupportReport(RcOperationProfiles.CMP_IOS_ALPHA18).fullyRenderable)
   }
 
+  /**
+   * AndroidX plays a marquee whatever its timing (MarqueeModifierOperation.paint, java:177-186): 0
+   * and NaN stand still, -v sweeps as v. A variable's word is NaN, so it must not count as one.
+   */
   @Test
-  fun rejectsInvalidMarqueeTimelineBeforeRendering() {
-    val issues =
-      RcDocument(
-          header,
-          listOf(
-            RcMarqueeModifier(
-              iterations = 1,
-              animationMode = 0,
-              repeatDelayMillis = RcFloatWord.literal(Float.NaN),
-              initialDelayMillis = RcFloatWord.literal(0f),
-              spacing = RcFloatWord.literal(0f),
-              velocity = RcFloatWord.literal(0f),
-            ),
-          ),
-        )
-        .composeSupportReport()
-        .issues
-        .map { it.detail }
+  fun aMarqueeWithAnyTimingIsRenderable() {
+    val variable = RcFloatWord(0x7fc00000 or 42)
+    for (value in listOf(Float.NaN, 0f, -40f, Float.POSITIVE_INFINITY)) {
+      for (word in listOf(RcFloatWord.literal(value), variable)) {
+        val report =
+          RcDocument(
+              header,
+              listOf(
+                RcMarqueeModifier(
+                  iterations = 1,
+                  animationMode = 0,
+                  repeatDelayMillis = word,
+                  initialDelayMillis = word,
+                  spacing = word,
+                  velocity = word,
+                ),
+              ),
+            )
+            .composeSupportReport()
 
-    assertEquals(
-      listOf("repeat delay must be finite", "velocity must be greater than zero"),
-      issues,
-    )
+        assertTrue(report.issues.isEmpty(), "$value / $word: ${report.issues}")
+      }
+    }
   }
 
   @Test

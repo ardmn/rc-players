@@ -25,9 +25,12 @@ import ee.schimke.composeai.rcplayer.protocol.RcBorderModifier
 import ee.schimke.composeai.rcplayer.protocol.RcBoxLayout
 import ee.schimke.composeai.rcplayer.protocol.RcColumnLayout
 import ee.schimke.composeai.rcplayer.protocol.RcCoreText
+import ee.schimke.composeai.rcplayer.protocol.RcDimensionConstraintsModifier
 import ee.schimke.composeai.rcplayer.protocol.RcDimensionType
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
+import ee.schimke.composeai.rcplayer.protocol.RcFitBoxLayout
 import ee.schimke.composeai.rcplayer.protocol.RcFloatConstant
+import ee.schimke.composeai.rcplayer.protocol.RcFloatExpression
 import ee.schimke.composeai.rcplayer.protocol.RcFloatWord
 import ee.schimke.composeai.rcplayer.protocol.RcGraphicsLayerAttribute
 import ee.schimke.composeai.rcplayer.protocol.RcGraphicsLayerModifier
@@ -47,8 +50,10 @@ import ee.schimke.composeai.rcplayer.protocol.RcTextData
 import ee.schimke.composeai.rcplayer.protocol.RcTextStyleProperty
 import ee.schimke.composeai.rcplayer.protocol.RcVersion
 import ee.schimke.composeai.rcplayer.protocol.RcVisibilityModifier
+import ee.schimke.composeai.rcplayer.protocol.RcWidthInModifier
 import ee.schimke.composeai.rcplayer.protocol.RcWidthModifier
 import ee.schimke.composeai.rcplayer.protocol.RcZIndexModifier
+import ee.schimke.composeai.rcplayer.runtime.RcFloatExpressionEvaluator
 import ee.schimke.composeai.rcplayer.runtime.RcNamedValue
 import java.io.File
 import kotlin.test.Test
@@ -106,6 +111,207 @@ class RcFlatLayoutTest {
       waitForIdle()
       onNodeWithText("Subtitle").assertExists()
     }
+
+  /**
+   * A NaN exact size (a host's value, or 0 / 0) is no size, as `width(NaN.dp)` is on the
+   * per-component path: the box wraps its content and the box below it moves down.
+   */
+  @Test
+  fun aNaNExactSizeWrapsAsOnThePerComponentPath() {
+    val nan = RcFloatWord(0x7fc00000 or NOT_A_NUMBER)
+    for (type in listOf(RcDimensionType.EXACT, RcDimensionType.EXACT_DP)) {
+      val wrapping =
+        listOf(
+          RcBoxLayout(10, -1, 1, 1),
+          RcWidthModifier(type, nan),
+          RcHeightModifier(type, nan),
+          RcLayoutContent(11),
+        ) + box(20, 1f, 30f, 20f) + listOf(end, end)
+      val document =
+        document(
+          RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)),
+          listOf(wrapping, box(30, 0f, 30f, 20f)),
+          listOf(
+            RcFloatExpression(
+              NOT_A_NUMBER,
+              listOf(
+                RcFloatWord.literal(0f),
+                RcFloatWord.literal(0f),
+                // AndroidX `DIV` (AnimatedFloatExpression.java:47).
+                RcFloatExpressionEvaluator.operatorWord(RcFloatExpressionEvaluator.OFFSET + 4),
+              ),
+              null,
+            ),
+          ),
+        )
+      assertTrue(10 in RcPreparedDocument(document).plainComponents, "the box is not flattened")
+      assertSameBothWays(document, width = 100, height = 60)
+    }
+  }
+
+  /**
+   * An exact size past what a Compose `Constraints` holds lays out as on the per-component path: up
+   * to the space there is.
+   */
+  @Test
+  fun anExactSizePastComposeConstraintsLaysOutAsOnThePerComponentPath() {
+    // 262,143 px is the first size a `Constraints` cannot hold on either axis.
+    for (size in listOf(262_143f, 1_048_576f, 16_777_216f)) {
+      val huge =
+        listOf(
+          RcBoxLayout(10, -1, 1, 1),
+          RcWidthModifier(RcDimensionType.EXACT, RcFloatWord.literal(size)),
+          RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(size)),
+          RcLayoutContent(11),
+        ) + box(20, 1f, 30f, 20f) + listOf(end, end)
+      val document =
+        document(
+          RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)),
+          listOf(box(30, 0f, 30f, 20f), huge),
+        )
+      assertTrue(10 in RcPreparedDocument(document).plainComponents, "the box is not flattened")
+      // Neither path shows ink in this scene; what matters is that both lay it out, alike.
+      for (unboundedHeight in listOf(false, true)) {
+        assertSameBothWays(
+          document,
+          width = 100,
+          height = 60,
+          unboundedHeight = unboundedHeight,
+          drawsSomething = false,
+        )
+      }
+    }
+  }
+
+  /**
+   * An exact width `roundToPx` cannot hold (from 2^31 px, either infinity) takes the space there
+   * is, as AndroidX's `min(maxWidth, size)` does (LegacyMeasurePolicy.java:45-46); -inf is no
+   * width.
+   */
+  @Test
+  fun anExactWidthPastIntOrInfiniteTakesTheSpaceThereIs() {
+    for ((size, expected) in
+      listOf(3e9f to 100, Float.POSITIVE_INFINITY to 100, Float.NEGATIVE_INFINITY to 0)) {
+      val document =
+        document(
+          RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)),
+          listOf(box(10, 1f, size, 20f)),
+        )
+      for (flatten in listOf(false, true)) {
+        assertEquals(
+          expected,
+          redPixelsInFirstRow(document, width = 100, height = 60, flatten),
+          "$size, flatten $flatten",
+        )
+      }
+    }
+  }
+
+  /**
+   * A negative `widthIn` maximum other than -1 (unset) leaves no width: AndroidX's default measure
+   * policy takes min(maxWidth, max) unchecked (BaseModernMeasurePolicy.java:71-73, 111-112).
+   */
+  @Test
+  fun aNegativeWidthInMaximumLeavesNoWidth() {
+    for ((maximum, expected) in
+      listOf(Float.NEGATIVE_INFINITY to 0, -5f to 0, -1f to 50, Float.POSITIVE_INFINITY to 50)) {
+      val widthIn = RcWidthInModifier(RcFloatWord.literal(-1f), RcFloatWord.literal(maximum))
+      val document =
+        document(
+          RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)),
+          listOf(box(10, 1f, 50f, 20f, leading = listOf(widthIn))),
+        )
+      for (flatten in listOf(false, true)) {
+        assertEquals(
+          expected,
+          redPixelsInFirstRow(document, width = 100, height = 60, flatten),
+          "$maximum, flatten $flatten",
+        )
+      }
+    }
+  }
+
+  /**
+   * A required minimum width past Int or infinite takes the space there is, from the left edge, as
+   * an exact one does (min(maxWidth, size), LegacyMeasurePolicy.java:45).
+   */
+  @Test
+  fun aRequiredMinimumWidthPastIntOrInfiniteTakesTheSpaceThereIs() {
+    for (minimum in listOf(3e9f, Float.POSITIVE_INFINITY)) {
+      val required =
+        RcDimensionConstraintsModifier(
+          RcDimensionConstraintsModifier.REQUIRED_HORIZONTAL,
+          RcFloatWord.literal(minimum),
+          RcFloatWord.literal(-1f),
+        )
+      // A start-aligned box holding a 10 px green box: green from x = 0 when it starts there.
+      val requiredBox = buildList {
+        add(RcBoxLayout(30, -1, 1, 1))
+        add(required)
+        add(RcWidthModifier(RcDimensionType.WRAP, RcFloatWord.literal(0f)))
+        add(RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(20f)))
+        add(RcLayoutContent(31))
+        addAll(box(20, 0f, 10f, 20f))
+        add(end)
+        add(end)
+      }
+      val document =
+        document(RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)), listOf(requiredBox))
+      for (flatten in listOf(false, true)) {
+        assertEquals(
+          10,
+          pixelsInFirstRow(document, width = 100, height = 60, flatten, GREEN, inFirst = 10),
+          "$minimum, flatten $flatten",
+        )
+      }
+    }
+  }
+
+  /**
+   * A FitBox takes an alternative whose exact width is infinite: AndroidX checks only `widthIn`'s
+   * minimum (FitBoxLayout.java:136-150), and the child measures min(maxWidth, inf).
+   */
+  @Test
+  fun aFitBoxTakesAnAlternativeWithAnInfiniteExactWidth() {
+    val document =
+      document(
+        RcFitBoxLayout(3, -1, 1, 4),
+        listOf(box(10, 1f, Float.POSITIVE_INFINITY, 20f), box(20, 0f, 10f, 20f)),
+      )
+
+    assertEquals(100, redPixelsInFirstRow(document, width = 100, height = 60, flatten = false))
+  }
+
+  private fun redPixelsInFirstRow(
+    document: RcDocument,
+    width: Int,
+    height: Int,
+    flatten: Boolean,
+  ): Int = pixelsInFirstRow(document, width, height, flatten, RED)
+
+  /** How many of the first [inFirst] pixels of row 1 are [color]. */
+  private fun pixelsInFirstRow(
+    document: RcDocument,
+    width: Int,
+    height: Int,
+    flatten: Boolean,
+    color: Int,
+    inFirst: Int = width,
+  ): Int {
+    val scene =
+      ImageComposeScene(width = width, height = height, density = Density(1f)) {
+        CompositionLocalProvider(LocalRcFlattenLayout provides flatten) {
+          RcComposePlayer(RcPreparedDocument(document), Modifier.width(width.dp))
+        }
+      }
+    try {
+      val bitmap = Bitmap().apply { allocN32Pixels(width, height) }
+      check(scene.render(0L).readPixels(bitmap))
+      return (0 until inFirst).count { bitmap.getColor(it, 1) == color }
+    } finally {
+      scene.close()
+    }
+  }
 
   @Test
   fun aRowLeavesRoomForItsGapsWhenItMeasures() {
@@ -776,6 +982,8 @@ class RcFlatLayoutTest {
     room: Int = 0,
     /** Space below the player, so a child that overflows it downwards shows. */
     roomBelow: Int = 0,
+    /** Whether the per-component path must draw something, so the two cannot both be blank. */
+    drawsSomething: Boolean = true,
   ) {
     val prepared = RcPreparedDocument(document)
     assertTrue(prepared.plainComponents.isNotEmpty(), "nothing to flatten")
@@ -812,7 +1020,7 @@ class RcFlatLayoutTest {
       }
     }
     val components = draw(flatten = false)
-    assertTrue(components.any { it != 0 }, "nothing was drawn")
+    if (drawsSomething) assertTrue(components.any { it != 0 }, "nothing was drawn")
     assertContentEquals(components, draw(flatten = true))
   }
 
@@ -888,5 +1096,11 @@ class RcFlatLayoutTest {
     const val TEXT = 43
     const val FRAME_NANOS = 16_000_000L
     const val ALPHA = 44
+    /** The id of a `0 / 0` expression. */
+    const val NOT_A_NUMBER = 45
+    /** The background of [box] with red 1. */
+    const val RED = 0xffff0000.toInt()
+    /** The background of [box] with red 0. */
+    const val GREEN = 0xff00ff00.toInt()
   }
 }

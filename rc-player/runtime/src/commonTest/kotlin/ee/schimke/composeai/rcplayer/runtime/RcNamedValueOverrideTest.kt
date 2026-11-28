@@ -58,11 +58,11 @@ class RcNamedValueOverrideTest {
   }
 
   /**
-   * A float array no float list could hold — a value that is not finite, or more values than
-   * [RcFloatList.MAX_VALUES] — is ignored, and the list stays as it was: the native Swift player
-   * and the iOS controller refuse the same arrays. It must not throw, because a host's map reaches
-   * here from inside composition (`RcComposePlayer`'s `applyHostValues`), where a throw crashes the
-   * app; AndroidX `DataListFloat.read` refuses such a list only when decoding a document.
+   * A float array no float list could hold — more values than [RcFloatList.MAX_VALUES] — is
+   * ignored, and the list stays as it was: the native Swift player and the iOS controller refuse
+   * the same arrays. It must not throw, because a host's map reaches here from inside composition
+   * (`RcComposePlayer`'s `applyHostValues`), where a throw crashes the app; AndroidX holds every
+   * float list to the same size (DataListFloat.java:115).
    */
   @Test
   fun aFloatArrayNoFloatListCouldHoldIsIgnored() {
@@ -100,12 +100,19 @@ class RcNamedValueOverrideTest {
     }
   }
 
-  private val invalidFloatArrays =
-    listOf(
-      listOf(1f, Float.NaN),
-      listOf(Float.POSITIVE_INFINITY),
-      List(RcFloatList.MAX_VALUES + 1) { 1f },
-    )
+  private val invalidFloatArrays = listOf(List(RcFloatList.MAX_VALUES + 1) { 1f })
+
+  /**
+   * Any value is one a float list holds: AndroidX's `UpdateDynamicFloatList` writes NaN or an
+   * infinity into a list as given, so a host's array may carry them too.
+   */
+  @Test
+  fun aFloatArrayOfNonFiniteValuesReplacesTheList() {
+    val state = RcPlayerState(document())
+    val values = listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, -0f)
+    state.setNamedValue("USER:series", RcNamedValue.FloatArrayValue(values))
+    assertEquals(values.map(Float::toRawBits), state.floatValues(51)?.map(Float::toRawBits))
+  }
 
   @Test
   fun anUnqualifiedNameResolvesIntoTheUserNamespaceFirst() {

@@ -371,6 +371,9 @@ struct ParsedDrawCommand {
   /// resolves to NaN: `DrawTextAnchored`'s `panY`, which the reference reads that way to leave the
   /// baseline where it is.
   let nanSentinelIndices: Set<Int>
+  /// Word positions where any NaN, the sentinel or a variable's value, means "no value"
+  /// (`DrawTextAnchored.paint`'s `Float.isNaN(mOutPanY)`); the snapshot's `unsetValueIndices`.
+  let nanMeansUnsetIndices: [Int]
   /// A `DrawToBitmap` redirect's target. Final at decode but for the component ids it names, which
   /// may be variables and are resolved with the frame's (or a function call's) values.
   let offscreenTarget: NativeSwiftOffscreenTargetSnapshot?
@@ -381,14 +384,14 @@ struct ParsedDrawCommand {
     kind: Int, words: [UInt32], paint: ParsedPaint, path: ParsedPath? = nil,
     image: ParsedImageDraw? = nil, alphaWord: UInt32? = nil, textID: Int? = nil,
     textStart: Int? = nil, textEnd: Int? = nil, textFlags: Int = 0,
-    nanSentinelIndices: Set<Int> = [], offscreenTarget: NativeSwiftOffscreenTargetSnapshot? = nil,
+    nanMeansUnsetIndices: [Int] = [], offscreenTarget: NativeSwiftOffscreenTargetSnapshot? = nil,
     matrixFlags: Int = 0
   ) {
     self.kind = kind
     self.words = words
-    self.nanSentinelIndices = nanSentinelIndices.filter {
-      words.indices.contains($0) && NativeSwiftFloatExpression.referenceID(words[$0]) == 0
-    }
+    self.nanMeansUnsetIndices = nanMeansUnsetIndices.filter(words.indices.contains)
+    self.nanSentinelIndices = Set(
+      self.nanMeansUnsetIndices.filter { NativeSwiftFloatExpression.referenceID(words[$0]) == 0 })
     staticValues = words.contains { NativeSwiftFloatExpression.referenceID($0) != nil }
       ? nil : words.map(Float.init(bitPattern:))
     self.paint = paint
@@ -442,7 +445,8 @@ struct ParsedDrawCommand {
       colorARGB: try resolvePaintColor(colors: colors),
       alpha: alphaWord.map { NativeSwiftFloatExpression.resolve($0, values: values) }
         ?? min(max(NativeSwiftFloatExpression.resolve(paint.alpha, values: values), 0), 1),
-      strokeWidth: NativeSwiftFloatExpression.resolve(paint.strokeWidth, values: values),
+      strokeWidth: Self.skiaStrokeWidth(
+        NativeSwiftFloatExpression.resolve(paint.strokeWidth, values: values)),
       isStroke: paint.isStroke,
       strokeCap: paint.strokeCap,
       strokeJoin: paint.strokeJoin,
@@ -487,9 +491,14 @@ struct ParsedDrawCommand {
         return String(decoding: units[lower..<upper], as: UTF16.self)
       }, textSize: NativeSwiftFloatExpression.resolve(paint.textSize, values: values),
       textFlags: textFlags,
-      unsetValueIndices: nanSentinelIndices.sorted(),
+      unsetValueIndices: nanMeansUnsetIndices.filter { resolvedValues[$0].isNaN },
       offscreenTarget: offscreenTarget?.resolvingComponents(values: values, integers: integers))
   }
+
+  /// A stroke width as Skia keeps it: `SkPaint::setStrokeWidth` ignores a width not `>= 0`
+  /// (SkPaint.cpp:159), so NaN or a negative one leaves the reset paint's 0, a hairline. Skia keeps
+  /// the paint's previous width; this core has only the latest word, so it takes the default.
+  private static func skiaStrokeWidth(_ width: Float) -> Float { width >= 0 ? width : 0 }
 
   private func resolvePaintColor(colors: [Int: UInt32]) throws -> UInt32 {
     let destination = paint.colorID.flatMap { colors[$0] } ?? paint.colorARGB
@@ -553,9 +562,9 @@ struct ParsedImageDraw {
   }
 }
 
-/// The word for a literal `-1`, which is how a node says "no maximum". Spelled once so the default
-/// cannot drift from the `> 1_000_000 ? -1` sentinel the snapshot still hands the layout.
-let nativeSwiftNegativeOneWord = Float(-1).bitPattern
+/// The word for a literal `-1`, which is how a node says "no maximum": the snapshot's
+/// `NativeSwiftNodeSnapshot.noMaximum`, so the two cannot drift.
+let nativeSwiftNegativeOneWord = NativeSwiftNodeSnapshot.noMaximum.bitPattern
 
 /// Padding held as it arrived on the wire. `NativeSwiftInsets` stays the resolved, public shape.
 struct ParsedInsetWords {

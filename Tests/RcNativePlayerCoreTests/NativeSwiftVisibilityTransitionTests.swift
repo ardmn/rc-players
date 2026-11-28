@@ -521,7 +521,9 @@ import Testing
     #expect(transition.progress > 0.1 && transition.progress < 0.9)
   }
 
-  @Test func aFunctionThatCannotEvaluateThrowsForTheHostToDegrade() throws {
+  /// An expression that is not finite gives its draw that value, which the renderer drops as it
+  /// drops the frame's own; the function still evaluates.
+  @Test func aFunctionWhoseExpressionIsNotFiniteStillEvaluates() throws {
     let custom = NativeSwiftLayoutAnimation.custom
     let data = Self.document(
       specs: { Self.spec($0, enter: custom, exit: custom, enterFunction: 9, exitFunction: 9) },
@@ -541,20 +543,21 @@ import Testing
     // The frame itself resolves: the body is not part of it.
     let function = try #require(
       try Self.box(session.snapshot(timeSeconds: 0.1)).visibilityTransition?.function)
-    #expect(throws: NativeSwiftCoreError.self) {
-      _ = try function.commands(x: 0, y: 0, width: 10, height: 10)
-    }
+    let commands = try function.commands(x: 0, y: 0, width: 10, height: 10)
+    #expect(commands.count == 1 && !commands[0].values[2].isFinite)
   }
 
-  @Test func aFunctionDrawingANonFiniteValueThrows() throws {
+  /// A draw with a non-finite value is the function's like any other: the renderer drops it as it
+  /// drops the frame's own (`NativeCanvasCommands.drawable`), instead of the whole animation.
+  @Test func aFunctionDrawingANonFiniteValueKeepsItsOtherDraws() throws {
     let custom = NativeSwiftLayoutAnimation.custom
     let data = Self.document(
       specs: { Self.spec($0, enter: custom, exit: custom, enterFunction: 9, exitFunction: 9) },
       functions: { writer in
-        // A rectangle as wide as an argument the call does not load: NaN reads as 0, but an
-        // infinite literal is drawn as written.
+        // A rectangle as wide as an infinite literal, and one beside it.
         writer.u8(Op.functionDefine).int(9).int(1).int(500)
         writer.u8(Op.drawRect).float(0).float(0).float(.infinity).float(1)
+        writer.u8(Op.drawRect).float(0).float(0).float(2).float(1)
         writer.u8(Op.containerEnd)
       })
     let session = try NativeSwiftDocumentSession.open(data: data)
@@ -562,8 +565,7 @@ import Testing
     #expect(session.setInteger(NativeSwiftVisibility.gone, for: "shown"))
     let function = try #require(
       try Self.box(session.snapshot(timeSeconds: 0.1)).visibilityTransition?.function)
-    #expect(throws: NativeSwiftCoreError.self) {
-      _ = try function.commands(x: 0, y: 0, width: 10, height: 10)
-    }
+    let commands = try function.commands(x: 0, y: 0, width: 10, height: 10)
+    #expect(commands.map { $0.values[2] } == [.infinity, 2])
   }
 }

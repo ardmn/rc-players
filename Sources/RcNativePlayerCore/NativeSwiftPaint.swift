@@ -85,5 +85,5 @@ struct ParsedPaint {
   /// How an image or texture is sampled: 0 none, 1 low, 2 medium, 3 high. Nil when the paint never
   /// said, which leaves the renderer's default in place.
   var filterQuality: Int?
-  var textSize: UInt32 = Float(16).bitPattern
+  var textSize: UInt32 = NativeSwiftTextSnapshot.paintDefaultSize.bitPattern
 }

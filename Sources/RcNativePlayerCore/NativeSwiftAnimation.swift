@@ -294,6 +294,13 @@ final class NativeSwiftFloatAnimationRuntime {
   func evaluate(target: Float, at time: Float) -> Float {
     if let springStiffness {
       if target != lastTarget {
+        if springHasDiverged {
+          // Kotlin's `settleAt`: at rest on the new target. AndroidX's `setInitialValue` moves
+          // only the position and keeps the NaN velocity, so its spring stays NaN for good.
+          springPosition = target
+          springVelocity = 0
+          springLastTime = time
+        }
         springTarget = Double(target)
         lastTarget = target
         lastChange = time
@@ -369,7 +376,14 @@ final class NativeSwiftFloatAnimationRuntime {
     return delta
   }
 
+  /// Whether the spring's target or state is not finite: a host's NaN or infinity, or an overflow.
+  /// Such a spring is stopped; AndroidX's `isStopped` (SpringStopEngine.java:207) never is.
+  private var springHasDiverged: Bool {
+    !springTarget.isFinite || !springPosition.isFinite || !springVelocity.isFinite
+  }
+
   private func springIsStopped(stiffness: Double) -> Bool {
+    if springHasDiverged { return true }
     let displacement = Double(springPosition) - springTarget
     let velocity = Double(springVelocity)
     let energy = velocity * velocity + stiffness * displacement * displacement
@@ -380,10 +394,10 @@ final class NativeSwiftFloatAnimationRuntime {
     let delta = Double(time - springLastTime)
     springLastTime = time
     guard delta > 0 else { return }
-    let requestedSteps = 1 + 9 / (sqrt(stiffness) * delta * 4)
-    let steps =
-      requestedSteps >= 1_000 || !requestedSteps.isFinite
-      ? 1_000 : max(Int(requestedSteps), 1)
+    // Sub-steps grow with natural frequency times frame (at most 1000) so a stiff spring stays
+    // stable, as AndroidX `SpringStopEngine.compute` does (SpringStopEngine.java:231-232, mass 1).
+    let requestedSteps = 1 + 9 * (sqrt(stiffness) * delta * 4)
+    let steps = requestedSteps >= 1_000 ? 1_000 : Int(requestedSteps)
     let dt = delta / Double(steps)
     for _ in 0..<steps {
       let position = Double(springPosition)

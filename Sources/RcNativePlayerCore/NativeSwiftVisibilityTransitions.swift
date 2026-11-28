@@ -172,9 +172,13 @@ public struct NativeSwiftVisibilityFunction: @unchecked Sendable {
   ///
   /// The arguments are loaded into the function's argument ids — as many as it declares — the
   /// component id as an integer too, then the body runs in wire order: each expression just before
-  /// the command that follows it, each command against the values at its position. Throws when an expression does not evaluate to a finite
-  /// number, a command cannot resolve or resolves to a non-finite value; a host then paints the
-  /// component as it is.
+  /// the command that follows it, each command against the values at its position. Throws when
+  /// an expression or a command cannot resolve; a host then paints the component as it is.
+  ///
+  /// - Important: a command's values may be NaN or infinite, as a host's value or the body's own
+  ///   arithmetic makes them; this does not throw for them. This package's renderers drop such a
+  ///   draw as Skia does (`NativeCanvasCommands.drawable`), and a host drawing the commands itself
+  ///   must do the same.
   public func commands(x: Float, y: Float, width: Float, height: Float) throws
     -> [NativeSwiftDrawCommandSnapshot]
   {
@@ -204,21 +208,12 @@ public struct NativeSwiftVisibilityFunction: @unchecked Sendable {
     resolved.reserveCapacity(function.commands.count)
     for (position, parsed) in function.commands.enumerated() {
       try evaluateExpressions(through: position)
-      let command = try parsed.resolve(
-        values: values, integers: integers, colors: colors, texts: texts, matrices: matrices)
-      // The frame's own commands pass a host's numeric budget; these are resolved after it, so the
-      // same rule — every geometry value finite — is applied here.
-      let numbers =
-        command.geometryValues + command.path.flatMap(\.values)
-        + [command.strokeWidth, command.alpha]
-      guard numbers.allSatisfy(\.isFinite) else {
-        throw NativeSwiftCoreError.malformed(
-          offset: function.offset,
-          reason: "FloatFunctionDefine \(function.id) drew a non-finite value")
-      }
-      resolved.append(command)
+      // A non-finite draw is kept: the renderer drops it as it drops the frame's own.
+      resolved.append(
+        try parsed.resolve(
+          values: values, integers: integers, colors: colors, texts: texts, matrices: matrices))
     }
-    // Trailing expressions draw nothing, but a non-finite one is still a malformed body.
+    // Trailing expressions draw nothing, but one that cannot evaluate is still a malformed body.
     try evaluateExpressions(through: function.commands.count)
     return resolved
   }

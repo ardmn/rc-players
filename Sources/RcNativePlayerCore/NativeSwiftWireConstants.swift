@@ -277,6 +277,11 @@ public enum NativeSwiftDimensionType {
   public static func isFill(_ type: Int) -> Bool {
     type == fill || type == fillParentMaxWidth || type == fillParentMaxHeight
   }
+
+  /// The types whose value is the size itself, in pixels or in dp.
+  static func isExact(_ type: Int) -> Bool {
+    type == exact || type == exactDp
+  }
 }
 
 /// The LOOM id tiers, from AndroidX `RemapContext` (the vendored

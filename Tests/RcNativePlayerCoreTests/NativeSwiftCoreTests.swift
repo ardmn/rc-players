@@ -99,8 +99,9 @@ import Testing
     #expect(
       updatedDataOnlyValues.floats[99] == 24,
       "a float slot update did not survive resolution")
-    #expect(
-      !dataOnly.setFloat(.nan, forID: 99), "a non-finite float slot update was accepted")
+    // As AndroidX loads a touch position unchecked (CoreDocument.java:2076).
+    #expect(dataOnly.setFloat(.nan, forID: 99), "a non-finite float slot update was refused")
+    #expect(try dataOnly.probeValues(timeSeconds: 0).floats[99]?.isNaN == true)
   }
 
   @Test func dataMapsParticlesAndAnimationDescriptors() throws {
@@ -192,24 +193,18 @@ import Testing
       spacingSnapshot.root.children[0].spacing == 12,
       "computed row spacing resolved to \(spacingSnapshot.root.children[0].spacing)")
 
-    // The other half of moving validation to resolution time: a size that resolves to something
-    // unusable has to fail closed with a typed error rather than reach UIKit.
-    let poisonedSize = Writer()
-    poisonedSize.header(width: 100, height: 100)
-    poisonedSize.text(id: 20, "Zero")
-    poisonedSize.u8(80).int(60).float(0)
-    poisonedSize.u8(200).int(1).u8(201).int(2)
-    poisonedSize.u8(208).int(3).int(0).int(20).int(Int(Int32(bitPattern: UInt32(0xff00_0000))))
+    // A size resolving to 0 is taken, as Android's `Paint.setTextSize(0)` takes it; below 0 is
+    // `NativeSwiftHostValueEdgeTests.aHostTextSizeBelowZeroIsAndroidsDefaultSize`.
+    let zeroSize = Writer()
+    zeroSize.header(width: 100, height: 100)
+    zeroSize.text(id: 20, "Zero")
+    zeroSize.u8(80).int(60).float(0)
+    zeroSize.u8(200).int(1).u8(201).int(2)
+    zeroSize.u8(208).int(3).int(0).int(20).int(Int(Int32(bitPattern: UInt32(0xff00_0000))))
       .int(Writer.nanReference(60)).int(0).float(400).int(-1).int(1).int(1).int(1)
-    poisonedSize.u8(214).u8(214).u8(214)
-    do {
-      _ = try NativeSwiftDocumentSession.open(data: poisonedSize.data).snapshot()
-      Issue.record("a text size resolving to zero was accepted")
-    } catch let error as NativeSwiftCoreError {
-      #expect(
-        error.description.contains("text size"),
-        "expected the failure to name the text size, got \(error.description)")
-    }
+    zeroSize.u8(214).u8(214).u8(214)
+    let zeroSnapshot = try NativeSwiftDocumentSession.open(data: zeroSize.data).snapshot()
+    #expect(zeroSnapshot.root.firstTextSnapshot?.size == 0)
 
     // A component-value binding on a structural content node inside a fill canvas inside a fixed
     // box. The pre-layout estimate used to resolve the fill to the whole document, so an icon's
@@ -2829,16 +2824,17 @@ import Testing
     #expect(try live.snapshot(timeSeconds: 3).marqueeElapsedSeconds == 0)
     #expect(try live.snapshot(timeSeconds: 4.5).marqueeElapsedSeconds == 1.5)
 
-    // A velocity of zero never moves the content, yet would keep a host painting forever; the
-    // Kotlin player refuses it, and so does this one. The velocity is the modifier's last word.
+    // A velocity of zero renders and never moves the content: AndroidX's duration is then
+    // infinite (MarqueeModifierOperation.java:180), so its offset stays 0. The velocity is the
+    // modifier's last word.
     var stalled = [UInt8](document)
     let velocity: [UInt8] = [0x42, 0x70, 0x00, 0x00]
     let at = try #require(
       (0...(stalled.count - velocity.count)).last { Array(stalled[$0..<$0 + 4]) == velocity })
     stalled.replaceSubrange(at..<at + 4, with: [0, 0, 0, 0])
-    #expect(throws: NativeSwiftCoreError.self) {
-      try NativeSwiftDocumentSession.open(data: Data(stalled)).snapshot(timeSeconds: 0)
-    }
+    let still = try NativeSwiftDocumentSession.open(data: Data(stalled)).snapshot(timeSeconds: 0)
+    let stillMarquee = try #require(marquee(in: still.root))
+    #expect(stillMarquee.offset(overflowDistance: 100, density: 1, elapsedSeconds: 30) == 0)
   }
 
   @Test func coreTextAutosizeCarriesItsRangeAndSearch() throws {

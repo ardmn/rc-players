@@ -140,6 +140,16 @@ enum NativeSwiftIntegerExpression {
   }
 }
 
+/// Java's `Math.round(float)`: `floor(value + 0.5)` taken exactly (in double, so 0.49999997
+/// rounds to 0), NaN as 0, and saturated to the `Int32` range.
+func nativeSwiftJavaRound(_ value: Float) -> Int32 {
+  guard !value.isNaN else { return 0 }
+  let rounded = (Double(value) + 0.5).rounded(.down)
+  if rounded >= Double(Int32.max) { return .max }
+  if rounded <= Double(Int32.min) { return .min }
+  return Int32(rounded)
+}
+
 enum NativeSwiftFloatExpression {
   private static let payloadMask: UInt32 = 0x007f_ffff
   private static let referenceMask: UInt32 = 0x003f_ffff
@@ -240,8 +250,9 @@ enum NativeSwiftFloatExpression {
         case NativeSwiftFloatOperator.div: stack.append(first / second)
         case NativeSwiftFloatOperator.mod:
           stack.append(first.truncatingRemainder(dividingBy: second))
-        case NativeSwiftFloatOperator.min: stack.append(min(first, second))
-        case NativeSwiftFloatOperator.max: stack.append(max(first, second))
+        // AnimatedFloatExpression.java:892/896: `Math.min`/`Math.max` over floats.
+        case NativeSwiftFloatOperator.min: stack.append(javaMin(first, second))
+        case NativeSwiftFloatOperator.max: stack.append(javaMax(first, second))
         default: stack.append(powf(first, second))
         }
       case NativeSwiftFloatOperator.sqrt...NativeSwiftFloatOperator.sign,
@@ -254,19 +265,27 @@ enum NativeSwiftFloatExpression {
         switch operation {
         case NativeSwiftFloatOperator.sqrt: stack.append(sqrtf(value))
         case NativeSwiftFloatOperator.abs: stack.append(abs(value))
-        case NativeSwiftFloatOperator.sign: stack.append(value == 0 ? 0 : (value < 0 ? -1 : 1))
+        case NativeSwiftFloatOperator.sign:
+          // AnimatedFloatExpression.java:912, `Math.signum`: a zero or NaN is its own sign.
+          stack.append(value == 0 || value.isNaN ? value : (value < 0 ? -1 : 1))
         case NativeSwiftFloatOperator.exp: stack.append(expf(value))
         case NativeSwiftFloatOperator.floor: stack.append(floorf(value))
         case NativeSwiftFloatOperator.log: stack.append(log10f(value))
         case NativeSwiftFloatOperator.ln: stack.append(logf(value))
-        case NativeSwiftFloatOperator.round: stack.append(roundf(value))
+        // AnimatedFloatExpression.java:936, `(float) Math.round(float)`.
+        case NativeSwiftFloatOperator.round: stack.append(Float(nativeSwiftJavaRound(value)))
         case NativeSwiftFloatOperator.sin: stack.append(sinf(value))
         case NativeSwiftFloatOperator.cos: stack.append(cosf(value))
-        case NativeSwiftFloatOperator.tan: stack.append(tanf(value))
+        // AnimatedFloatExpression.java:948/960/964: tan, atan and atan2 run in double, then cast;
+        // the float functions differ by an ulp for some operands.
+        case NativeSwiftFloatOperator.tan: stack.append(Float(Foundation.tan(Double(value))))
         case NativeSwiftFloatOperator.asin: stack.append(asinf(value))
         case NativeSwiftFloatOperator.acos: stack.append(acosf(value))
-        case NativeSwiftFloatOperator.atan: stack.append(atanf(value))
-        case NativeSwiftFloatOperator.cbrt: stack.append(cbrtf(value))
+        case NativeSwiftFloatOperator.atan: stack.append(Float(Foundation.atan(Double(value))))
+        case NativeSwiftFloatOperator.cbrt:
+          // AnimatedFloatExpression.java:980, `Math.pow(x, 1 / 3.)`: NaN for a negative operand,
+          // unlike `cbrtf`.
+          stack.append(Float(Foundation.pow(Double(value), 1.0 / 3.0)))
         case NativeSwiftFloatOperator.deg: stack.append(value * 57.29578)
         case NativeSwiftFloatOperator.rad: stack.append(value * 0.017453292)
         case NativeSwiftFloatOperator.ceil: stack.append(ceilf(value))
@@ -274,11 +293,9 @@ enum NativeSwiftFloatExpression {
         case NativeSwiftFloatOperator.log2: stack.append(log2f(value))
         case NativeSwiftFloatOperator.inv: stack.append(1 / value)
         case NativeSwiftFloatOperator.fract:
-          // FRACT, and the reference's own definition: the fraction above the floor, wrapped
-          // positive. `value - Float(Int(value))` trapped on a non-finite or out-of-range operand
-          // and was wrong for negatives anyway.
-          let fraction = value - floorf(value)
-          stack.append(fraction < 0 ? fraction + 1 : fraction)
+          // AnimatedFloatExpression.java:1152, `v - (int) v`: the fraction keeps the operand's
+          // sign, and the saturating cast reads NaN as 0, so NaN and infinities stay themselves.
+          stack.append(value - Float(nativeSwiftIntegerView(value)))
         default: stack.append(-value)
         }
       case NativeSwiftFloatOperator.copySign, NativeSwiftFloatOperator.atan2,
@@ -287,7 +304,8 @@ enum NativeSwiftFloatExpression {
         let (first, second) = try pop2()
         switch operation {
         case NativeSwiftFloatOperator.copySign: stack.append(copysignf(abs(first), second))
-        case NativeSwiftFloatOperator.atan2: stack.append(atan2f(first, second))
+        case NativeSwiftFloatOperator.atan2:
+          stack.append(Float(Foundation.atan2(Double(first), Double(second))))
         case NativeSwiftFloatOperator.squareSum: stack.append(first * first + second * second)
         case NativeSwiftFloatOperator.step: stack.append(first > second ? 1 : 0)
         case NativeSwiftFloatOperator.hypot: stack.append(hypotf(first, second))
@@ -303,8 +321,9 @@ enum NativeSwiftFloatExpression {
         let (first, second, third) = try pop3()
         stack.append(third > 0 ? second : first)
       case NativeSwiftFloatOperator.clamp:
+        // AnimatedFloatExpression.java:976, `Math.min(Math.max(a, c), b)`.
         let (first, second, third) = try pop3()
-        stack.append(min(max(first, third), second))
+        stack.append(javaMin(javaMax(first, third), second))
       case NativeSwiftFloatOperator.swap:
         // SWAP: the reference's expression language can exchange its top two operands, which is how
         // a formula written for a stack machine reads `a` and `b` in the order it wants.
@@ -343,8 +362,12 @@ enum NativeSwiftFloatExpression {
         let list = arrayOperand(try pop1(), arrays) ?? []
         let sum: Float = list.reduce(0, +)
         switch operation {
-        case NativeSwiftFloatOperator.arrayMax: stack.append(list.max() ?? 0)
-        case NativeSwiftFloatOperator.arrayMin: stack.append(list.min() ?? 0)
+        // AndroidX folds with `Math.max` / `Math.min` (AnimatedFloatExpression.java:1011, :1026),
+        // so one NaN element makes the result NaN; Swift's `max()` / `min()` would skip it.
+        case NativeSwiftFloatOperator.arrayMax:
+          stack.append(list.isEmpty ? 0 : list.dropFirst().reduce(list[0], javaMax))
+        case NativeSwiftFloatOperator.arrayMin:
+          stack.append(list.isEmpty ? 0 : list.dropFirst().reduce(list[0], javaMin))
         case NativeSwiftFloatOperator.arraySum: stack.append(sum)
         case NativeSwiftFloatOperator.arrayAverage:
           stack.append(list.isEmpty ? 0 : sum / Float(list.count))
@@ -355,11 +378,24 @@ enum NativeSwiftFloatExpression {
           opcode: opcode, offset: offset, reason: "float expression operator \(operation)")
       }
     }
-    guard stack.count == 1, let result = stack.last, result.isFinite else {
-      throw NativeSwiftCoreError.malformed(
-        offset: offset, reason: "Invalid float expression result")
-    }
-    return result
+    // The top of the stack, NaN and infinities included, as `AnimatedFloatExpression.eval` returns
+    // `mStack[sp]`; an empty stack reads 0 where AndroidX would index past it.
+    return stack.last ?? 0
+  }
+
+  /// Java's `Math.min(float, float)`: NaN if either operand is NaN, and -0 below 0. Swift's
+  /// `min` and `Float.minimum` both return the other operand for a quiet NaN.
+  static func javaMin(_ first: Float, _ second: Float) -> Float {
+    if first.isNaN || second.isNaN { return .nan }
+    if first == 0, second == 0 { return first.sign == .minus ? first : second }
+    return first <= second ? first : second
+  }
+
+  /// Java's `Math.max(float, float)`: NaN if either operand is NaN, and 0 above -0.
+  static func javaMax(_ first: Float, _ second: Float) -> Float {
+    if first.isNaN || second.isNaN { return .nan }
+    if first == 0, second == 0 { return first.sign == .minus ? second : first }
+    return first >= second ? first : second
   }
 
   /// Whether `word` names an id in AndroidX's array region rather than a value.

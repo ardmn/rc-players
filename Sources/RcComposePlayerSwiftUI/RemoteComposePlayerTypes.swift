@@ -139,9 +139,8 @@ public final class RemoteComposePlayerController {
     backend.set(.long(value), for: name)
   }
 
-  /// Replaces the list a float-array variable holds.
-  /// Every value must be finite, and there may be no more of them than a float list holds
-  /// (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000); other arrays are refused.
+  /// Replaces the list a float-array variable holds, NaN and infinities included.
+  /// Refuses more values than a float list holds (2000, DataListFloat.java:47).
   @discardableResult
   public func setFloatArray(_ values: [Float], for name: String) -> Bool {
     backend.set(.floatArray(values), for: name)

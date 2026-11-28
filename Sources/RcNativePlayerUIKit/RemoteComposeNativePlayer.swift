@@ -254,6 +254,16 @@
     /// The player's count of the host's writes to the name when this one reached it
     /// (`hostWriteCounts`).
     let writeNumber: UInt64
+
+    /// The same write: a NaN equals a NaN (`NativeSwiftNamedValue.isSameValue(as:)`).
+    static func == (lhs: Self, rhs: Self) -> Bool {
+      guard lhs.writeNumber == rhs.writeNumber else { return false }
+      switch (lhs.value, rhs.value) {
+      case (nil, nil): return true
+      case (let lhsValue?, let rhsValue?): return lhsValue.isSameValue(as: rhsValue)
+      default: return false
+      }
+    }
   }
 
   /// What a session over the same bytes starts from.
@@ -837,7 +847,7 @@
         // a left-out value that failed the session is handed on.
         return NativeCarriedValues(
           values: NativeStartingValue.merging(presentation.leftOut, with: written).filter {
-            failedWrites[$0.name] != $0.value
+            failedWrites[$0.name]?.isSameValue(as: $0.value) != true
           },
           takenHostWrites: presentation.takenHostWrites)
       }
@@ -1271,8 +1281,8 @@
     }
 
     /// Replaces the list a float-array named variable holds, and answers as ``setFloat(_:for:)``
-    /// does. Every value must be finite, and there may be no more of them than a float list holds
-    /// (AndroidX `DataListFloat.MAX_FLOAT_ARRAY`, 2000).
+    /// does. NaN and infinities are taken; more values than a float list holds (2000,
+    /// DataListFloat.java:47) are refused.
     @discardableResult
     public func setFloatArray(_ values: [Float], for name: String) async -> Bool {
       await submit(.setNamed(name, value: .floatArray(values)))
@@ -1536,7 +1546,8 @@
         if queued, !Self.isNamedWrite(input) {
           // A newer input will install its own frame; validate and deliver this input's events in
           // order without building and discarding an intermediate NativeDocument.
-          var budget = NativeFrameBudget()
+          // The frame's host strings, so an event's host string costs what it does once installed.
+          var budget = NativeFrameBudget(hostStrings: update.frame.snapshot.hostStrings)
           try validateEvents(update.events, budget: &budget)
           dispatch(update.events, generation: generation)
           return outcome
@@ -1955,6 +1966,23 @@
       }
       // Input refused for the background may be taken now, or deferred to the reopen.
       inputAvailability.signal()
+    }
+  }
+
+  extension NativeSwiftNamedValue {
+    /// Whether `other` is this value as Kotlin's `==` compares a boxed float: a NaN equals a NaN
+    /// and 0 is not -0, unlike the synthesized IEEE `==`.
+    func isSameValue(as other: Self) -> Bool {
+      switch (self, other) {
+      case (.float(let lhs), .float(let rhs)): return NativeSwiftKotlinFloat.equals(lhs, rhs)
+      case (.integer(let lhs, let lhsFloat), .integer(let rhs, let rhsFloat)):
+        guard lhs == rhs else { return false }
+        guard let lhsFloat, let rhsFloat else { return lhsFloat == nil && rhsFloat == nil }
+        return NativeSwiftKotlinFloat.equals(lhsFloat, rhsFloat)
+      case (.floatArray(let lhs), .floatArray(let rhs)):
+        return lhs.count == rhs.count && zip(lhs, rhs).allSatisfy(NativeSwiftKotlinFloat.equals)
+      default: return self == other
+      }
     }
   }
 #endif

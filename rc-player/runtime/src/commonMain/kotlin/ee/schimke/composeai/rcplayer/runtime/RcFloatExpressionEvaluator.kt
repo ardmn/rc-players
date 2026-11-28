@@ -42,8 +42,9 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
     // A word pushes at most one value, so this stack cannot overflow.
     val stack = FloatArray(max(128, expression.size + 1))
     var sp = -1
-    // A malformed document — an operator with too few operands, an array index past its end — must
-    // not take the player down with it. AndroidX's evaluator throws there; this one yields 0.
+    // A malformed document — an operator with too few operands, an array index past its end, a sum
+    // past AndroidX's iteration limit — must not take the player down with it. AndroidX's evaluator
+    // throws there; this one yields 0.
     try {
       expression.forEach { word ->
         val id = word.bits and NAN_PAYLOAD_MASK
@@ -55,6 +56,10 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
         }
       }
     } catch (_: IndexOutOfBoundsException) {
+      return 0f
+    } catch (_: SumTillLimitExceeded) {
+      // A host's infinity reaches this limit as easily as a malformed document does. Only this
+      // failure reads as 0; any other (a resolver's, say) still reaches the caller.
       return 0f
     }
     return if (sp in stack.indices) stack[sp] else 0f
@@ -115,7 +120,7 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
       14 -> stack[sp] = floor(stack[sp])
       15 -> stack[sp] = log10(stack[sp])
       16 -> stack[sp] = ln(stack[sp])
-      17 -> stack[sp] = javaRound(stack[sp]).toFloat()
+      17 -> stack[sp] = stack[sp].javaRoundToInt().toFloat()
       18 -> stack[sp] = sin(stack[sp])
       19 -> stack[sp] = cos(stack[sp])
       20 -> stack[sp] = tan(stack[sp])
@@ -240,7 +245,7 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
       }
       76 -> {
         val last = stack[sp].toInt()
-        require(last <= 10_000) { "Too many iterations in A_SUM_TILL" }
+        if (last > MAX_SUM_TILL_ITERATIONS) throw SumTillLimitExceeded()
         val values = arrayAt(sp - 1)
         var total = 0f
         for (index in 0..last) total += values[index]
@@ -263,7 +268,9 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
         stack[sp - 1] =
           when {
             index < 0 -> values[0]
-            index >= values.lastIndex -> values.last()
+            // AndroidX's `array[array.length - 1]`: an empty array (a host may write one) is
+            // out of bounds, which reads 0 here, not `last()`'s NoSuchElementException.
+            index >= values.lastIndex -> values[values.lastIndex]
             else -> values[index] + (position - index) * (values[index + 1] - values[index])
           }
         sp--
@@ -339,14 +346,6 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
     return (upperY - lowerY) * (x - lowerX) / (upperX - lowerX) + lowerY
   }
 
-  private fun javaRound(value: Float): Int =
-    when {
-      value.isNaN() -> 0
-      value >= Int.MAX_VALUE -> Int.MAX_VALUE
-      value <= Int.MIN_VALUE -> Int.MIN_VALUE
-      else -> floor(value + 0.5f).toInt()
-    }
-
   private fun FloatArray.sumOfSquares(): Float {
     var total = 0f
     forEach { total += it * it }
@@ -381,3 +380,15 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
       RcFloatWord(0xff800000.toInt() or operator)
   }
 }
+
+/**
+ * The last index `A_SUM_TILL` may sum to: AndroidX `Limits.MAX_SUM_TILL_ITERATIONS`
+ * (Limits.java:105).
+ */
+private const val MAX_SUM_TILL_ITERATIONS = 10_000
+
+/**
+ * `A_SUM_TILL` past [MAX_SUM_TILL_ITERATIONS], where AndroidX throws
+ * (AnimatedFloatExpression.java:1221).
+ */
+private class SumTillLimitExceeded : RuntimeException("Too many iterations in A_SUM_TILL")

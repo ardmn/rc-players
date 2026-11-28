@@ -150,7 +150,7 @@ public enum NativeSwiftTextFormatter {
   private static func fractionDigits(_ value: Float, digits: Int, keep: Int) -> String {
     var fraction = value.truncatingRemainder(dividingBy: 1)
     for _ in 0..<max(digits, 0) { fraction *= 10 }
-    fraction = Float(javaRound(fraction))
+    fraction = Float(nativeSwiftJavaRound(fraction))
     for _ in 0..<max(digits, 0) { fraction *= 0.1 }
     let text = Array(javaFloatString(fraction))
     let end = min(text.count, keep + 2)
@@ -219,14 +219,9 @@ public enum NativeSwiftTextFormatter {
     return integerText + "." + String(digits)
   }
 
-  /// Java's `Math.round`-style `floor(x + 0.5)`, as the reference writes it.
-  private static func javaRound(_ value: Float) -> Int { javaInt((value + 0.5).rounded(.down)) }
-
-  /// Java's float-to-int conversion: truncating, saturating, NaN to 0.
-  private static func javaInt(_ value: Float) -> Int {
-    guard !value.isNaN else { return 0 }
-    return Int(max(min(value, Float(Int32.max)), Float(Int32.min)).rounded(.towardZero))
-  }
+  /// Java's float-to-int conversion: truncating, saturating to `Int32` (`Float(Int32.max)` is
+  /// 2^31, one past it), NaN to 0.
+  private static func javaInt(_ value: Float) -> Int { nativeSwiftIntegerView(value) }
 
   private static func javaLong(_ value: Float) -> Int64 {
     guard !value.isNaN else { return 0 }
@@ -257,6 +252,18 @@ public enum NativeSwiftTextFormatter {
       decimalExponent -= 1
     }
     while digits.count > 1, digits.last == "0" { digits.removeLast() }
+    // Java's `Float.toString` prints at least two significant digits ("1.4E-45" for `MIN_VALUE`,
+    // not "1e-45"); only a subnormal's two-digit decimal can differ from `d.0`.
+    if digits.count == 1, value.isSubnormal {
+      let twoDigits = String(format: "%.1e", Double(value.magnitude))
+      if Float(twoDigits) == value.magnitude, let marker = twoDigits.firstIndex(of: "e"),
+        let twoExponent = Int(twoDigits[twoDigits.index(after: marker)...])
+      {
+        digits = Array(twoDigits[..<marker].filter { $0 != "." })
+        decimalExponent = twoExponent + 1
+        while digits.count > 1, digits.last == "0" { digits.removeLast() }
+      }
+    }
     let sign = value < 0 ? "-" : ""
     let magnitude = value.magnitude
     if magnitude >= 1e-3, magnitude < 1e7 {
@@ -349,6 +356,10 @@ public struct NativeSwiftDocumentSnapshot: Sendable {
   let conformancePathTweenIDs: Set<Int>
   let conformanceShaderUniformNames: [Int: Set<String>]
   let conformanceConditionalTraces: [NativeSwiftConditionalTraceSnapshot]
+
+  /// The host-written strings the frame holds. A host counts each once against its text budget,
+  /// however many texts, descriptions or events show it.
+  public let hostStrings: Set<String>
 
   /// The wake a host should schedule: the document's own request, or the once-a-second refresh a
   /// document reading a discrete wall-clock field needs, whichever comes first.
@@ -446,9 +457,13 @@ public struct NativeSwiftNodeSnapshot: Sendable {
   public let heightValue: Float
   public let padding: NativeSwiftInsets
   public let minimumWidth: Float
+  /// The `widthIn` maximum, or `noMaximum` (none); any other negative leaves no width.
   public let maximumWidth: Float
   public let minimumHeight: Float
+  /// The `heightIn` maximum, or `noMaximum` (none); any other negative leaves no height.
   public let maximumHeight: Float
+  /// The `maximumWidth` / `maximumHeight` of a node with no maximum: the wire's literal -1.
+  public static let noMaximum: Float = -1
   public let cornerRadius: Float
   public let clipsToBounds: Bool
   public let graphicsLayer: NativeSwiftGraphicsLayerSnapshot?
@@ -668,16 +683,16 @@ public struct NativeSwiftDrawCommandSnapshot: Sendable, Equatable {
   public let text: String?
   public let textSize: Float
   public let textFlags: Int
-  /// Positions in `values` that hold NaN as the wire's own "no value" sentinel rather than a
-  /// number: `DrawTextAnchored`'s `panY` when it is the id-0 NaN, which the reference reads as
-  /// "leave the baseline where it is".
+  /// Positions in `values` that hold NaN as "no value" rather than a number: `DrawTextAnchored`'s
+  /// `panY` when it resolves to NaN, the id-0 sentinel or a variable's value, which the reference
+  /// reads as "leave the baseline where it is".
   public let unsetValueIndices: [Int]
   /// Set only on a `NativeSwiftDrawKind.drawToBitmap` command: where this node's later commands
   /// draw, up to the next such command or the end of the node's commands.
   public let offscreenTarget: NativeSwiftOffscreenTargetSnapshot?
 
-  /// The values a host validates as geometry: every value except those sentinels. A NaN anywhere
-  /// else is still a document error.
+  /// The values a renderer checks as geometry: every value except those "no value" NaNs. A
+  /// non-finite value anywhere else stops the draw (`NativeCanvasCommands.drawable`).
   public var geometryValues: [Float] {
     guard !unsetValueIndices.isEmpty else { return values }
     return values.enumerated().compactMap { index, value in
@@ -889,8 +904,8 @@ public enum NativeSwiftGestureKind: Int, CaseIterable, Equatable, Sendable {
 /// AndroidX's `MarqueeModifierOperation`, with its float fields resolved for the frame.
 ///
 /// A marquee does not set `needsContinuousFrames`: content that fits its box never moves, and only
-/// the host's measurement knows whether it does. A host keeps the frames coming while a marquee's
-/// overflow is positive, as the Compose player acquires frame demand only then.
+/// the host's measurement knows whether it does. A host keeps the frames coming while `moves` holds,
+/// as the Compose player acquires frame demand only for an overflowing marquee.
 public struct NativeSwiftMarqueeSnapshot: Equatable, Sendable {
   /// How many sweeps to run; -1 repeats forever. The reference's sinusoidal timeline ignores it.
   public let iterations: Int
@@ -927,14 +942,28 @@ public struct NativeSwiftMarqueeSnapshot: Equatable, Sendable {
   public func offset(
     overflowDistance: Float, density: Float, elapsedSeconds: TimeInterval
   ) -> Float {
-    guard overflowDistance > 0 else { return 0 }
+    guard let durationSeconds = sweepSeconds(overflowDistance: overflowDistance, density: density)
+    else { return 0 }
     let initialDelaySeconds = initialDelayMillis / 1_000
     let sinceStartSeconds = Float(elapsedSeconds) - initialDelaySeconds
     guard sinceStartSeconds > initialDelaySeconds else { return 0 }
-    let durationSeconds = overflowDistance / (density * velocity)
-    guard durationSeconds.isFinite, durationSeconds > 0 else { return 0 }
     let phase = sinceStartSeconds.truncatingRemainder(dividingBy: durationSeconds) / durationSeconds
     return -overflowDistance * ((1 - cos(phase * 2 * Float.pi)) / 2)
+  }
+
+  /// Whether the content ever leaves its rest position, so a host needs frames for it: only with a
+  /// sweep `offset` can run.
+  public func moves(overflowDistance: Float, density: Float) -> Bool {
+    sweepSeconds(overflowDistance: overflowDistance, density: density) != nil
+  }
+
+  /// One sweep's duration, or nil when it is not finite and positive (no overflow, a velocity of 0
+  /// or NaN), where `androidXMarqueeOffset` holds the content still. AndroidX divides by the signed
+  /// velocity, but its phase only feeds a cosine, so a negative velocity sweeps as its magnitude.
+  private func sweepSeconds(overflowDistance: Float, density: Float) -> Float? {
+    guard overflowDistance > 0 else { return nil }
+    let durationSeconds = overflowDistance / (density * velocity.magnitude)
+    return durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : nil
   }
 }
 
@@ -1023,7 +1052,19 @@ public struct NativeSwiftTextSnapshot: Sendable {
   /// size that is a variable is the pixels it evaluates to and is never scaled, and neither is any
   /// font size in a LEGACY or PIXELS document. See `isDensityTypedFontSize(_:densityBehavior:)`.
   public let sizeIsDensityTyped: Bool
+  /// The size text takes when its own is below 0 or NaN: a reset Android paint's, Skia's
+  /// `SkPaintDefaults_TextSize` (12 pixels), which `Paint.setTextSize` then leaves in place.
+  static let androidDefaultSize: Float = 12
+  /// The largest text size the players lay out (Kotlin's `RC_MAX_TEXT_SIZE_PX`): past any screen,
+  /// yet far inside the range where text metrics stay finite.
+  public static let maximumSize: Float = 1_000_000
+  /// The text size a canvas paint holds until the document sets one: the Kotlin player's
+  /// `RcPaintState.textSize`.
+  public static let paintDefaultSize: Float = 16
+  /// The weight a NaN weight, or a weight variable with no value yet, takes: `FontWeight.Normal`.
+  static let normalWeight: Float = 400
   public let style: Int
+  /// The font weight, 1...1000; NaN is the normal 400.
   public let weight: Float
   public let familyID: Int
   public let familyName: String?
@@ -1046,10 +1087,13 @@ public struct NativeSwiftTextSnapshot: Sendable {
   ) {
     self.value = value
     self.colorARGB = colorARGB
-    self.size = size
-    self.sizeIsDensityTyped = sizeIsDensityTyped
+    // Android's `Paint.setTextSize` ignores a size below 0 or NaN (hwui `jni/Paint.cpp:1001`) on a
+    // just-reset paint (AndroidPaintContext.java:533), so such text draws at Skia's default size.
+    let takesSize = size >= 0
+    self.size = Self.androidSize(size, unset: Self.androidDefaultSize)
+    self.sizeIsDensityTyped = takesSize && sizeIsDensityTyped
     self.style = style
-    self.weight = weight
+    self.weight = weight.isNaN ? Self.normalWeight : min(max(weight, 1), 1_000)
     self.familyID = familyID
     self.familyName = familyName
     self.alignment = alignment
@@ -1057,6 +1101,13 @@ public struct NativeSwiftTextSnapshot: Sendable {
     self.maximumLines = maximumLines
     self.autosize = autosize
     self.fontSettings = fontSettings
+  }
+
+  /// A text size as Android's `Paint.setTextSize` takes it, in document units (Kotlin caps pixels).
+  /// - Parameter unset: The size the paint already holds, kept for a size below 0 or NaN.
+  /// - Returns: `size` capped at `maximumSize`, or `unset`.
+  public static func androidSize(_ size: Float, unset: Float) -> Float {
+    size >= 0 ? min(size, maximumSize) : unset
   }
 
   /// Whether a `CoreText` / `TextLayout` font-size word is dp-typed, as remote-core 1.0.0-alpha22's
@@ -1075,6 +1126,23 @@ public struct NativeSwiftTextAutosize: Equatable, Sendable {
   public init(minimumFontSize: Float, maximumFontSize: Float) {
     self.minimumFontSize = minimumFontSize
     self.maximumFontSize = maximumFontSize
+  }
+
+  /// AndroidX `CoreText`'s bounds when the document sets none (CoreText.java:720-721); Kotlin's
+  /// `RC_AUTOSIZE_DEFAULT_MIN_PX` and `RC_AUTOSIZE_DEFAULT_MAX_PX`.
+  static let defaultMinimumFontSize: Float = 4
+  static let defaultMaximumFontSize: Float = 400
+
+  /// The Kotlin player's `rcAutoSizeRange`: an unset or non-positive bound (the wire's -1) takes
+  /// its default, each is at most `NativeSwiftTextSnapshot.maximumSize`, and the minimum never
+  /// passes the maximum. AndroidX's own search never ends on an infinite bound (CoreText.java:725).
+  static func resolved(minimum: Float?, maximum: Float?) -> NativeSwiftTextAutosize {
+    func bound(_ value: Float?, default fallback: Float) -> Float {
+      min(value.flatMap { $0 > 0 ? $0 : nil } ?? fallback, NativeSwiftTextSnapshot.maximumSize)
+    }
+    let upper = bound(maximum, default: defaultMaximumFontSize)
+    let lower = min(bound(minimum, default: defaultMinimumFontSize), upper)
+    return NativeSwiftTextAutosize(minimumFontSize: lower, maximumFontSize: upper)
   }
 
   /// The font size the text takes: what autosize chooses, as the reference's

@@ -31,4 +31,25 @@ class RcMarqueeTimelineTest {
     assertEquals(-240f, at(11.5f), .01f)
     assertEquals(-35.15f, at(14f), .01f)
   }
+
+  @Test
+  fun aNegativeVelocitySweepsAsItsMagnitude() {
+    // MarqueeModifierOperation.java:180-184: a negative duration flips the phase's sign, and the
+    // cosine is even, so AndroidX scrolls the same way at -v as at v.
+    for (seconds in listOf(1.25f, 1.6f, 2f, 7.3f)) {
+      assertEquals(
+        androidXMarqueeOffset(100f, 1f, 100f, 500f, seconds),
+        androidXMarqueeOffset(100f, 1f, -100f, 500f, seconds),
+        .001f,
+      )
+    }
+    assertEquals(-50f, androidXMarqueeOffset(100f, 1f, -100f, 500f, 1.25f), .001f)
+  }
+
+  @Test
+  fun aVelocityThatGivesNoFiniteDurationStandsStill() {
+    for (velocity in listOf(Float.NaN, 0f, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY)) {
+      assertEquals(0f, androidXMarqueeOffset(100f, 1f, velocity, 500f, 1.25f), "$velocity")
+    }
+  }
 }
