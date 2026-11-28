@@ -645,9 +645,8 @@ enum NativeSwiftDocumentDecoder {
       for _ in 0..<argumentCount { _ = try input.int(NativeSwiftWireField.nestedMacroArgument) }
     }
 
-    /// The texts written inside a conditional, a function body or an impulse: an action sends those
-    /// as the last frame left them (`RcPlayerState.textProducers` leaves out a producer in a
-    /// container that does not run every frame).
+    /// Texts written inside a conditional, a function body or an impulse, which may not run every
+    /// frame, so an action sends them as the last frame left them (`RcPlayerState.textProducers`).
     var scopedTextOutputs: Set<Int> = []
     /// A text operation: a resolution step in wire order, and a candidate producer for
     /// `ParsedTextOperation.producers`.
@@ -3189,8 +3188,8 @@ enum NativeSwiftDocumentDecoder {
         pending.append(contentsOf: node.children)
       }
     }
-    // Whether a float expression reads an id that it, or a step after it, writes last: the first
-    // pass then saw a value the pass itself replaces. Without float expressions nothing can.
+    // Whether a float expression reads an id that it, or a later step, writes last: the first pass
+    // then reads a value that pass itself replaces.
     var floatExpressionsReadForward = false
     if !expressions.isEmpty {
       var lastWriter: [Int: Int] = [:]
@@ -3201,8 +3200,10 @@ enum NativeSwiftDocumentDecoder {
       floatExpressionsReadForward = resolutionSteps.enumerated().contains { index, step in
         guard case .floatExpression(let expression) = step else { return false }
         return expression.words.contains { word in
-          NativeSwiftFloatExpression.referenceID(word).flatMap { lastWriter[$0] }
-            .map { $0 >= index } ?? false
+          guard let id = NativeSwiftFloatExpression.referenceID(word),
+            let writerIndex = lastWriter[id]
+          else { return false }
+          return writerIndex >= index
         }
       }
     }

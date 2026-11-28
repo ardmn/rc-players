@@ -404,6 +404,7 @@ import Testing
         writer.u8(Op.animatedFloat).int(staticID).int(1).int(Writer.literal(3))
       }
       if shape != .floats {
+        // I60 = one token, a variable id (mask 1).
         writer.u8(Op.integerExpression).int(60).int(1).int(1)
           .int(shape == .integerOverMoving ? movingID : staticID)
       }

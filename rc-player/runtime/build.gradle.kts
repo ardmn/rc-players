@@ -62,12 +62,9 @@ kotlin {
   }
 }
 
-// RcValueResolutionDifferentialTest compares the Kotlin player against this fixture, which the
-// native Swift core's NativeSwiftValueResolutionDifferentialTests replays. The path reaches the
-// test as a tracked input file, not a string, so the task's cache key stays relocatable. Both
-// system properties are set on every run, so the test fails when it reads a name this file no
-// longer sets. `-Prc.valueResolutionDifferential.update=true` rewrites the fixture in the same run
-// that checks it, so that run is never up to date or taken from the cache.
+// The fixture RcValueResolutionDifferentialTest checks and the Swift
+// NativeSwiftValueResolutionDifferentialTests replays. A tracked input file keeps the cache key
+// relocatable; an update run rewrites the fixture, so it is never up to date or cached.
 abstract class ValueResolutionDifferentialFixture : CommandLineArgumentProvider {
   @get:InputFiles @get:PathSensitive(PathSensitivity.NONE) abstract val fixture: RegularFileProperty
 

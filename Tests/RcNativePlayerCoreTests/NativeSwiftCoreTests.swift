@@ -1890,17 +1890,16 @@ import Testing
       timedValues.floats[28] == -10,
       "a from-now interval resolved to \(String(describing: timedValues.floats[28]))")
     // Without a wall clock there is no "now" to measure from, and the slot stays unwritten rather
-    // than measuring from the 1970 epoch; fields of a stated instant still resolve, in a fresh
-    // session and in one that resolved with a clock before.
+    // than measuring from the 1970 epoch; fields of a stated instant still resolve.
     let unclocked = try NativeSwiftDocumentSession.open(
       data: timed.data, toleratingRootlessData: true
     ).probeValues(timeSeconds: 0)
-    // The same session without a clock leaves 28 unset again, as it leaves the calendar.
-    let reused = try timedSession.probeValues(timeSeconds: 0)
-    #expect(reused.floats[28] == nil, "\(String(describing: reused.floats[28]))")
     #expect(
       unclocked.floats[28] == nil && unclocked.floats[24] == 2023,
       "an unclocked time attribute resolved to \(String(describing: unclocked.floats[28]))")
+    // A session that resolved with a clock before leaves 28 unset again, as it leaves the calendar.
+    let reused = try timedSession.probeValues(timeSeconds: 0)
+    #expect(reused.floats[28] == nil, "\(String(describing: reused.floats[28]))")
     let timedSnapshot = try timedSession.snapshot()
     #expect(
       !timedSnapshot.needsWallClockRefresh,

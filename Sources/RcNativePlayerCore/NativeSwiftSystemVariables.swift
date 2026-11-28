@@ -60,29 +60,26 @@ public enum NativeSwiftSystemVariables {
   /// Calendar year.
   public static let year = 35
 
-  /// Every id this player loads at the start of a resolution, so the session can tell one from a
-  /// document's own (`isSystem`): a write to one claims it from the player
-  /// (`RcPlayerState.claimedSystemIds`), and an integer expression reads an unclaimed one as its
-  /// float truncated. The reference's `RcSystemVariables.ALL` also has `unsuppliedIDs`, which this
-  /// core does not load; at those ids a document's value is its own. The differential fixture
-  /// carries Kotlin's set, and `NativeSwiftValueResolutionDifferentialTests` fails when the two
-  /// drift.
+  /// Every id this player loads at the start of a resolution: a document write claims one
+  /// (`RcPlayerState.claimedSystemIds`). Kotlin's `RcSystemVariables.ALL` is this plus
+  /// `unsuppliedIDs`; `NativeSwiftValueResolutionDifferentialTests` fails when the two drift.
   static let allIDs = [
     continuousSeconds, timeInSeconds, timeInMinutes, timeInHours, calendarMonth, offsetToUTC,
     weekDay, dayOfMonth, density, animationTime, epochSecond, fontSize, dayOfYear, year,
   ]
 
-  /// The reference's `WINDOW_WIDTH`, `WINDOW_HEIGHT` and `ANIMATION_DELTA_TIME`, which this core
-  /// does not load.
+  /// `ID_WINDOW_WIDTH` (`RemoteContext.java:959`).
   static let windowWidth = 5
+  /// `ID_WINDOW_HEIGHT` (`RemoteContext.java:960`).
   static let windowHeight = 6
+  /// `ID_ANIMATION_DELTA_TIME` (`RemoteContext.java:999`).
   static let animationDeltaTime = 31
+
   /// The reference's ids this core does not load.
   static let unsuppliedIDs: Set<Int> = [windowWidth, windowHeight, animationDeltaTime]
 
-  /// `allIDs` as bits, every id being below `maskWidth` (a test holds it to that): a resolution
-  /// asks of every value it writes whether it is a system id, so the answer is a shift rather
-  /// than a hash.
+  /// `allIDs` as bits (a test holds every id below `maskWidth`): `isSystem` runs on every write a
+  /// resolution makes, so it is a shift rather than a hash.
   private static let allMask: UInt64 = allIDs.reduce(0) { $0 | (1 << UInt64($1)) }
 
   /// How many ids `allMask` can hold.

@@ -13,10 +13,10 @@ enum ParsedNumericConstant {
   }
 }
 
-/// One value operation a resolution runs, as `RcPlayerState.applyContentStateOperation` (and, for a
-/// time attribute or matrix-vector math, the canvas draw pass) applies it. The document keeps them
-/// in wire order, so a step reads what the steps before it wrote in the same pass, and a number or
-/// colour the steps after it wrote in the previous one (texts start each pass from the document's).
+/// One value operation a resolution runs, as `RcPlayerState.applyContentStateOperation` applies it
+/// (a time attribute or matrix-vector math: as the canvas draw pass does). In wire order, a step
+/// reads earlier steps' values from this pass and later steps' numbers and colours from the last
+/// one; texts restart from the document's each pass.
 enum ParsedResolutionStep {
   case floatExpression(ParsedFloatExpression)
   case integerExpression(id: Int, ParsedIntegerExpression)
@@ -35,9 +35,8 @@ enum ParsedResolutionStep {
   case timeAttribute(ParsedTimeAttribute)
   case matrixVectorMath(ParsedMatrixVectorMath)
 
-  /// Calls `body` with each numeric id the step writes. A visitor rather than an array, so the
-  /// decode-time pass over every step allocates nothing: only matrix-vector math writes more than
-  /// one id.
+  /// Calls `body` with each numeric id the step writes; a visitor, so the decode-time scan of every
+  /// step allocates no array.
   func forEachNumericOutputID(_ body: (Int) -> Void) {
     switch self {
     case .floatExpression(let expression): body(expression.id)

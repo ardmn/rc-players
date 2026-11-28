@@ -237,10 +237,8 @@ class RcValueResolutionDifferentialTest {
                 }
               words += RcFloatExpressionEvaluator.operatorWord(operator)
             }
-            // One float expression per id: the Kotlin player memoises an expression's inputs by
-            // the id it writes, so a second expression at that id is skipped while the first's
-            // inputs stand still (a Kotlin bug, not an order to copy). A few draws
-            // find a free id; with none, the operation is a constant instead.
+            // One float expression per id: the Kotlin player memoises inputs by output id, so a
+            // second expression at that id is wrongly skipped. With no free id, emit a constant.
             val freeIDs = generateSequence(::writeID).take(FREE_ID_DRAWS)
             val id = freeIDs.firstOrNull { it !in floatExpressionIds }
             if (id == null) {
@@ -447,7 +445,8 @@ class RcValueResolutionDifferentialTest {
   private fun observe(state: RcPlayerState): List<String> {
     val numbers = OBSERVED_IDS.map { id ->
       val integer = state.storedInteger(id)?.toString() ?: "-"
-      jsonString("$integer/${state.float(id)?.toRawBits()?.toUInt()?.toString(16) ?: "-"}")
+      val floatBits = state.float(id)?.toRawBits()?.toUInt()?.toString(16) ?: "-"
+      jsonString("$integer/$floatBits")
     }
     val texts = TEXT_IDS.map { id -> state.text(id)?.let(::jsonString) ?: "null" }
     val colors = COLOR_IDS.map { id ->
@@ -617,16 +616,15 @@ class RcValueResolutionDifferentialTest {
     const val CLICK_COMPONENT = 3
     val CONTAINER_END = RcNoArg(RcOpcodes.CONTAINER_END)
 
-    // RcFloatExpressionEvaluator's operators, by their AndroidX numbers.
+    // AndroidX's operator numbers (`AnimatedFloatExpression.java:38-56`).
     const val FLOAT_ADD = RcFloatExpressionEvaluator.OFFSET + 1
     const val FLOAT_SUB = RcFloatExpressionEvaluator.OFFSET + 2
     const val FLOAT_MUL = RcFloatExpressionEvaluator.OFFSET + 3
     const val FLOAT_MIN = RcFloatExpressionEvaluator.OFFSET + 6
     const val FLOAT_MAX = RcFloatExpressionEvaluator.OFFSET + 7
     val FLOAT_OPERATORS = listOf(FLOAT_ADD, FLOAT_SUB, FLOAT_MUL, FLOAT_MIN, FLOAT_MAX)
-    /**
-     * A product's second operand, so a value that multiplies itself frame after frame stays finite.
-     */
+
+    /** A product's second operand, so a value that multiplies itself each frame stays finite. */
     val MULTIPLIERS = listOf(-1f, 0.5f, 2f)
 
     /** The range of an integer constant and of an action's integer value. */

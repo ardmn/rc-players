@@ -131,7 +131,7 @@ class RcValueOrderReferenceTest {
 
   @Test
   fun constantsReplayInWireOrder() {
-    // The Swift test also reads 51 through an integer expression, I53 = [51], after the load.
+    // I53 = [51] reads the loaded value through an integer expression.
     val reader = RcIntegerExpression(53, 1, listOf(51))
     fun load(vararg operations: RcOperation): RcPlayerState =
       RcPlayerState(document(*operations, reader)).apply {

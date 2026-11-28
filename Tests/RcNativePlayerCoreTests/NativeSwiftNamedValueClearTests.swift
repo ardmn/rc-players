@@ -124,8 +124,8 @@ import Testing
   }
 
   /// Clearing an integer variable whose id also declared a float constant writes the recorded
-  /// integer back as Kotlin's clear does, through `setInteger`: both views are the integer, 2 and
-  /// 2.0, not the constant's 2.5 (Kotlin's `RcPlayerState` gives 2 / 2.0 for this document).
+  /// integer back through `setInteger`, as Kotlin's clear does: both views are 2 (Kotlin's
+  /// `RcPlayerState` gives 2 / 2.0 for this document), not the constant's 2.5.
   @Test func clearingAnIntegerWritesTheRecordedIntegerToBothViews() throws {
     let document = Writer()
     document.header(width: 100, height: 100)

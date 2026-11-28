@@ -7,10 +7,10 @@ import Testing
 /// to the session for the resolver that runs one wire-order pass as `RcPlayerState` does. Each
 /// test names the test it ports; the value asserted is Kotlin's, from that Kotlin test or, for an
 /// AndroidX case or an extension of a Kotlin one, from `RcValueOrderReferenceTest`. Where the
-/// session gives something else today the assertion sits in a `withKnownIssue` that says what
-/// differs, one known issue per expectation so a partial fix shows. Where a test runs frames, the
-/// values are read from what the snapshot drew, not from `probeValues`, which resolves again on
-/// its own; data-only documents with no frame are read through `probeValues`.
+/// session differs, the assertion sits in a `withKnownIssue` that says how, one known issue per
+/// expectation so a partial fix shows. Where a test runs frames, the values are read from what the
+/// snapshot drew, not from `probeValues`, which resolves again on its own; data-only documents
+/// with no frame are read through `probeValues`.
 ///
 /// The known issues left are not resolution order: the decoder's decode-time conditionals and
 /// unrolled loops, the float evaluator's refusals and the float animation runtime.
@@ -139,6 +139,7 @@ import Testing
     let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
     #expect((root.node(withComponentID: 5) != nil) == holds, "type \(type), \(left) vs 3")
   }
+
   /// The same test's unknown type: Kotlin evaluates `condition(99)` as false, so the branch is not
   /// drawn.
   @Test func anUnknownConditionalTypeDoesNotHold() throws {
@@ -380,6 +381,8 @@ import Testing
       document.u8(Op.colorConstant).int(8).int(Self.argb(0xFFFF_FFFF))
       document.u8(Op.dataFloat).int(20).float(0.25)
       document.u8(Op.colorExpressions).int(30).int(Mode.idIDInterpolate).int(7).int(8).float(0.5)
+      // The mode word's high half is the alpha: a byte for HSV, 1024ths for ARGB, a float id for
+      // ID_ARGB (AndroidX `ColorExpression.java:475`, `:464`, `:453`).
       document.u8(Op.colorExpressions).int(31).int((128 << 16) | Mode.hsv)
         .float(0.5).float(1).float(1)
       document.u8(Op.colorExpressions).int(32).int((512 << 16) | Mode.argb)
@@ -437,6 +440,7 @@ import Testing
         .int(7).int(8).float(0.5)
       document.u8(Op.attributeColor).int(31).int(30).u16(NativeSwiftColorAttributeType.brightness)
     }.probeValues(timeSeconds: 0)
+    // 186 / 255: C30 is 0xFFBABABA, as `colourExpressionsInterpolateAndBuildFromChannels` pins.
     #expect(values.floats[31] == 0.729_411_8, "\(values.floats[31] as Any)")
   }
 
@@ -460,6 +464,7 @@ import Testing
     document.u8(Op.containerEnd).u8(Op.containerEnd)
     let widths = Self.drawnWidths(
       try NativeSwiftDocumentSession.open(data: document.data).snapshot(timeSeconds: 0))
+    // C7's alpha, 0x80 / 255.
     #expect(widths == [0.501_960_8], "\(widths)")
   }
 
@@ -469,6 +474,7 @@ import Testing
       let matrix: [Float] = [1, 0, 0, 2, 0, 1, 0, 3, 0, 0, 1, 0, 0, 0, 0, 1]
       document.u8(Op.matrixConstant).int(20).int(0).int(matrix.count)
       for value in matrix { document.float(value) }
+      // Type, matrix, 2 outputs (30, 31), 2 inputs: AndroidX `MatrixVectorMath.java:156-173`.
       document.u8(Op.matrixVectorMath).u16(NativeSwiftMatrixVectorMathType.multiply).int(20)
         .int(2).int(30).int(31).int(2).float(4).float(5)
     }.probeValues(timeSeconds: 0)
@@ -707,7 +713,7 @@ import Testing
 
   /// `RcLayoutRenderTest.aVisibilityNamingTheLiteralVisibleIdShowsTheComponent`: a visibility
   /// modifier naming id 1, which nothing writes, reads 1 (VISIBLE): an unset id below 42 is its
-  /// own value (`RcPlayerState.integer`). Passes today; pinned for the rewrite.
+  /// own value (`RcPlayerState.integer`).
   @Test func aVisibilityNamingTheLiteralVisibleIDShowsTheComponent() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -742,11 +748,9 @@ import Testing
   /// `RcSystemVariableTest.anExpressionOverTheContinuousClockEvaluatesToANumberAndMovesBetweenFrames`:
   /// F100 = [CONTINUOUS_SEC] * 2 at 30:45.250 into the hour is 3690.5, and 3691.5 half a second on.
   @Test func anExpressionOverTheContinuousClockMovesBetweenFrames() throws {
+    let continuousSeconds = Writer.nanReference(System.continuousSeconds)
     let session = try Self.openWithRoot { document in
-      document.u8(Op.animatedFloat).int(100).int(3).int(
-        Writer.nanReference(System.continuousSeconds)
-      )
-      .float(2).int(Self.mul)
+      document.u8(Op.animatedFloat).int(100).int(3).int(continuousSeconds).float(2).int(Self.mul)
     }
     let first = try session.probeValues(
       timeSeconds: 0, wallClock: NativeSwiftWallClock(epochMillis: KotlinReference.epochMillis))
@@ -758,7 +762,7 @@ import Testing
   }
 
   /// `RcSystemVariableTest.aHostWriteToASystemIdClaimsItForGood`: a host write to OFFSET_TO_UTC
-  /// before the first frame survives the clock's load.
+  /// before the first frame survives the clock's load; CONTINUOUS_SEC is 30:45.250 into the hour.
   @Test func aHostWriteToASystemIdClaimsIt() throws {
     let session = try Self.openWithRoot { document in
       Self.drawWidth(document, of: System.offsetToUTC)
@@ -791,13 +795,14 @@ import Testing
     session.setHostDensity(-.infinity, fontScale: -2)
     var values = try session.probeValues(timeSeconds: 0)
     #expect(values.floats[System.density] == 3)
-    let sp = NativeSwiftSystemVariables.defaultFontSizeSp
+    // 14 sp, Kotlin's unscaled FONT_SIZE (`RcSystemVariableTest.kt:661`).
+    let sp: Float = 14
     #expect(values.floats[System.fontSize] == sp * 1.5 * 3)
     session.setHostDensity(0, fontScale: 2)
     values = try session.probeValues(timeSeconds: 0)
     let fontSize = values.floats[System.fontSize]
     #expect(values.floats[System.density] == 3, "\(values.floats[System.density] as Any)")
-    #expect(fontSize == sp * 2 * 3, "\(fontSize.map { String($0.bitPattern, radix: 16) } as Any)")
+    #expect(fontSize == sp * 2 * 3, "\(fontSize as Any)")
   }
 
   // MARK: - RcExpressionMemoTest
@@ -906,6 +911,7 @@ import Testing
     document.header(width: 100, height: 100)
     document.u8(Op.dataFloat).int(58).float(source)
     document.namedVariable(id: 58, type: Named.float, name: "source")
+    // Animation words in the high half, one value word in the low (`FloatExpression.java:367-368`).
     document.u8(Op.animatedFloat).int(59).int((animation.count << 16) | 1)
       .int(Writer.nanReference(58))
     for word in animation { document.int(word) }
@@ -1106,9 +1112,9 @@ import Testing
     #expect(values.floats[System.year] == Float(clock.fields.year))
   }
 
-  /// An event's data runs the steps once more before its condition (`reapplyResolutionSteps`): F41
-  /// = [40] * 2 over the data slot 40 reads 6 for the data 3, so the condition max([41] - 5, 0) is
-  /// not zero and the handler runs; read before the data, F41 is 0 and the condition 0.
+  /// An event's data runs the steps once more before its condition (`reapplyResolutionSteps`):
+  /// F41 = [40] * 2 over the data slot 40 reads 6 for the data 3, so the condition
+  /// max([41] - 5, 0) is not zero and the handler runs; read before the data, it would be 0.
   @Test func anEventConditionReadsAValueDerivedFromItsData() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -1119,7 +1125,7 @@ import Testing
     let max = Writer.floatOperator(NativeSwiftFloatOperator.max)
     let (eventType, filter) = (5, 7)
     document.u8(Op.eventAction).int(NativeSwiftEventActionWire.version)
-      .int(eventType).int(filter).u16(0).u16(1)
+      .int(eventType).int(filter).u16(NativeSwiftEventActionWire.flagNone).u16(1)
       .int(1).int(40)
       .int(5).int(Writer.nanReference(41)).float(5).int(sub).float(0).int(max)
     document.u8(Op.valueIntegerChangeAction).int(60).int(1)
@@ -1134,7 +1140,7 @@ import Testing
   }
 
   /// `RcPlayerState.setHostDensity` publishes the density at once, so an action that runs before
-  /// the next frame reads it: F50 := [DENSITY] * 10 after the host reports 3 is 30.
+  /// the next frame reads it: a click writes F50 := F51 = [DENSITY] * 10, 30 for a density of 3.
   @Test func aHostDensityIsReadByInputBeforeTheNextFrame() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -1254,24 +1260,23 @@ import Testing
     #expect(widths == [4.5], "\(widths)")
   }
 
-  // MARK: - Review round on the merge with upstream #992
+  // MARK: - System ids, shadowed expressions and probes
 
   /// A state layout indexed by a system id reads that id's integer view, as an integer expression
   /// does (`integerVariable`): WEEK_DAY is 1...7, so a two-branch layout shows its second branch.
-  /// The integer store has no entry for a system id, and reading it directly gave branch 0.
   @Test func aStateLayoutIndexedByASystemIDReadsItsIntegerView() throws {
     let document = Writer()
     document.header(width: 300, height: 200)
     document.u8(Op.layoutRoot).int(-2)
     document.u8(Op.layoutState).int(-3).int(0).int(1).int(4).int(System.weekDay)
-    document.u8(Op.modifierHeight).int(6).float(100)
+    document.u8(Op.modifierHeight).int(NativeSwiftDimensionType.exactDp).float(100)
     document.u8(Op.layoutBox).int(-5).int(0).int(1).int(4)
-    document.u8(Op.modifierWidth).int(6).float(120)
-    document.u8(Op.modifierHeight).int(6).float(80)
+    document.u8(Op.modifierWidth).int(NativeSwiftDimensionType.exactDp).float(120)
+    document.u8(Op.modifierHeight).int(NativeSwiftDimensionType.exactDp).float(80)
     document.u8(Op.containerEnd)
     document.u8(Op.layoutBox).int(-6).int(0).int(1).int(4)
-    document.u8(Op.modifierWidth).int(6).float(200)
-    document.u8(Op.modifierHeight).int(6).float(150)
+    document.u8(Op.modifierWidth).int(NativeSwiftDimensionType.exactDp).float(200)
+    document.u8(Op.modifierHeight).int(NativeSwiftDimensionType.exactDp).float(150)
     document.u8(Op.containerEnd).u8(Op.containerEnd).u8(Op.containerEnd)
     let clock = NativeSwiftWallClock(epochMillis: 1_780_000_000_000)
     #expect(clock.fields.isoDayOfWeek >= 1)
@@ -1282,13 +1287,13 @@ import Testing
   }
 
   /// I60 = [TIME_IN_SEC] + 0, F70 = [60] * 10, then I60 = 5: the first integer expression still
-  /// runs as its own step, so the document reads the clock and asks for a wall-clock refresh, though
-  /// the last expression at 60 reads none.
+  /// runs as its own step, so the document reads the clock and asks for a wall-clock refresh,
+  /// though the last expression at 60 reads none.
   @Test func aShadowedIntegerExpressionOverTheClockKeepsTheDocumentLive() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
-    document.u8(Op.integerExpression).int(60).int(0b101).int(3).int(System.timeInSeconds).int(0)
-      .int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
+    document.u8(Op.integerExpression).int(60).int(Self.variableThenOperator).int(3)
+      .int(System.timeInSeconds).int(0).int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
     document.u8(Op.animatedFloat).int(70).int(3).int(Writer.nanReference(60)).float(10)
       .int(Self.mul)
     document.u8(Op.integerExpression).int(60).int(0).int(1).int(5)
@@ -1304,7 +1309,7 @@ import Testing
     let document = Writer()
     document.header(width: 100, height: 100)
     document.u8(Op.dataFloat).int(60).float(1)
-    document.namedVariable(id: 60, type: NativeSwiftNamedVariableType.float, name: "USER:x")
+    document.namedVariable(id: 60, type: Named.float, name: "USER:x")
     document.u8(Op.animatedFloat).int(61).int(3).int(Writer.nanReference(60)).float(2)
       .int(Self.mul)
     document.u8(Op.floatList).int(14).int(1).int(Writer.nanReference(61))
@@ -1318,7 +1323,7 @@ import Testing
 
   /// `RcPlayerState`'s init ends with `beginFrame()`, so an event that arrives before any frame
   /// reads the loaded density (1 until the host reports one): F50 = 14 / [DENSITY], run again
-  /// for the event's data. Unloaded, the density read 0 and the event's pass refused 14 / 0.
+  /// for the event's data, is 14 rather than a refused 14 / 0.
   @Test func anEventBeforeTheFirstFrameReadsTheLoadedDensity() throws {
     let document = Writer()
     document.header(width: 100, height: 100)
@@ -1327,9 +1332,9 @@ import Testing
       .int(Writer.floatOperator(NativeSwiftFloatOperator.div))
     let (eventType, filter) = (5, 7)
     document.u8(Op.eventAction).int(NativeSwiftEventActionWire.version)
-      .int(eventType).int(filter).u16(0).u16(1)
+      .int(eventType).int(filter).u16(NativeSwiftEventActionWire.flagNone).u16(1)
       .int(1).int(40)
-      .int(1).float(1)
+      .int(1).float(1)  // a condition of one word, the constant 1: always holds
     document.u8(Op.valueIntegerChangeAction).int(60).int(1)
     document.u8(Op.containerEnd)
     document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)

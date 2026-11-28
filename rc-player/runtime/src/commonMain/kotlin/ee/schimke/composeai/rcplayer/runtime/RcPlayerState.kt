@@ -718,8 +718,8 @@ private constructor(
   public fun text(id: Int): String? = texts[id]
 
   /**
-   * The integer view at [id] as stored, without [integer]'s answer for an unwritten id below 42,
-   * and without noting a read: what a differential test compares another player's integers with.
+   * The integer view at [id] as stored, null when none is, without noting a read; unlike [integer],
+   * it does not answer an unwritten id below [LITERAL_ID_LIMIT] with the id itself.
    */
   internal fun storedInteger(id: Int): Int? = integers.peek(id)
 

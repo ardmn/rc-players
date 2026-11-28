@@ -54,11 +54,10 @@ enum ParsedTextOperation {
     }
   }
 
-  /// The text operations an action can run again (`RcPlayerState.textProducers`): a text written
-  /// by exactly one operation, which does not read its own output, from texts that are constant or
-  /// qualify themselves. Any other text is sent as the last frame left it. Settled once per
-  /// document in O(text operations + their inputs), with an explicit stack rather than recursion,
-  /// as a document can chain texts as deep as its length allows.
+  /// The text operations an action can run again (`RcPlayerState.textProducers`): the sole writer
+  /// of its text, not reading its own output, from texts that are constant or qualify themselves.
+  /// O(operations + inputs), with an explicit stack because a text chain can be as deep as the
+  /// document.
   ///
   /// - Parameter scopedOutputs: texts a producer writes inside a container that does not run every
   ///   frame (a conditional, a function body, an impulse), which never qualify.

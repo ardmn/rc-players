@@ -157,7 +157,8 @@ enum NativeSwiftFloatExpression {
     return values[Int(word & referenceMask)] ?? 0
   }
 
-  /// A reference to float `id` as the wire spells one: the id in a quiet NaN's payload.
+  /// A reference to float `id`: the id in a quiet NaN's payload. AndroidX's `Utils.asNan` writes a
+  /// negative NaN instead (`Utils.java:34`); `resolve` reads either.
   static func referenceWord(_ id: UInt32) -> UInt32 { referencePrefix | id }
 
   private static let referencePrefix: UInt32 = 0x7fc0_0000

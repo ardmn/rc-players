@@ -20,16 +20,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// The texts a write set — a host's, a document action's, a custom component's — which every
   /// resolution puts back over the document's (`RcPlayerState.textOverrides`).
   private var textOverrides: [Int: String] = [:]
-  /// The float view of every numeric value, live (`RcPlayerState.floats`): the document's constants
-  /// as loaded, then whatever a resolution step, an action or a host wrote. A value write goes
-  /// through `storeFloat`, `setFloat` or `setInteger`, so the integer view below moves with it; only
-  /// a system load (float only) and a carried value write the views themselves.
+  /// The float view of every numeric value, live (`RcPlayerState.floats`). Writes go through
+  /// `storeFloat`, `setFloat` or `setInteger` so the integer view moves with it.
   ///
-  /// This and `integers` are read and written several times per value a resolution computes, and
-  /// only ever under `stateLock`, so the runtime's per-access exclusivity check is switched off for
-  /// them: it bought nothing the lock does not already guarantee and cost about a tenth of a
-  /// resolution's time at 5000 values (`scenarios.resolutionCost`). Nothing may hold a mutable
-  /// access to either while another starts: no `inout` of them across a call that reads them.
+  /// Exclusivity checks are off for this and `integers`: `stateLock` already serialises access, and
+  /// the check cost about a tenth of a resolution at 5000 values (`scenarios.resolutionCost`). So
+  /// never pass either `inout` across a call that reads it.
   @exclusivity(unchecked) private var floats: [Int: Float]
   /// The integer view of every numeric value, live (`RcPlayerState.integers`).
   @exclusivity(unchecked) private var integers: [Int: Int]
@@ -518,8 +514,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// Dispatches every legacy document-space click area containing the point, in wire order, with
   /// the bounds the last resolution left (`RcPlayerState.executeClickAreasAt`).
   ///
-  /// - Parameter timeSeconds: unused: input acts on the values the last resolution left, and the
-  ///   presented frame's time the call sites pass is not needed.
+  /// - Parameter timeSeconds: Unused; input acts on the values the last resolution left.
   public func clickAreas(x: Float, y: Float, timeSeconds: TimeInterval) throws -> [NativeSwiftEvent]? {
     stateLock.lock()
     defer { stateLock.unlock() }
@@ -537,13 +532,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     return events.isEmpty ? nil : events
   }
 
-  /// Runs the component's actions for `kind` against the values the last resolution left, as
-  /// `RcPlayerState.executeClick` does: input does not resolve the document again, so a value
-  /// derived from an earlier action's write in the same list reads as the last frame left it, and
-  /// a float expression an action evaluates eases at the last resolution's instant.
+  /// Runs the component's actions for `kind` against the values the last resolution left, without
+  /// resolving again (`RcPlayerState.executeClick`): a value derived from an earlier action's write
+  /// reads as the last frame left it.
   ///
-  /// - Parameter timeSeconds: unused: input acts on the values the last resolution left, and the
-  ///   presented frame's time the call sites pass is not needed.
+  /// - Parameter timeSeconds: Unused; input acts on the values the last resolution left.
   public func gesture(
     _ kind: NativeSwiftGestureKind, componentID: Int,
     sample: NativeSwiftPointerSample? = nil, timeSeconds: TimeInterval
@@ -562,9 +555,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// installed for its event type, and the core ships none. This is the plain router: every handler
   /// for `type`, in document order. A handler takes the event when its filter equals `metadata`: it
   /// writes `data` into its data ids, slot by slot (a zero id skips a slot), then, unless its
-  /// condition evaluates to zero, runs its actions and reports its flags. Once a handler has written
-  /// its data the document's steps run again (`reapplyResolutionSteps`), so the condition and the
-  /// actions read the values derived from that data.
+  /// condition evaluates to zero, runs its actions and reports its flags. After a handler writes
+  /// its data the steps run again, so the condition and actions read the values derived from it.
   public func dispatchEvent(
     type: Int, metadata: Int, data: [Float] = [], timeSeconds: TimeInterval
   ) throws -> NativeSwiftEventDispatch {
@@ -573,7 +565,6 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     var handledFlags: [Int] = []
     var events: [NativeSwiftEvent] = []
     for handler in document.eventHandlers where handler.type == type && handler.filter == metadata {
-      // The reference's `overrideFloat`, which publishes both numeric views as `storeFloat` does.
       var wroteData = false
       for (id, value) in zip(handler.dataIDs, data) where id != 0 && value.isFinite {
         invalidateResolution()
@@ -595,10 +586,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   }
 
   /// Runs every `RUN_ACTION` body that follows a component, once per frame instant, as the
-  /// reference does each time it paints the document: its writes land in the live store. Returns
-  /// whether any action ran, in which case the caller works the frame's values out once more
-  /// (`reapplyResolutionSteps`), so the values derived from those writes draw in the same frame, as the
-  /// reference's draw pass, which runs after the action, computes them.
+  /// reference does each time it paints the document. Returns whether any action ran, so the caller
+  /// can apply the steps again (`reapplyResolutionSteps`) and draw the derived values this frame.
   private func runFrameActions(timeSeconds: TimeInterval) throws -> Bool {
     guard !document.runActions.isEmpty, lastRunActionFrameTime != timeSeconds else { return false }
     lastRunActionFrameTime = timeSeconds
@@ -675,13 +664,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     return events
   }
 
-  /// Text `id` as it stands now, for an action that sends or stores it (`RcPlayerState.currentText`).
+  /// Text `id` as it stands now, for an action that sends or stores it
+  /// (`RcPlayerState.currentText`).
   ///
-  /// Between frames a derived text reads as the last frame computed it, while the values it was
-  /// computed from may have moved since — a host write, an earlier action. So the one operation that
-  /// computes it (`textProducers`) runs again from the current values, its inputs first. Any other
-  /// text is sent as it stands. The inputs are walked with an explicit stack, in O(the texts `id`
-  /// depends on).
+  /// A derived text is recomputed by its producer, inputs first, because its inputs may have moved
+  /// since the last frame. O(the texts `id` depends on), walked with an explicit stack.
   private func currentText(_ id: Int) -> String? {
     guard textOverrides[id] == nil, document.textProducers[id] != nil else { return texts[id] }
     var order: [ParsedTextOperation] = []
@@ -707,11 +694,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 
   /// Every value the document holds at `timeSeconds`, after one resolution at that instant.
   ///
-  /// It resolves the values as `snapshot` does — the frame's value operations, its run actions and
-  /// particles, against the measurements the last snapshot was given, though not its impulses or
-  /// frame effects — so a probe made after a `snapshot` at the same instant is a second
-  /// resolution: a document whose values read their own previous ones moves again, as the Kotlin
-  /// player's does on a second pass.
+  /// Resolves as `snapshot` does, minus impulses and frame effects, so a probe after a `snapshot`
+  /// at the same instant is a second pass: values that read their previous ones move again.
   @_spi(Conformance) public func probeValues(
     timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock? = nil
   ) throws -> NativeSwiftProbeValues {
@@ -867,9 +851,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   private func write(_ value: NativeSwiftNamedValue, to variable: ParsedNamedVariable) -> Bool {
     guard NativeSwiftNamedVariableDeclarations.accepts(value, by: variable) else { return false }
     let id = variable.id
-    // As `RcPlayerState.setNamedValue`: a host's write is the document's value until the document
-    // writes the id again — the next evaluation of an expression there replaces it — and a write to
-    // a named system variable claims it from the player's clock.
+    // `RcPlayerState.setNamedValue`: the value holds until the document writes the id again, and
+    // a write to a system variable claims it from the player's clock.
     switch value {
     case .float(let value):
       setFloat(id, value)
@@ -963,11 +946,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     let id = variable.id
     switch variable.type {
     case NativeSwiftNamedVariableType.float, NativeSwiftNamedVariableType.int:
-      // As `RcPlayerState.clearNamedValue`: a named system variable goes back to the clock, which
-      // the next resolution loads once the host's claim is gone; any other is written the value
-      // the document recorded (0 where it recorded none) through `setFloat` or `setInteger`, as a
-      // host's write would be. A document action's override stays: the expression at the id keeps
-      // leaving the value alone, as Kotlin's does.
+      // `RcPlayerState.clearNamedValue`: dropping the claim lets the next resolution load the
+      // clock; any other id gets the recorded value through the host's write path.
       if NativeSwiftSystemVariables.isSystem(id), !documentClaimedSystemIDs.contains(id) {
         claimedSystemIDs.remove(id)
       } else if variable.type == NativeSwiftNamedVariableType.float {
@@ -1643,16 +1623,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 
   // MARK: - Resolution (`RcPlayerState.beginFrame` + `applyLayoutContentStateOperations`)
 
-  /// One resolution at `timeSeconds`: the frame's start (`beginFrame`), then the document's value
-  /// operations once each, in wire order, against the live store (`applyContentStateOperation`),
-  /// then the component values a layout measured. Nothing iterates to a fixed point: a step that
-  /// reads a number or colour a later step writes reads the previous resolution's value, as it
-  /// does in Kotlin (a text reads the document's, as `beginFrame` reset them). Only when an input
-  /// moved after the pass — a measured component value — do the steps run once more
-  /// (`reapplyResolutionSteps`).
+  /// One resolution at `timeSeconds`: `beginFrame`, every step once in wire order against the live
+  /// store, then the measured component values. No fixed point: a step that reads a later step's
+  /// output reads the previous resolution's value, as in Kotlin.
   ///
-  /// Cost: O(steps + the expression words they evaluate) per resolution, plus the component-value
-  /// estimates when the document binds any; the same steps once more when a component value moved.
+  /// Cost: O(steps + the expression words they evaluate), plus the component-value estimates; the
+  /// steps run once more when a component value moved or a step failed waiting for one.
   private func resolveFrame(
     timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock?,
     measuredComponents: [Int: NativeSwiftMeasuredSize]
@@ -1662,11 +1638,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     // Only a resolution that finished counts for `resolveUnlessResolved`.
     resolvedFrameTime = nil
     beginFrame(timeSeconds: timeSeconds, wallClock: wallClock)
-    // A step may read a value that is not there yet: a component value before its measurement (0
-    // on the first frame), or a number a later step writes, on the first resolution. Then a step
-    // that divides by one can fail: it keeps its previous value, and the second pass
-    // (`reapplyResolutionSteps`, every step) runs it for real and throws if it still fails. A
-    // document with neither has nothing to wait for.
+    // A step that reads a not-yet-measured component value or a later step's output can fail on a
+    // zero divisor; it keeps its previous value and the second pass throws if it still fails.
     let bindsComponentValues = !document.componentValues.isEmpty
     let mayWait = bindsComponentValues || document.floatExpressionsReadForward
     var stepFailedWaiting = false
@@ -1679,12 +1652,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       }
     }
     if bindsComponentValues {
-      // `RcPlayerState.publishComponentValues`: a measured value that moved is stored, and the
-      // document's values are worked out once more so the ones over it see it. Kotlin refreshes
-      // the float expressions there, and its settle pass applies the content operations again
-      // before the frame is drawn (`RcSettledLayout`, `RcFirstFrameSettleTest`); here that second
-      // pass runs at once, so a colour or text built on a refreshed float does not draw a frame
-      // stale. An unchanged measurement — every frame once the layout is stable — costs nothing.
+      // Kotlin's settle pass (`RcSettledLayout`) applies the operations again before drawing; here
+      // it runs at once, and only when a measurement moved or a step failed waiting.
       if publishComponentValues(measuredComponents) || stepFailedWaiting {
         try reapplyResolutionSteps()
       }
@@ -1694,10 +1663,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     resolvedFrameTime = timeSeconds
   }
 
-  /// One resolution against the last measurements, then what the document runs after its values,
-  /// against the live store: a `RUN_ACTION` body's writes and the particle registers, each followed
-  /// by the steps once more so the values over them are this frame's too. With particles that is
-  /// every frame: twice the steps' cost, three times with run actions as well.
+  /// One resolution against the last measurements, then the `RUN_ACTION` bodies and particles,
+  /// each followed by the steps once more so derived values are this frame's. With particles that
+  /// is twice the steps' cost every frame, three times with run actions too.
   private func resolveFrameAndRunDocument(
     timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock?
   ) throws {
@@ -1707,11 +1675,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     if advanceParticles(timeSeconds: timeSeconds) { try reapplyResolutionSteps() }
   }
 
-  /// Every step once more, at the same instant, for a frame whose inputs moved after its pass — a
-  /// measured component value, a `RUN_ACTION`'s writes, the particle registers, an event's data —
-  /// as the Kotlin player's settle pass (`RcSettledLayout`'s `onSettled`) and draw pass apply the
-  /// operations again without a new `beginFrame`. At most once per cause, so a value that reads its
-  /// own previous one moves on by one more pass on such a frame, as there.
+  /// Every step once more at the same instant, without a new `beginFrame`, as Kotlin's settle and
+  /// draw passes apply the operations again after an input moved.
   private func reapplyResolutionSteps() throws {
     for step in document.resolutionSteps { try applyStep(step) }
   }
@@ -1723,10 +1688,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     resolvedFrameTime = nil
   }
 
-  /// For a conformance read at `timeSeconds` (a matrix, a float list, particle state): the values
-  /// the last resolution left when it ran at that instant, as a snapshot or probe before it did;
-  /// else one resolution there, against the last wall clock and measurements, so a read does not
-  /// move the document on, drop its calendar or swap a measured size for this core's estimate.
+  /// Resolves at `timeSeconds` for a conformance read unless the last finished resolution ran
+  /// there, reusing the last wall clock and measurements so the read does not disturb the document.
   private func resolveUnlessResolved(at timeSeconds: TimeInterval) throws {
     guard resolvedFrameTime != timeSeconds else { return }
     try resolveFrame(
@@ -1735,30 +1698,27 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     staticSnapshotCache = nil
   }
 
-  /// `RcPlayerState.beginFrame`: derived texts back to the document's and what was written, and the
-  /// player's variables loaded. The text table is shared with the document's until the frame's
-  /// first text write copies it: O(the document's texts) per resolution that writes one, as
-  /// Kotlin's `texts.clear()` and `putAll` are.
+  /// `RcPlayerState.beginFrame`: texts reset to the document's plus the written ones, and the
+  /// player's variables loaded. The first text write copies the table: O(the document's texts).
   private func beginFrame(timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock?) {
     texts = document.texts
     if !textOverrides.isEmpty { texts.merge(textOverrides) { _, written in written } }
     loadSystemVariables(timeSeconds: timeSeconds, wallClock: wallClock)
   }
 
-  /// `RcPlayerState.loadSystemVariables`: each value as a float only, its integer view removed —
-  /// an integer expression reads it through `integerVariable` — unless the id is claimed.
+  /// `RcPlayerState.loadSystemVariables`: each unclaimed system value as a float only.
   ///
-  /// The animation clock is the host's logical timeline, not the wall clock: it is what a capture
-  /// can hold still. Without a wall clock the calendar is left unset and `CONTINUOUS_SEC` is the
-  /// elapsed time, the only clock this core then has, so a document that animates off it still
-  /// moves rather than standing at the 1970 epoch.
+  /// The animation clock is the host's logical timeline, which a capture can hold still. Without a
+  /// wall clock the calendar is unset and `CONTINUOUS_SEC` falls back to it, so a document that
+  /// animates off it still moves.
   private func loadSystemVariables(timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock?) {
     typealias System = NativeSwiftSystemVariables
     let animationTime = Float(timeSeconds)
     let fields = wallClock?.fields
-    loadSystem(
-      System.continuousSeconds,
-      fields.map { Float($0.secondOfHour) + Float($0.millisOfSecond) * 0.001 } ?? animationTime)
+    let secondsWithinHour = fields.map {
+      Float($0.secondOfHour) + Float($0.millisOfSecond) * 0.001
+    }
+    loadSystem(System.continuousSeconds, secondsWithinHour ?? animationTime)
     loadSystem(System.timeInSeconds, fields.map { Float($0.secondOfHour) })
     loadSystem(System.timeInMinutes, fields.map { Float($0.hour * 60 + $0.minute) })
     loadSystem(System.timeInHours, fields.map { Float($0.hour) })
@@ -1770,8 +1730,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     loadSystem(System.year, fields.map { Float($0.year) })
     loadSystem(System.animationTime, animationTime)
     loadHostDensity()
-    // An integer the player owns, written as one (both views), as the reference's `setInteger`.
-    // Without a wall clock it is left unset, as the calendar is.
+    // An integer the player owns, so both views; unset without a wall clock, like the calendar.
     if let wallClock {
       if !claimedSystemIDs.contains(System.epochSecond) {
         setInteger(
@@ -1782,9 +1741,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
   }
 
-  /// `RcPlayerState.loadHostDensity`: not clocks, but owed by the player for the same reason: an
-  /// unsupplied reference resolves to 0, so a `RemoteDensity.Host` capture's
-  /// `([33] 14.0 / [27] / 15.0 *)` would divide by zero.
+  /// `RcPlayerState.loadHostDensity`: the density and font size, which the player owes because an
+  /// unset one reads 0 and a `RemoteDensity.Host` capture's `([33] 14.0 / [27] / 15.0 *)` would
+  /// divide by zero.
   private func loadHostDensity() {
     typealias System = NativeSwiftSystemVariables
     loadSystem(System.density, hostDensity)
@@ -1798,11 +1757,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     integers.removeValue(forKey: id)
   }
 
-  /// One step, as `RcPlayerState.applyContentStateOperation` applies its operation, with two
-  /// differences: an id lookup or data-map lookup whose list, index, map or key is missing leaves
-  /// its output as it was, and a text lookup clamps its index, where Kotlin refuses the document;
-  /// and a step under a `THEME` marker is not skipped for the other theme (this core's markers
-  /// scope nothing; see `setRequestedTheme`).
+  /// One step, as `RcPlayerState.applyContentStateOperation` applies it, except that a lookup with
+  /// a missing list, index, map or key keeps its output and a text lookup clamps its index (Kotlin
+  /// refuses the document), and `THEME` markers scope nothing (see `setRequestedTheme`).
   private func applyStep(_ step: ParsedResolutionStep) throws {
     switch step {
     case .floatExpression(let expression):
@@ -1824,8 +1781,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case .idLookup(let lookup):
       // A list that does not exist, or an index outside it, leaves the slot as it was.
       guard let ids = document.idLists[lookup.listID] else { return }
-      let index = nativeSwiftClampedInt(
-        NativeSwiftFloatExpression.resolve(lookup.index, values: floats))
+      let position = NativeSwiftFloatExpression.resolve(lookup.index, values: floats)
+      let index = nativeSwiftClampedInt(position)
       if ids.indices.contains(index) { setInteger(lookup.outputID, ids[index]) }
     case .dataMapLookup(let lookup):
       try applyDataMapLookup(lookup)
@@ -1841,11 +1798,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
   }
 
-  /// A `TIME_ATTRIBUTE` step. Kept out of `applyStep`, and never inlined into it: the wall clock
-  /// holds a `TimeZone`. On Apple platforms Foundation is built with library evolution, so its
-  /// size is only known at run time and reading it here sizes the stack frame dynamically; inlined,
-  /// that cost would be paid by every step of every resolution. Elsewhere Foundation is built
-  /// without library evolution, the size is fixed at compile time, and the split costs a call.
+  /// A `TIME_ATTRIBUTE` step, never inlined into `applyStep`: the wall clock holds a `TimeZone`,
+  /// whose size Apple's Foundation only knows at run time, so inlined it would make every step's
+  /// stack frame dynamically sized.
   @inline(never)
   private func applyTimeAttribute(_ attribute: ParsedTimeAttribute) {
     if let value = timeAttribute(
@@ -1897,12 +1852,14 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// they were. Four small arrays per step and resolution, at most four values each.
   private func applyMatrixVectorMath(_ operation: ParsedMatrixVectorMath) {
     guard let matrix = resolvedMatrix(operation.matrixID, values: floats) else { return }
+    // `matrix` is a row-major 4x4.
+    func entry(_ row: Int, _ column: Int) -> Float { matrix[row * 4 + column] }
     let input = operation.inputWords.map { NativeSwiftFloatExpression.resolve($0, values: floats) }
     var output = [Float](repeating: 0, count: operation.outputIDs.count)
     if operation.type == NativeSwiftMatrixVectorMathType.multiply {
       for row in output.indices {
-        var value = matrix[3 + row * 4]
-        for column in input.indices { value += matrix[column + row * 4] * input[column] }
+        var value = entry(row, 3)
+        for column in input.indices { value += entry(row, column) * input[column] }
         output[row] = value
       }
     } else {
@@ -1911,7 +1868,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       for index in input.indices { input4[index] = input[index] }
       var output4 = [Float](repeating: 0, count: 4)
       for row in 0..<4 {
-        for column in 0..<4 { output4[row] += matrix[column + row * 4] * input4[column] }
+        for column in 0..<4 { output4[row] += entry(row, column) * input4[column] }
       }
       guard output4[3] != 0 else { return }
       for index in output.indices { output[index] = output4[index] / output4[3] }
@@ -1936,12 +1893,13 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       let isWidth = binding.type == NativeSwiftComponentValueType.width
       let documentSize = Float(isWidth ? document.width : document.height)
       let value: Float
-      if let measured = measuredComponents[binding.componentID],
-        case let size = isWidth ? measured.width : measured.height, size.isFinite, size >= 0
-      {
-        // A real measurement wins over any estimate; a host's non-finite or negative one is
-        // ignored, as it would stay in the live store.
-        value = size
+      let measuredSize = measuredComponents[binding.componentID].map {
+        isWidth ? $0.width : $0.height
+      }
+      if let measuredSize, measuredSize.isFinite, measuredSize >= 0 {
+        // A real measurement wins over any estimate; a non-finite or negative one would stick in
+        // the live store, so it is ignored.
+        value = measuredSize
       } else if let node = document.nodes[binding.componentID] {
         if document.layoutReadsComponentValues { estimates.removeAll(keepingCapacity: true) }
         value = estimatedDimension(
@@ -2026,6 +1984,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     return true
   }
 
+  /// A `TextSubtext` length that takes the rest of the text (`TextSubtext.java:141`).
+  private static let subtextToEnd = -1
+
   /// `RcPlayerState.applyTextOperation`: one text producer against the live store. A text not
   /// (yet) produced reads as empty.
   private func applyTextOperation(_ operation: ParsedTextOperation) {
@@ -2043,22 +2004,22 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       texts[lookup.outputID] = texts[ids[index]] ?? ""
     case .lookup(let lookup):
       guard let ids = document.idLists[lookup.listID], !ids.isEmpty else { return }
-      let index = nativeSwiftClampedInt(
-        NativeSwiftFloatExpression.resolve(lookup.index, values: floats)
-      ).clamped(to: ids.indices)
+      let position = NativeSwiftFloatExpression.resolve(lookup.index, values: floats)
+      let index = nativeSwiftClampedInt(position).clamped(to: ids.indices)
       texts[lookup.outputID] = texts[ids[index]] ?? ""
     case .transform(let transform):
       resolveTextTransform(transform, values: floats)
     case .subtext(let subtext):
       // O(the text's length) per resolution, as the text itself is rebuilt each one.
       let units = Array((texts[subtext.textID] ?? "").utf16)
-      let start = nativeSwiftClampedInt(
-        NativeSwiftFloatExpression.resolve(subtext.start, values: floats)
-      ).clamped(to: 0...units.count)
+      let startPosition = NativeSwiftFloatExpression.resolve(subtext.start, values: floats)
+      let start = nativeSwiftClampedInt(startPosition).clamped(to: 0...units.count)
       let length = nativeSwiftClampedInt(
         NativeSwiftFloatExpression.resolve(subtext.length, values: floats))
       // Clamp against the remaining units before adding, so a saturated length cannot overflow.
-      let end = length == -1 ? units.count : start + length.clamped(to: 0...(units.count - start))
+      let end =
+        length == Self.subtextToEnd
+        ? units.count : start + length.clamped(to: 0...(units.count - start))
       texts[subtext.outputID] = String(decoding: units[start..<end], as: UTF16.self)
     }
   }
@@ -2173,12 +2134,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case Mode.colorColorInterpolate...Mode.idIDInterpolate:
       // The interpolation modes are two bits: `idColorInterpolate` marks the first colour an id,
       // `colorIDInterpolate` the second, and `idIDInterpolate` both.
-      let first =
-        mode & Mode.idColorInterpolate != 0
-        ? colors[expression.first] ?? 0 : UInt32(bitPattern: Int32(expression.first))
-      let second =
-        mode & Mode.colorIDInterpolate != 0
-        ? colors[expression.second] ?? 0 : UInt32(bitPattern: Int32(expression.second))
+      /// The live colour at `word` when `isID`, else `word` as a literal ARGB colour.
+      func colorOperand(_ word: Int, isID: Bool) -> UInt32 {
+        isID ? colors[word] ?? 0 : UInt32(bitPattern: Int32(word))
+      }
+      let first = colorOperand(expression.first, isID: mode & Mode.idColorInterpolate != 0)
+      let second = colorOperand(expression.second, isID: mode & Mode.colorIDInterpolate != 0)
       return interpolateColor(first, second, tween: float(expression.third))
     case Mode.hsv...Mode.idARGB:
       let alpha: Float =
@@ -2187,13 +2148,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         case Mode.argb: Float(expression.alphaField) / AndroidXColorMath.argbAlphaScale
         default: NativeSwiftFloatExpression.resolve(expression.alphaReferenceWord, values: floats)
         }
+      let (first, second, third) =
+        (float(expression.first), float(expression.second), float(expression.third))
       return mode == Mode.hsv
-        ? hsvColor(
-          alpha: alpha, hue: float(expression.first), saturation: float(expression.second),
-          brightness: float(expression.third))
-        : argbColor(
-          alpha: alpha, red: float(expression.first), green: float(expression.second),
-          blue: float(expression.third))
+        ? hsvColor(alpha: alpha, hue: first, saturation: second, brightness: third)
+        : argbColor(alpha: alpha, red: first, green: second, blue: third)
     default: return nil
     }
   }
@@ -2213,16 +2172,16 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       guard !value.isNaN else { return 0 }
       return UInt32(value.clamped(to: 0...AndroidXColorMath.maximum))
     }
+    /// `from` moved `tween` of the way to `to`.
+    func mix(_ from: Float, _ to: Float) -> Float { from + tween * (to - from) }
     func mixedChannel(_ shift: UInt32) -> UInt32 {
-      let from = linearChannel(first, shift: shift)
-      let mixed = from + tween * (linearChannel(second, shift: shift) - from)
+      let mixed = mix(linearChannel(first, shift: shift), linearChannel(second, shift: shift))
       let encoded = Float(pow(Double(mixed), 1 / AndroidXColorMath.gamma))
       return truncatedByte(encoded * AndroidXColorMath.maximum)
     }
     let firstAlpha = Float(first >> 24) / AndroidXColorMath.maximum
     let secondAlpha = Float(second >> 24) / AndroidXColorMath.maximum
-    let alpha = truncatedByte(
-      (firstAlpha + tween * (secondAlpha - firstAlpha)) * AndroidXColorMath.maximum)
+    let alpha = truncatedByte(mix(firstAlpha, secondAlpha) * AndroidXColorMath.maximum)
     return alpha << 24 | mixedChannel(16) << 16 | mixedChannel(8) << 8 | mixedChannel(0)
   }
 
@@ -2426,10 +2385,11 @@ extension Int {
 
 /// The colour arithmetic constants AndroidX's `Utils` and `ColorExpression` use.
 private enum AndroidXColorMath {
-  /// A channel's largest byte, which a normalised channel is scaled by.
+  /// A channel's largest byte, which a normalised channel is scaled by (`Utils.java:253`).
   static let maximum: Float = 255
-  /// The display gamma an interpolation mixes in linear light under.
+  /// The display gamma an interpolation mixes in linear light under (`Utils.java:253`).
   static let gamma = 2.2
-  /// The fixed-point scale of `ARGB` mode's alpha, in the mode word's high half.
+  /// The fixed-point scale of `ARGB` mode's alpha, in the mode word's high half
+  /// (`ColorExpression.java:464`).
   static let argbAlphaScale: Float = 1024
 }

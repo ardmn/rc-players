@@ -597,9 +597,7 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
     guard let png = bitmap.representation(using: .png, properties: [:]) else {
       throw NativeSwiftCoreError.malformed(offset: 0, reason: "Could not encode AppKit capture")
     }
-    // Read before the records' snapshot below: that one may resolve the instant again (a wall
-    // clock, continuous frames), and a value that reads its own previous one would move past the
-    // frame the PNG shows.
+    // Before the records' snapshot below, which may resolve the instant again.
     let reported =
       values.isEmpty
       ? nil : try reportedValues(session: session, timeSeconds: timeSeconds, request: values)
@@ -1063,9 +1061,8 @@ public final class NativeAppKitWindowController: NSObject, NSWindowDelegate {
     ]
   }
 
-  /// The values a probe asked for, as the frame's own resolution left them: the capture resolved
-  /// this instant just before, and resolving again would move a document whose values read their
-  /// own previous ones on past the frame the PNG shows.
+  /// The values a probe asked for, as the frame's own resolution left them: resolving again would
+  /// move a value that reads its own previous one past the frame the PNG shows.
   ///
   /// A named target addresses a variable the document declared; a numeric one addresses a slot
   /// directly. A slot the document left empty reports null rather than being omitted — that is an
