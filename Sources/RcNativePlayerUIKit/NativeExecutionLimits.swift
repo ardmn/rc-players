@@ -11,10 +11,10 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   public var maximumNestingDepth: Int
   public var maximumDrawCommandCount: Int
   public var maximumPathElementCount: Int
-  /// The UTF-8 bytes of a document's own text one frame may lay out, each place it is shown; each
-  /// byte is also a unit of `maximumFrameWork`. A host's string is left out, so it renders at any
-  /// length, but each place it is shown costs `longestDocumentTextBytes` of work at most. The
-  /// 128 KiB default holds two of the longest texts a document can make (Core Text: ~14 ms).
+  /// The UTF-8 bytes of text one frame may lay out. A document's string counts at each place it is
+  /// shown; a host's counts once, at most `longestDocumentTextBytes`, so it renders at any length.
+  /// Every place either is shown also costs that much `maximumFrameWork`, which bounds the layout
+  /// work. The default holds four host strings of any length.
   public var maximumTextBytes: Int
   /// The largest view or canvas side. The document's own size over it is refused; the UIKit
   /// player clamps a resolved exact width or height to it instead (`layoutDimension`).
@@ -30,7 +30,7 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
     maximumNestingDepth: Int = 256,
     maximumDrawCommandCount: Int = 50_000,
     maximumPathElementCount: Int = 100_000,
-    maximumTextBytes: Int = 128 * 1024,
+    maximumTextBytes: Int = 4 * longestDocumentTextBytes,
     maximumCanvasDimension: Double = 16_384,
     maximumCoordinateMagnitude: Double = 1_000_000,
     maximumFrameWork: Int = 200_000
@@ -50,7 +50,7 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
 
   /// The longest UTF-8 text a document can make itself: a `TextMerge` result of at most 16K UTF-16
   /// units (TextMerge.java:41), 3 bytes each. Any longer string is a host's.
-  static let longestDocumentTextBytes = 3 * 16 * 1024
+  public static let longestDocumentTextBytes = 3 * 16 * 1024
 
   /// A resolved layout float (padding, spacing, offset, constraint, z-index) as UIKit can take it:
   /// NaN reads 0, as in Java's `(int)`; the rest is held to ±`maximumCoordinateMagnitude`.
@@ -174,6 +174,8 @@ struct NativeFrameBudget: Equatable, Sendable {
   private(set) var work = 0
   /// The frame's host strings (`NativeSwiftDocumentSnapshot.hostStrings`).
   let hostStrings: Set<String>
+  /// The host strings, and strings longer than a document can make, counted in `textBytes` so far.
+  private var countedHostStrings: Set<String> = []
 
   init(hostStrings: Set<String> = []) {
     self.hostStrings = hostStrings
@@ -234,20 +236,24 @@ struct NativeFrameBudget: Equatable, Sendable {
     _ strings: [String?], limits: RemoteComposeNativeExecutionLimits
   ) throws {
     let longest = RemoteComposeNativeExecutionLimits.longestDocumentTextBytes
-    var documentBytes = 0
-    var hostWork = 0
+    var addedBytes = 0
+    var addedWork = 0
     for string in strings.compactMap({ $0 }) {
       let bytes = string.utf8.count
-      // Every place a host's string is shown costs at most `longest`, so a document can lay one out
-      // a few times per frame, not thousands; the lookup hashes it, O(length).
+      // A host's string counts once in the text, at most `longest`, but each place it is shown
+      // costs that much work, so a document can lay one out a few times per frame, not thousands.
+      // The lookups hash it, O(length).
       if bytes > longest || hostStrings.contains(string) {
-        hostWork += min(bytes, longest)
+        let charged = min(bytes, longest)
+        if countedHostStrings.insert(string).inserted { addedBytes += charged }
+        addedWork += charged
       } else {
-        documentBytes += bytes
+        addedBytes += bytes
+        addedWork += bytes
       }
     }
-    textBytes += documentBytes
-    work += documentBytes + hostWork
+    textBytes += addedBytes
+    work += addedWork
     guard textBytes <= limits.maximumTextBytes else {
       throw RemoteComposeNativeLimitError.textTooLong(
         actual: textBytes, maximum: limits.maximumTextBytes)

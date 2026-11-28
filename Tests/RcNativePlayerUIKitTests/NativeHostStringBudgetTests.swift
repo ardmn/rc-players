@@ -10,8 +10,8 @@ import Testing
 #endif
 
 /// A host's string renders at any length, as AndroidX lays it out
-/// (`AndroidRemoteContext.setNamedStringOverride`): it stays out of the frame's text bytes and each
-/// text showing it costs bounded work; a document's text counts its bytes each time.
+/// (`AndroidRemoteContext.setNamedStringOverride`): it counts once against the frame's text, and
+/// each text showing it costs bounded work; a document's text counts its bytes each time.
 @MainActor @Suite(.serialized) struct NativeHostStringBudgetTests {
   static let hostName = "USER:s"
 
@@ -28,8 +28,7 @@ import Testing
     return wire.data
   }
 
-  /// 100 KB, over what a document can make itself, and 40 KB, under it: four texts of either are
-  /// over the 128 KiB a frame's own text may take, had they counted as the document's.
+  /// 100 KB, over what a document can make itself, and 40 KB, under it.
   static let hostStrings = [
     String(repeating: "x", count: 100_000), String(repeating: "y", count: 40_000),
   ]
@@ -74,20 +73,20 @@ import Testing
     #expect(try session.snapshot(timeSeconds: 0).hostStrings.isEmpty)
   }
 
-  /// A host's string stays out of the frame's text bytes, so it renders at any length, but every
-  /// place it is shown costs the work of the longest text a document can make; a document's string
-  /// counts its bytes each time in both.
+  /// A host's string counts once against the frame's text, at most the longest text a document can
+  /// make, but every place it is shown costs that much work; a document's string counts its bytes
+  /// each time in both.
   @Test func aHostStringCostsWorkEachTimeAndADocumentStringItsBytes() throws {
     let longest = RemoteComposeNativeExecutionLimits.longestDocumentTextBytes
     let hostBytes = 40_000
     let host = String(repeating: "h", count: hostBytes)
     var budget = NativeFrameBudget(hostStrings: [host])
     for _ in 0..<2 { try budget.recordStrings([host], limits: .default) }
-    #expect(budget.textBytes == 0 && budget.work == 2 * hostBytes)
+    #expect(budget.textBytes == hostBytes && budget.work == 2 * hostBytes)
     // Longer than any document text, so it is a host's whatever the snapshot names.
     let long = String(repeating: "l", count: longest + 1)
     try budget.recordStrings([long], limits: .default)
-    #expect(budget.textBytes == 0 && budget.work == 2 * hostBytes + longest)
+    #expect(budget.textBytes == hostBytes + longest && budget.work == 2 * hostBytes + longest)
     var document = NativeFrameBudget(hostStrings: [host])
     let documentText = String(repeating: "d", count: hostBytes)
     #expect(throws: RemoteComposeNativeLimitError.self) {

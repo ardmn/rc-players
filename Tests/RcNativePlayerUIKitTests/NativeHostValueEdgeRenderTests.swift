@@ -33,7 +33,7 @@
       }
     }
 
-    /// A 200 KB host string, over the 128 KiB of text one frame may lay out, counts as the longest
+    /// A 200 KB host string, over the 192 KiB of text one frame may lay out, counts as the longest
     /// text a document can make by itself (`longestDocumentTextBytes`) and renders, as AndroidX
     /// shows it (`AndroidRemoteContext.setNamedStringOverride`).
     @Test(arguments: ["long-text", "long-text-length-as-width"])
@@ -113,8 +113,8 @@
 
     // MARK: - Hostile documents are still refused
 
-    /// One 4000-byte document string (AndroidX `Limits.MAX_STRING_SIZE`) shown by 40 texts is
-    /// over the 128 KiB of text one frame may show: the document is refused, not laid out.
+    /// One 4000-byte document string (AndroidX `Limits.MAX_STRING_SIZE`) shown by 50 texts is
+    /// over the 192 KiB of text one frame may show: the document is refused, not laid out.
     @Test func aDocumentRepeatingItsTextPastTheBudgetIsRefused() async throws {
       typealias Op = NativeSwiftWireOpcode
       let wire = NativeTestWire()
@@ -122,7 +122,7 @@
       let textID = 700
       wire.u8(Op.dataText).int(textID).utf8(String(repeating: "x", count: 4_000))
       wire.u8(Op.layoutRoot).int(1)
-      for index in 0..<40 { wire.text(id: 3000 + index, reading: textID) }
+      for index in 0..<50 { wire.text(id: 3000 + index, reading: textID) }
       wire.u8(Op.containerEnd)
       let error = try await UIKitHostValueEdgeFixtures.refusal(of: wire.data)
       let limit = RemoteComposeNativeExecutionLimits.default.maximumTextBytes
