@@ -1,0 +1,46 @@
+import Foundation
+import RcCreation
+
+// The readouts a scroll position gives, in points: what the player publishes, divided by the scale.
+func readout(_ position: RemoteScrollPosition) -> some RemoteView {
+  RemoteVStack {
+    RemoteText("offset \(position.offset, decimals: 0)")
+    RemoteText("maximumOffset \(position.maximumOffset, decimals: 0)")
+    RemoteText("contentLength \(position.contentLength, decimals: 0)")
+  }
+  .padding(4).frame(maxWidth: .infinity).background(.white)
+}
+
+let pages = RemoteScrollPosition()
+let paged = RemoteDocument(width: 240, height: 180, displayScale: 2) {
+  RemoteVStack {
+    RemoteScrollView(.horizontal, position: pages, pageCount: 4) {
+      RemoteForEach(Array([0xE53935, 0x1E88E5, 0x43A047, 0xFDD835].enumerated())) { i, c in
+        RemoteZStack { RemoteText("Page \(i + 1)").foregroundStyle(.white) }
+          .frame(width: 240, height: 100)
+          .background(.hex(UInt32(c)))
+      }
+    }
+    .frame(height: 100)
+    readout(pages)
+  }
+  .background(.white)
+}
+
+let rows = RemoteScrollPosition()
+let list = RemoteDocument(width: 200, height: 240, displayScale: 2) {
+  RemoteVStack {
+    readout(rows)
+    RemoteScrollView(position: rows) {
+      RemoteForEach(Array(1...12)) { i in
+        RemoteText("Row \(i)").padding(12).frame(maxWidth: .infinity)
+          .background(i % 2 == 0 ? .hex(0xE3F2FD) : .white)
+      }
+    }
+  }
+}
+
+let out = CommandLine.arguments[1]
+for (name, doc) in [("scroll-metrics-paged", paged), ("scroll-metrics-list", list)] {
+  try Data(try doc.encode()).write(to: URL(fileURLWithPath: "\(out)/\(name).rc"))
+}
