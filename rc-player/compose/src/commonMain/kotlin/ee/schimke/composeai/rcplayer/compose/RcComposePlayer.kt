@@ -4495,11 +4495,14 @@ private fun Modifier.applyAndroidXScroll(
   val initialPosition = state.resolve(operation.position).takeIf(Float::isFinite)?.roundToInt() ?: 0
   val scrollState = rememberScrollState(initialPosition.coerceAtLeast(0))
   val touchRuntime = touch?.let { remember(it) { RcTouchExpressionRuntime(it) } }
+  val invalidate = LocalRcInvalidate.current
 
   LaunchedEffect(scrollState, operation, state) {
     // The first position is where the scroll starts, not a move across a stop; and a change to
     // the range alone (a layout change, the position unmoved) is not a move either.
     var lastPosition: Int? = null
+    // The range and viewport last published, so only a change to them re-evaluates their readers.
+    var publishedExtents: Pair<Int, Int>? = null
     snapshotFlow { scrollState.value to scrollState.maxValue }
       .collect { (position, maximum) ->
         operation.position.referencedId?.let { state.setFloat(it, position.toFloat()) }
@@ -4529,6 +4532,13 @@ private fun Modifier.applyAndroidXScroll(
           } else {
             state.publishComponentContentSize(componentId, width = contentExtent)
           }
+        }
+        // What reads the published range is re-evaluated only on an invalidation; a frame that
+        // only moves the position leaves it as it was.
+        val extents = maximum to scrollState.viewportSize
+        if (extents != publishedExtents) {
+          publishedExtents = extents
+          invalidate()
         }
       }
   }

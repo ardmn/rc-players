@@ -172,6 +172,9 @@ kotlin {
       // Test-only: renders `rc-player-edit`'s rewrites beside the documents they came from, so a
       // rewrite that claims to draw the same thing is held to it pixel for pixel.
       implementation(project(":rc-player-edit"))
+      // `RcScrollMetricsReferenceTest`: reads the scroll readouts it shares with the native Swift
+      // player's tests from one JSON file.
+      implementation(libs.kotlinx.serialization.json)
     }
   }
 }
