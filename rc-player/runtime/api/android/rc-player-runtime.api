@@ -976,6 +976,7 @@ public final class ee/schimke/composeai/rcplayer/runtime/RcPlayerState {
 	public final fun floatList (I)Lee/schimke/composeai/rcplayer/protocol/RcFloatList;
 	public final fun floatValues (I)[F
 	public final fun forEachLoopValue (Lee/schimke/composeai/rcplayer/protocol/RcLoopOperation;ILkotlin/jvm/functions/Function1;)V
+	public final fun forEachLoopValue (Lee/schimke/composeai/rcplayer/protocol/RcLoopOperation;Lkotlin/jvm/functions/Function1;)V
 	public final fun forEachParticle (Lee/schimke/composeai/rcplayer/protocol/RcParticleLoop;Lkotlin/jvm/functions/Function0;)V
 	public final fun forgetRecentClockReads ()V
 	public final fun getAnimationTimeSeconds ()F
@@ -995,6 +996,7 @@ public final class ee/schimke/composeai/rcplayer/runtime/RcPlayerState {
 	public final fun getRootContentDescription ()Ljava/lang/String;
 	public final fun getValueReadObserver ()Lkotlin/jvm/functions/Function1;
 	public final fun hasComponentValues (I)Z
+	public final fun inLoopPass (Ljava/lang/Object;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
 	public final fun integer (I)Ljava/lang/Integer;
 	public final fun isContinuouslyDriven (I)Z
 	public final fun long (I)Ljava/lang/Long;
@@ -1014,6 +1016,7 @@ public final class ee/schimke/composeai/rcplayer/runtime/RcPlayerState {
 	public final fun publishComponentSizeChange (IFF)Z
 	public final fun publishTouchPosition (FF)Z
 	public final fun readsComponentSizeOnly (I)Z
+	public final fun releaseLoopPass (Ljava/lang/Object;)V
 	public final fun requestWakeIn (Lee/schimke/composeai/rcplayer/protocol/RcWakeIn;)V
 	public final fun resolve-jeHuU8k (I)F
 	public final fun seedParticles (Lee/schimke/composeai/rcplayer/protocol/RcParticleDefine;)V

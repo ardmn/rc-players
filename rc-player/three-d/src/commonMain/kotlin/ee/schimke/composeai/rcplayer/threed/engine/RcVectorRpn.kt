@@ -1,6 +1,7 @@
 package ee.schimke.composeai.rcplayer.threed.engine
 
 import ee.schimke.composeai.rcplayer.protocol.RcFloatWord
+import ee.schimke.composeai.rcplayer.runtime.javaRoundToInt
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
@@ -130,7 +131,7 @@ internal class RcVectorRpn {
       OP_COS -> unary(sp) { cos(it.toDouble()).toFloat() }
       OP_FLOOR -> unary(sp) { floor(it.toDouble()).toFloat() }
       OP_CEIL -> unary(sp) { ceil(it.toDouble()).toFloat() }
-      OP_ROUND -> unary(sp, ::javaRound)
+      OP_ROUND -> unary(sp) { it.javaRoundToInt().toFloat() }
       OP_CHANGE_SIGN -> unary(sp) { -it }
       OP_INV -> unary(sp) { 1f / softDenom(it) }
       OP_VBUILD2 -> build(sp, 2)
@@ -238,14 +239,5 @@ internal class RcVectorRpn {
 
     /** The NaN-boxed word for operator [id] (an `OP_*` constant). */
     fun word(id: Int): RcFloatWord = RcFloatWord(0xff800000.toInt() or id)
-
-    /** Java's `Math.round(float)`: floor(x + 0.5) as an Int, saturating, NaN to 0. */
-    private fun javaRound(x: Float): Float {
-      if (x.isNaN()) return 0f
-      val r = floor((x + 0.5f).toDouble())
-      if (r >= 2147483647.0) return 2147483647f
-      if (r <= -2147483648.0) return -2147483648f
-      return r.toInt().toFloat()
-    }
   }
 }

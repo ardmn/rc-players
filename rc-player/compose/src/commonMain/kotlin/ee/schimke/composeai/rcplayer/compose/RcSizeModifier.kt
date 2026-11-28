@@ -74,14 +74,28 @@ private class RcSizeBounds(
   fun constrainHeight(height: Int) = height.coerceIn(minHeight, maxHeight)
 }
 
+/** The largest size a `Constraints` holds on one axis, which keeps intrinsics clear of overflow. */
+private val LARGEST_CONSTRAINT_PIXELS =
+  rcConstraints(Constraints.Infinity - 1, Constraints.Infinity - 1, 0, 0).maxWidth
+
 private class RcSizeNode(var element: RcSizeElement) : Modifier.Node(), LayoutModifierNode {
   private val Density.bounds: RcSizeBounds
     get() {
-      fun Dp.pixels(): Int? = if (isSpecified) roundToPx().coerceAtLeast(0) else null
+      // `roundToPx` reads -inf as Constraints.Infinity too; a negative size is none.
+      fun Dp.pixels(): Int? =
+        when {
+          !isSpecified -> null
+          value < 0f -> 0
+          else -> roundToPx()
+        }
       val maxWidth = element.maxWidth.pixels() ?: Constraints.Infinity
       val maxHeight = element.maxHeight.pixels() ?: Constraints.Infinity
+      // An unbounded min is the largest a Constraints holds, which the incoming max then caps:
+      // AndroidX's min(size, max) (LegacyMeasurePolicy.java:45). Compose's SizeNode drops it.
       fun minPixels(min: Dp, max: Int): Int =
-        min.pixels()?.coerceIn(0, max)?.takeIf { it != Constraints.Infinity } ?: 0
+        min.pixels()?.coerceIn(0, max)?.let {
+          if (it == Constraints.Infinity) LARGEST_CONSTRAINT_PIXELS else it
+        } ?: 0
       return RcSizeBounds(
         minPixels(element.minWidth, maxWidth),
         maxWidth,

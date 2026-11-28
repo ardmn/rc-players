@@ -981,8 +981,9 @@ private constructor(
    *
    * A host's NaN bound runs what Java's loop runs, and a loop that never ends stops when the budget
    * is spent. Compose redraws only what changed, so each outermost document loop starts with what
-   * the loops before it in document order last left, as in AndroidX's full paint. A pass runs only
-   * if it fits whole; a loop outside the document has the whole budget.
+   * the loops before it in document order used when they last ran in a pass still drawn (see
+   * [inLoopPass]), as in AndroidX's full paint. A pass runs only if it fits whole; a loop outside
+   * the document has the whole budget.
    */
   public fun forEachLoopValue(
     operation: RcLoopOperation,
@@ -993,10 +994,9 @@ private constructor(
     val step = resolve(operation.step)
     var value = resolve(operation.from)
     val passCost = 1 + bodyOperations.coerceAtLeast(0)
-    val ordinal = if (loopDepth == 0) documentLoops.indexOfFirst { it === operation } else -1
+    val ordinal = if (loopDepth == 0) loopBudget.ordinal(operation) else -1
     if (loopDepth == 0) {
-      val usedByEarlierLoops = (0 until ordinal).sumOf { loopOperationsUsed[it] }
-      loopOperationsLeft = MAX_LOOP_OPERATIONS_PER_FRAME - usedByEarlierLoops
+      loopOperationsLeft = MAX_LOOP_OPERATIONS_PER_FRAME - loopBudget.usedBefore(ordinal)
     }
     val budgetAtStart = loopOperationsLeft
     loopDepth++
@@ -1012,21 +1012,42 @@ private constructor(
       }
     } finally {
       loopDepth--
-      if (ordinal >= 0) loopOperationsUsed[ordinal] = budgetAtStart - loopOperationsLeft
+      if (ordinal >= 0) loopBudget.record(ordinal, budgetAtStart - loopOperationsLeft)
     }
+  }
+
+  /** The v4.1.0 form: each pass costs one, as for a loop with no body. */
+  @Deprecated(
+    "Pass the loop body's operation count, which AndroidX charges per pass.",
+    ReplaceWith("forEachLoopValue(operation, bodyOperations = 0, block)"),
+  )
+  public fun forEachLoopValue(operation: RcLoopOperation, block: (Float) -> Unit): Unit =
+    forEachLoopValue(operation, bodyOperations = 0, block)
+
+  /**
+   * Runs [block] as one top-level drawing of [owner]'s operations. The loop budget the previous
+   * drawing of [owner] recorded is released first, so a loop it no longer runs (a false
+   * conditional, the other theme) stops spending later loops' budget, as in AndroidX, which counts
+   * only what paints (CoreDocument.java:2357).
+   */
+  public fun <T> inLoopPass(owner: Any, block: () -> T): T = loopBudget.inPass(owner, block)
+
+  /**
+   * Releases what [owner]'s drawings recorded: it is no longer drawn (GONE, or disposed). Later
+   * loops draw again ([onRepaint]) when that frees budget.
+   */
+  public fun releaseLoopPass(owner: Any) {
+    if (loopBudget.release(owner)) onRepaint?.invoke()
   }
 
   /** How deep [forEachLoopValue] is nested, and the operations its outermost loop has left. */
   private var loopDepth = 0
   private var loopOperationsLeft = 0
 
-  /** The document's loops, in document order: the order AndroidX spends a frame's budget in. */
-  private val documentLoops: List<RcLoopOperation> by lazy {
-    document.operations.filterIsInstance<RcLoopOperation>()
+  /** What the document's loops, in document order, used when they last ran. */
+  private val loopBudget: RcLoopBudget by lazy {
+    RcLoopBudget(document.operations.filterIsInstance<RcLoopOperation>())
   }
-
-  /** The operations each of [documentLoops] used, with every loop in it, when it last ran. */
-  private val loopOperationsUsed: IntArray by lazy { IntArray(documentLoops.size) }
 
   private val loopDependentExpressions = mutableMapOf<Int, List<RcFloatExpression>>()
 

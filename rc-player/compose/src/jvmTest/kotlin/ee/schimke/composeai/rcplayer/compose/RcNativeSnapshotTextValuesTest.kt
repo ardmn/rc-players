@@ -7,6 +7,8 @@ import ee.schimke.composeai.rcplayer.protocol.RcDocumentCodec
 import ee.schimke.composeai.rcplayer.protocol.RcFloatExpression
 import ee.schimke.composeai.rcplayer.protocol.RcFloatWord
 import ee.schimke.composeai.rcplayer.protocol.RcHeader
+import ee.schimke.composeai.rcplayer.protocol.RcHeaderProperty
+import ee.schimke.composeai.rcplayer.protocol.RcHeaderValue
 import ee.schimke.composeai.rcplayer.protocol.RcLayoutContent
 import ee.schimke.composeai.rcplayer.protocol.RcNoArg
 import ee.schimke.composeai.rcplayer.protocol.RcOpcodes
@@ -48,10 +50,48 @@ class RcNativeSnapshotTextValuesTest {
     }
   }
 
-  private fun textCommand(text: RcOperation): RcNativeDrawCommand {
+  /**
+   * Android's default and cap are in pixels (Paint.cpp:1001), so at density 3 a NaN size is 12 px,
+   * 4 points, and a size past the cap is [RC_MAX_TEXT_SIZE_PX] px.
+   */
+  @Test
+  fun aNaNOrHugeSizeIsNormalisedInPixelsBeforeTheDensity() {
+    val cases =
+      listOf(
+        NAN to 12f / DENSITY,
+        literal(3e6f) to RC_MAX_TEXT_SIZE_PX / DENSITY,
+        literal(60f) to 20f,
+      )
+    for ((size, expected) in cases) {
+      for ((kind, text) in
+        listOf(
+          "TextLayout" to textLayout(size, literal(400f)),
+          "CoreText" to coreText(size, literal(400f)),
+        )) {
+        assertEquals(
+          expected,
+          textCommand(text, DENSITY).textSize,
+          "$kind with size ${size.bits.toString(16)}",
+        )
+      }
+    }
+  }
+
+  private fun textCommand(text: RcOperation, density: Float = 1f): RcNativeDrawCommand {
     val document =
       RcDocument(
-        RcHeader(RcVersion(1, 0, 0), legacyWidth = 100, legacyHeight = 60, modern = false),
+        RcHeader(
+          RcVersion(1, 0, 0),
+          properties =
+            listOf(
+              RcHeaderProperty(RcHeader.DOC_WIDTH, RcHeaderValue.IntValue(100)),
+              RcHeaderProperty(RcHeader.DOC_HEIGHT, RcHeaderValue.IntValue(60)),
+              RcHeaderProperty(
+                RcHeader.DOC_DENSITY_AT_GENERATION,
+                RcHeaderValue.FloatValue(literal(density)),
+              ),
+            ),
+        ),
         listOf(
           RcFloatExpression(NAN_ID, listOf(literal(0f), literal(0f), DIVIDE), null),
           RcFloatExpression(INFINITY_ID, listOf(literal(1f), literal(0f), DIVIDE), null),
@@ -105,6 +145,7 @@ class RcNativeSnapshotTextValuesTest {
     )
 
   private companion object {
+    const val DENSITY = 3f
     const val NAN_ID = 200
     const val INFINITY_ID = 201
     const val TEXT_ID = 101

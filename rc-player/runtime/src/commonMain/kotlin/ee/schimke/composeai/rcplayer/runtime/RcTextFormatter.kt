@@ -1,6 +1,5 @@
 package ee.schimke.composeai.rcplayer.runtime
 
-import kotlin.math.floor
 import kotlin.math.min
 
 /** Pure KMP implementation of AndroidX alpha18 StringUtils formatting flags. */
@@ -49,7 +48,7 @@ public object RcTextFormatter {
     if (after == 0) return (if (negative) "-" else "") + integer
     var fraction = value % 1f
     repeat(after) { fraction *= 10f }
-    fraction = javaRound(fraction).toFloat()
+    fraction = fraction.javaRoundToInt().toFloat()
     repeat(after) { fraction *= .1f }
     var text = fraction.toString()
     text = text.substring(2, min(text.length, after + 2)).trimEnd('0')
@@ -96,7 +95,7 @@ public object RcTextFormatter {
     if (after == 0) return sign(integer, negative, parentheses)
     var fraction = value % 1f
     repeat(trimAfter) { fraction *= 10f }
-    fraction = javaRound(fraction).toFloat()
+    fraction = fraction.javaRoundToInt().toFloat()
     repeat(trimAfter) { fraction *= .1f }
     var text = fraction.toString()
     text = text.substring(2, min(text.length, after + 2))
@@ -156,8 +155,6 @@ public object RcTextFormatter {
     }
     return integerText + "." + chars.concatToString()
   }
-
-  private fun javaRound(value: Float): Int = floor(value + .5f).toInt()
 
   private const val LEGACY_MODE = 1 shl 10
   private const val FULL_FORMAT = 1 shl 12

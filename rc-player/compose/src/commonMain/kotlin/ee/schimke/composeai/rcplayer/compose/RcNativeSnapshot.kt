@@ -423,16 +423,16 @@ public constructor(bytes: ByteArray) {
     return updateResult(actions.isNotEmpty(), timeSeconds, frameAlreadyBegun = true)
   }
 
-  /** Set a declared float named value. Unqualified names use the `USER:` namespace. */
+  /**
+   * Set a declared float named value, any float, as AndroidX's `overrideFloat` takes it
+   * (RemoteComposeState.java:314). Unqualified names use the `USER:` namespace.
+   */
   @Throws(IllegalArgumentException::class)
   public fun setFloat(
     name: String,
     value: Float,
     timeSeconds: Float = state.animationTimeSeconds,
-  ): RcNativeSessionUpdate {
-    require(value.isFinite()) { "Native named float must be finite" }
-    return setNamedValue(name, RcNamedValue.FloatValue(value), timeSeconds)
-  }
+  ): RcNativeSessionUpdate = setNamedValue(name, RcNamedValue.FloatValue(value), timeSeconds)
 
   /** Set a declared string named value. Unqualified names use the `USER:` namespace. */
   @Throws(IllegalArgumentException::class)
@@ -1182,7 +1182,8 @@ public object RcNativeSnapshotBridge {
                 ),
             )
       } else if (operation is RcTextLayout) {
-        val size = rcTextSizePixels(state.resolve(operation.fontSize) / document.header.density)
+        // Android's default and cap are pixels: normalise, then divide.
+        val size = rcTextSizePixels(state.resolve(operation.fontSize)) / document.header.density
         val weight = rcTextWeight(state.resolve(operation.fontWeight))
         require(operation.textAlign in 1..6) {
           "TextLayout alignment ${operation.textAlign} is invalid"
@@ -1237,8 +1238,8 @@ public object RcNativeSnapshotBridge {
             .lastOrNull { it.id == 5 }
             ?.value
             ?.let(state::resolve)
-            ?.div(document.header.density)
-            ?.let(::rcTextSizePixels) ?: 36f
+            ?.let(::rcTextSizePixels)
+            ?.div(document.header.density) ?: 36f
         val weight =
           properties
             .filterIsInstance<RcTextStyleProperty.FloatValue>()
