@@ -96,7 +96,8 @@ import Testing
       wire.u8(Op.drawLine).float(0).float(0).float(10).float(10)
     }
     func lines(_ width: Float) throws -> Int {
-      try Self.keptDraws(document, width).filter { $0.kind == NativeSwiftDrawKind.line }.count
+      let draws = try Self.keptDraws(document, width)
+      return draws.filter { $0.kind == NativeSwiftDrawKind.line }.count
     }
     #expect(try lines(.infinity) == 0)
     #expect(try lines(2) == 1)
