@@ -180,6 +180,51 @@ class RcFlatLayoutTest {
     }
   }
 
+  /**
+   * An exact width `roundToPx` cannot hold (from 2^31 px, either infinity) takes the space there
+   * is, as AndroidX's `min(maxWidth, size)` does (LegacyMeasurePolicy.java:45-46); -inf is no
+   * width.
+   */
+  @Test
+  fun anExactWidthPastIntOrInfiniteTakesTheSpaceThereIs() {
+    for ((size, expected) in
+      listOf(3e9f to 100, Float.POSITIVE_INFINITY to 100, Float.NEGATIVE_INFINITY to 0)) {
+      val document =
+        document(
+          RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)),
+          listOf(box(10, 1f, size, 20f)),
+        )
+      for (flatten in listOf(false, true)) {
+        assertEquals(
+          expected,
+          redPixelsInFirstRow(document, width = 100, height = 60, flatten),
+          "$size, flatten $flatten",
+        )
+      }
+    }
+  }
+
+  private fun redPixelsInFirstRow(
+    document: RcDocument,
+    width: Int,
+    height: Int,
+    flatten: Boolean,
+  ): Int {
+    val scene =
+      ImageComposeScene(width = width, height = height, density = Density(1f)) {
+        CompositionLocalProvider(LocalRcFlattenLayout provides flatten) {
+          RcComposePlayer(RcPreparedDocument(document), Modifier.width(width.dp))
+        }
+      }
+    try {
+      val bitmap = Bitmap().apply { allocN32Pixels(width, height) }
+      check(scene.render(0L).readPixels(bitmap))
+      return (0 until width).count { bitmap.getColor(it, 1) == RED }
+    } finally {
+      scene.close()
+    }
+  }
+
   @Test
   fun aRowLeavesRoomForItsGapsWhenItMeasures() {
     // 60 + 10 + 60 in 100: the second box gets the 30 left after the gap, as a Compose row gives
@@ -965,5 +1010,7 @@ class RcFlatLayoutTest {
     const val ALPHA = 44
     /** The id of a `0 / 0` expression. */
     const val NOT_A_NUMBER = 45
+    /** The background of [box] with red 1. */
+    const val RED = 0xffff0000.toInt()
   }
 }
