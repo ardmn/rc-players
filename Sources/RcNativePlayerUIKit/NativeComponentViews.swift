@@ -118,6 +118,7 @@
           try budget.validateNumbers(
             command.geometryValues.map(Double.init)
               + [Double(command.strokeWidth), Double(command.alpha)]
+              + command.typesetTextSizes.map(Double.init)
               + command.path.flatMap { $0.values.map(Double.init) },
             componentID: node.componentID, field: "draw", limits: limits)
         }
@@ -430,7 +431,7 @@
       strokeCap = snapshot.strokeCap
       strokeJoin = snapshot.strokeJoin
       blendMode = snapshot.blendMode
-      // Only the circle draws its string; canvas `DrawText` keeps nil, as before.
+      // Only the circle draws its string here; canvas `DrawText` carries none.
       textOnCircle = NativeSwiftTextOnCircle(drawing: snapshot)
       textSize = textOnCircle == nil ? 16 : CGFloat(snapshot.textSize)
       textSizeIsDensityTyped = false
@@ -2187,11 +2188,11 @@
       paragraph.lineBreakMode =
         command.textStyle.maxLines > 1
         ? .byWordWrapping : lineBreakMode(command.textStyle.overflow)
+      // The paint alpha replaces the colour's unless the context already carries it.
+      let color = keepingColorAlpha ? command.color : command.color.withAlphaComponent(command.alpha)
       var attributes: [NSAttributedString.Key: Any] = [
         .font: font,
-        // The paint alpha replaces the colour's unless the context already carries it.
-        .foregroundColor: keepingColorAlpha
-          ? command.color : command.color.withAlphaComponent(command.alpha),
+        .foregroundColor: color,
         .paragraphStyle: paragraph,
         .kern: command.textStyle.letterSpacing * font.pointSize,
       ]
@@ -2202,7 +2203,7 @@
         attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
       }
       if command.isStroke {
-        attributes[.strokeColor] = command.color.withAlphaComponent(command.alpha)
+        attributes[.strokeColor] = color
         attributes[.strokeWidth] = max(command.strokeWidth / font.pointSize * 100, 0.1)
       }
       return NSAttributedString(string: command.text ?? "", attributes: attributes)

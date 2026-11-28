@@ -36,9 +36,8 @@ import Testing
     paint.colorFilterMode = .sourceIn
     let draw = ParsedDrawCommand(kind: NativeSwiftDrawKind.rect, words: [], paint: paint)
     func color(_ colors: [Int: UInt32]) throws -> UInt32 {
-      try #require(
-        try draw.resolve(values: [:], integers: [:], colors: colors, texts: [:], matrices: [:])
-      ).colorARGB
+      try draw.resolve(values: [:], integers: [:], colors: colors, texts: [:], matrices: [:])
+        .colorARGB
     }
     #expect(try color([1: 0x8000_0000, 2: 0xffff_0000]) == 0x80ff_0000)
     #expect(try color([1: 0x4000_0000, 2: 0x8000_ff00]) == 0x2000_ff00)

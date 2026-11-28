@@ -135,9 +135,8 @@ import Testing
     }
   }
 
-  /// An alignment or placement outside the wire's values — another byte, or a value that is not a
-  /// whole number at all — falls back as the Kotlin player's does: alignment to START, placement to
-  /// OUTSIDE.
+  /// An alignment or placement outside the wire's values (another byte, or not a whole number)
+  /// falls back as the Kotlin player's does: alignment to START, placement to OUTSIDE.
   @Test(arguments: [(7, 9), (.nan, .nan), (.infinity, -.infinity), (1.5, 0.5)] as [(Float, Float)])
   func unknownAlignmentAndPlacementFallBackAsKotlinDoes(alignment: Float, placement: Float) throws {
     let known = try #require(circle(alignment: Alignment.start, placement: Placement.outside))
@@ -155,6 +154,27 @@ import Testing
   ])
   func anUnusableCircleIsNotOne(values: [Float]) {
     #expect(NativeSwiftTextOnCircle(values: values) == nil)
+  }
+
+  /// A trailing zero-advance glyph (a combining mark) sits at the end of the arc and is drawn at
+  /// every radius: the arc is the advances' sum itself, so rounding cannot leave it short.
+  @Test func aTrailingZeroAdvanceMarkIsNeverDropped() throws {
+    let advances: [Float] = [11.3, 9.7, 0]
+    for radius in stride(from: Float(40), through: 120, by: 0.25) {
+      let circle = try #require(
+        NativeSwiftTextOnCircle(values: Self.values(radius: radius, warp: 0)))
+      #expect(circle.glyphs(advances: advances).count == advances.count, "radius \(radius)")
+    }
+  }
+
+  /// A circle too small to give finite angles places nothing rather than NaN positions, even for
+  /// a leading negative-advance glyph whose centre falls before the arc's start.
+  @Test func aCircleTooSmallForFiniteAnglesPlacesNothing() throws {
+    let circle = try #require(
+      NativeSwiftTextOnCircle(
+        values: Self.values(
+          radius: .leastNonzeroMagnitude, warp: 0, alignment: Float(Alignment.end))))
+    #expect(circle.glyphs(advances: [-1, 10]).isEmpty)
   }
 
   /// A string longer than the circle fills one full turn and drops the glyphs whose centre falls
@@ -179,7 +199,10 @@ import Testing
       .appendingPathComponent(
         "rc-player/protocol/src/commonMain/kotlin/ee/schimke/composeai/rcplayer/protocol/RcModel.kt"
       )
-    let source = try String(contentsOf: model, encoding: .utf8)
+    let file = try String(contentsOf: model, encoding: .utf8)
+    // Other classes reuse the names (`RcLayoutText.ALIGN_START`), so only this class is read.
+    let owner = try #require(file.range(of: "data class RcDrawTextOnCircle("))
+    let source = file[owner.upperBound...]
     func kotlin(_ name: String) -> Int? {
       let marker = "const val \(name): Int = "
       return source.range(of: marker).flatMap { range in

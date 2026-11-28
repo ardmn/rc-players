@@ -17,8 +17,7 @@ public enum NativeSwiftSystemVariables {
   /// The first id a document's own variables use; ids below it are the player's.
   ///
   /// AndroidX `START_ID` in
-  /// [`RemoteComposeState.java`](https://github.com/androidx/androidx/blob/androidx-main/compose/remote/remote-core/src/main/java/androidx/compose/remote/core/RemoteComposeState.java);
-  /// the Kotlin player's `LITERAL_ID_LIMIT`.
+  /// [`RemoteComposeState.java`](https://github.com/androidx/androidx/blob/androidx-main/compose/remote/remote-core/src/main/java/androidx/compose/remote/core/RemoteComposeState.java).
   public static let firstDocumentID = 42
 
   /// Device pixels per dp, as the player is playing the document.

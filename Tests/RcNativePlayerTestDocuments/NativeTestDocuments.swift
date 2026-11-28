@@ -169,7 +169,7 @@ public enum NativeTestDocuments {
     return wire.data
   }
 
-  /// The side of ``textOnCircle(_:text:draws:alignment:placement:radius:warp:center:startAngle:definitions:names:)``.
+  /// The side of the `textOnCircle` documents.
   public static let textOnCircleSize = 240
   /// The centre of that document's circle, on both axes.
   public static let textOnCircleCenter: Float = 120
@@ -189,22 +189,25 @@ public enum NativeTestDocuments {
   static let dialRingColor = Int(Int32(bitPattern: 0xff9a_a0a6))
   static let dialLabelColor = Int(Int32(bitPattern: 0xff1a_73e8))
 
-  /// A float word: a literal, or a reference to float `id` in the form the Kotlin codec writes.
+  /// A float word: a literal, a reference to float `id` in the form the Kotlin codec writes, or
+  /// any other word.
   public enum FloatWord {
     case literal(Float)
     case variable(Int)
+    /// Any other word, as written.
+    case raw(UInt32)
 
     public var bits: Int {
       switch self {
       case .literal(let value): Int(Int32(bitPattern: value.bitPattern))
+      case .raw(let word): Int(Int32(bitPattern: word))
       case .variable(let id):
         Int(Int32(bitPattern: NativeTestWire.floatReferencePrefix | UInt32(id)))
       }
     }
   }
 
-  /// What ``textOnCircle(_:text:draws:alignment:placement:radius:warp:center:startAngle:definitions:names:)``
-  /// draws.
+  /// What a `textOnCircle` document draws.
   public enum TextOnCircleScene {
     /// `RcTextOnCircleRenderTest.document(...)`: the string alone, opaque black.
     case label
@@ -214,14 +217,16 @@ public enum NativeTestDocuments {
     case labelledDial
   }
 
-  /// The documents of the Kotlin player's `RcTextOnCircleRenderTest`, byte for byte: one
-  /// `DrawTextOnCircle` of `text` (``textOnCircleText`` by default) at ``textOnCircleTextSize`` pt in a
-  /// ``textOnCircleSize`` square canvas, as `scene` says; the plain label is drawn `draws` times. Every float field may be a variable;
-  /// `definitions` are float constants `(id, value)` written first, and `names` declares some of
-  /// them as named floats a host can write.
+  /// The documents of the Kotlin player's `RcTextOnCircleRenderTest`, byte for byte.
+  ///
+  /// One `DrawTextOnCircle` of `text` at `textSize` pt in a ``textOnCircleSize``
+  /// square canvas, as `scene` says; the plain label is drawn `draws` times. Every float field may
+  /// be a variable; `definitions` are float constants `(id, value)` written first, and `names`
+  /// declares some of them as named floats a host can write.
   public static func textOnCircle(
     _ scene: TextOnCircleScene = .label,
     text: String = textOnCircleText,
+    textSize: Float = textOnCircleTextSize,
     draws: Int = 1,
     alignment: Int = NativeSwiftTextOnCircleAlignment.center,
     placement: Int = NativeSwiftTextOnCirclePlacement.outside,
@@ -257,10 +262,10 @@ public enum NativeTestDocuments {
       for word in [center, center, radius, startAngle, warp] { wire.int(word.bits) }
       wire.u8(alignment).u8(placement)
     }
-    let textSize = FloatWord.literal(textOnCircleTextSize).bits
+    let textSizeWord = FloatWord.literal(textSize).bits
     switch scene {
     case .label:
-      paint([Key.textSize, textSize, Key.color, opaqueBlack])
+      paint([Key.textSize, textSizeWord, Key.color, opaqueBlack])
       for _ in 0..<draws { drawTextOnCircle() }
     case .dial, .labelledDial:
       paint([
@@ -273,7 +278,7 @@ public enum NativeTestDocuments {
       }
       if scene == .labelledDial {
         paint([
-          NativeTestWire.styleWord(NativeTestWire.PaintStyle.fill), Key.textSize, textSize,
+          NativeTestWire.styleWord(NativeTestWire.PaintStyle.fill), Key.textSize, textSizeWord,
           Key.color, dialLabelColor,
         ])
         drawTextOnCircle()

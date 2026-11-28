@@ -2,9 +2,9 @@ import Foundation
 
 /// Which point of the string `DrawTextOnCircle` pins at its `startAngle`.
 ///
-/// The ordinals of AndroidX `DrawTextOnCircle.Alignment`
-/// ([`DrawTextOnCircle.java`](https://github.com/androidx/androidx/blob/androidx-main/compose/remote/remote-core/src/main/java/androidx/compose/remote/core/operations/DrawTextOnCircle.java)). Any other byte aligns as ``start``, as `Alignment.fromInt`
-/// maps it.
+/// The ordinals of AndroidX `DrawTextOnCircle.Alignment`; any other byte aligns as ``start``, as
+/// `Alignment.fromInt` maps it. Spec:
+/// [`DrawTextOnCircle.java`](https://github.com/androidx/androidx/blob/androidx-main/compose/remote/remote-core/src/main/java/androidx/compose/remote/core/operations/DrawTextOnCircle.java)
 public enum NativeSwiftTextOnCircleAlignment {
   /// The string begins at `startAngle` and runs away from it.
   public static let start = 0
@@ -71,13 +71,25 @@ public struct NativeSwiftTextOnCircle: Sendable, Equatable {
 
   private static let radiansPerDegree: Float = .pi / 180
 
+  /// Finite values that describe no circle (radius 0).
+  private static let noCircleValues = [Float](repeating: 0, count: ValueIndex.count)
+
+  /// `values` when they describe a circle, otherwise finite values that draw nothing.
+  ///
+  /// An unusable circle keeps its command, so a canvas keeps its view while a radius animates
+  /// through zero, and a host's finite-geometry check never sees its NaN.
+  static func drawableValues(_ values: [Float]) -> [Float] {
+    Self(values: values) == nil ? noCircleValues : values
+  }
+
   /// Creates the circle a `textOnCircle` command's resolved values describe.
   ///
   /// Fails for a non-finite centre or start angle (an unresolved variable) or a radius plus warp
   /// that is not positive: the operation then draws nothing, as in AndroidX. An alignment or
   /// placement that is not a whole number falls back to START or OUTSIDE.
   ///
-  /// - Parameter values: The command's values, in ``ValueIndex`` order.
+  /// - Parameter values: The command's values in wire order: centerX, centerY, radius,
+  ///   startAngle, warpRadiusOffset, alignment, placement.
   public init?(values: [Float]) {
     guard values.count == ValueIndex.count else { return nil }
     let radius = values[ValueIndex.radius] + values[ValueIndex.warpRadiusOffset]
@@ -124,19 +136,21 @@ public struct NativeSwiftTextOnCircle: Sendable, Equatable {
 
   /// The position and rotation of each glyph laid along ``arc(textWidth:)``.
   ///
-  /// The arc is cut from the advances' sum, so it is as long as the walk. A glyph whose centre
-  /// falls past the arc, or past one full turn, is dropped with every glyph after it, as the
-  /// path walker drops glyphs that run off its path. O(n) in the glyphs, once per draw.
+  /// The arc is the advances' sum, so it is as long as the walk. A glyph whose centre falls past
+  /// one full turn is dropped with every glyph after it, as the path walker drops glyphs that run
+  /// off its path; so is every glyph of a circle too small to give finite angles. O(n) in the
+  /// glyphs, once per draw.
   ///
   /// - Parameter advances: The glyph advances in drawing order, in points.
   /// - Returns: One placement per glyph that fits, in the same order.
   public func glyphs(advances: [Float]) -> [NativeSwiftCircleGlyph] {
     let textWidth = advances.reduce(0, +)
     guard textWidth > 0, textWidth.isFinite else { return [] }
-    let textArc = arc(textWidth: textWidth)
-    // A string longer than the circle covers it once and does not lap itself.
-    let arcLength = min(abs(textArc.sweepDegrees), 360) * Self.radiansPerDegree * radius
-    let startRadians = textArc.startDegrees * Self.radiansPerDegree
+    let startRadians = arc(textWidth: textWidth).startDegrees * Self.radiansPerDegree
+    guard startRadians.isFinite, (textWidth / radius).isFinite else { return [] }
+    // The width itself, not rebuilt from the sweep, so rounding never drops a trailing
+    // zero-advance mark; a string longer than the circle covers it once.
+    let arcLength = min(textWidth, 2 * .pi * radius)
     let direction: Float = clockwise ? 1 : -1
     var placed: [NativeSwiftCircleGlyph] = []
     placed.reserveCapacity(advances.count)

@@ -58,7 +58,11 @@ enum NativeTextOnCircle {
 }
 
 extension NativeSwiftDrawCommandSnapshot {
-  /// The strings a host typesets for this command every frame, which spend the frame's text
-  /// budget as a text component's string does: a `DrawTextOnCircle`'s string, none otherwise.
+  /// The circle's string, which both hosts typeset every frame, so it spends the frame's text
+  /// budget as a text component's string does. Empty for every other kind.
   var typesetStrings: [String?] { kind == NativeSwiftDrawKind.textOnCircle ? [text] : [] }
+
+  /// The circle's text size, which must be finite as a text component's is. Empty for every other
+  /// kind.
+  var typesetTextSizes: [Float] { kind == NativeSwiftDrawKind.textOnCircle ? [textSize] : [] }
 }

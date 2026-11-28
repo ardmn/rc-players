@@ -138,7 +138,8 @@ public enum NativeMacPolicy {
           field: "draw geometry",
           limits: executionLimits)
         try budget.validateNumbers(
-          [command.alpha, command.strokeWidth].map(Double.init), componentID: node.componentID,
+          ([command.alpha, command.strokeWidth] + command.typesetTextSizes).map(Double.init),
+          componentID: node.componentID,
           field: "paint", limits: executionLimits)
         for element in command.path {
           try budget.validateNumbers(

@@ -1,9 +1,10 @@
 import CoreGraphics
 import Foundation
 import ImageIO
-import RcNativePlayerCore
 import RcNativePlayerTestDocuments
 import Testing
+
+@testable import RcNativePlayerCore
 
 #if canImport(UIKit)
   import UIKit
@@ -14,8 +15,8 @@ import Testing
   import RcNativePlayerUIKit
 #endif
 
-/// `DrawTextOnCircle` (op 57) end to end on the native hosts — AppKit under `swift test`, UIKit on
-/// the iOS simulator — one test for each case of the Kotlin player's `RcTextOnCircleRenderTest`,
+/// `DrawTextOnCircle` (op 57) end to end on the native hosts (AppKit under `swift test`, UIKit on
+/// the iOS simulator): one test for each case of the Kotlin player's `RcTextOnCircleRenderTest`,
 /// on the same documents, byte for byte.
 ///
 /// As there, the assertions are geometric rather than golden-image: a sweep from the wrong radius,
@@ -52,8 +53,8 @@ import Testing
       ink.count { $0 > Self.radius + Self.farFromRing } == 0, "ink landed well outside the ring")
   }
 
-  /// START pins the string's leading edge at the start angle and END its trailing edge, so the two
-  /// cannot put ink in the same places — that difference is the whole of the alignment arithmetic.
+  /// START pins the string's leading edge at the start angle and END its trailing edge, so the
+  /// two cannot put ink in the same places: that difference is the whole alignment arithmetic.
   @Test func alignmentMovesTheStringAroundTheRingWithoutLeavingIt() throws {
     let start = try render(Documents.textOnCircle(alignment: Alignment.start))
     let end = try render(Documents.textOnCircle(alignment: Alignment.end))
@@ -114,15 +115,28 @@ import Testing
     #expect(try render(Documents.textOnCircle(center: .variable(Self.centerID))).pixels.isEmpty)
   }
 
-  /// The unusable circle never reaches a host: the core drops the command, so neither the hosts'
-  /// finite-geometry budget nor their draw sees a NaN.
-  @Test func theCoreDropsAnUnusableCircleAndKeepsAUsableOne() throws {
+  /// An unusable circle keeps its command, so the canvas keeps its view, but with finite values
+  /// that describe no circle: neither the hosts' finite-geometry budget nor their draw sees a NaN.
+  @Test func anUnusableCircleKeepsItsCommandAndDrawsNothing() throws {
     func commands(_ data: Data) throws -> [NativeSwiftDrawCommandSnapshot] {
       Self.drawCommands(in: try NativeSwiftDocumentSession.open(data: data).snapshot().root)
         .filter { $0.kind == NativeSwiftDrawKind.textOnCircle }
     }
-    #expect(try commands(Documents.textOnCircle(center: .variable(Self.centerID))).isEmpty)
-    #expect(try commands(Documents.textOnCircle(radius: .literal(0), warp: .literal(0))).isEmpty)
+    for unusable in [
+      Documents.textOnCircle(center: .variable(Self.centerID)),
+      Documents.textOnCircle(radius: .literal(0), warp: .literal(0)),
+      // An operator word where a number belongs reads no written value, as in Kotlin. The radius
+      // is a variable so the command resolves per frame rather than as literals.
+      Documents.textOnCircle(
+        radius: .variable(Self.radiusID),
+        center: .raw(NativeSwiftFloatExpression.operatorWord(NativeSwiftFloatOperator.add)),
+        definitions: [(Self.radiusID, Self.radius - Documents.textOnCircleWarp)]),
+    ] {
+      let kept = try commands(unusable)
+      #expect(kept.count == 1)
+      #expect(kept.allSatisfy { NativeSwiftTextOnCircle(drawing: $0) == nil })
+      #expect(kept.allSatisfy { $0.values.allSatisfy(\.isFinite) })
+    }
     let drawn = try #require(try commands(Documents.textOnCircle(alignment: Alignment.end)).first)
     let circle = try #require(NativeSwiftTextOnCircle(drawing: drawn))
     #expect(circle.radius == Self.radius && circle.alignment == Alignment.end)
@@ -130,23 +144,27 @@ import Testing
     #expect(drawn.textSize == Documents.textOnCircleTextSize)
   }
 
-  /// A live document can move the radius through zero and back: the command leaves the frame
-  /// while the circle is empty and returns, at the new radius, once it is not — nothing about the
+  /// A live document can move the radius through zero and back: the command stays in the frame
+  /// and draws nothing while the circle is empty, then draws at the new radius; nothing about the
   /// empty frame sticks.
-  @Test func aRadiusThatPassesThroughZeroDropsTheDrawAndBringsItBack() throws {
+  @Test func aRadiusThatPassesThroughZeroStopsTheDrawAndBringsItBack() throws {
     let radiusName = "radius"
     let session = try NativeSwiftDocumentSession.open(
       data: Documents.textOnCircle(
         radius: .variable(Self.radiusID),
         definitions: [(Self.radiusID, Self.radius - Documents.textOnCircleWarp)],
         names: [(Self.radiusID, radiusName)]))
-    func circles() throws -> [NativeSwiftTextOnCircle] {
+    func commands() throws -> [NativeSwiftDrawCommandSnapshot] {
       try Self.drawCommands(in: session.snapshot().root)
-        .compactMap(NativeSwiftTextOnCircle.init(drawing:))
+        .filter { $0.kind == NativeSwiftDrawKind.textOnCircle }
+    }
+    func circles() throws -> [NativeSwiftTextOnCircle] {
+      try commands().compactMap(NativeSwiftTextOnCircle.init(drawing:))
     }
     #expect(try circles().map(\.radius) == [Self.radius])
     #expect(session.setFloat(-Documents.textOnCircleWarp, for: radiusName))
     #expect(try circles().isEmpty, "an empty circle still drew")
+    #expect(try commands().count == 1, "the canvas lost its command, so its view is rebuilt")
     let newRadius: Float = 50
     #expect(session.setFloat(newRadius, for: radiusName))
     #expect(try circles().map(\.radius) == [newRadius + Documents.textOnCircleWarp])
@@ -162,6 +180,48 @@ import Testing
     let circles = Self.drawCommands(in: try session.snapshot(wallClock: nil).root)
       .compactMap(NativeSwiftTextOnCircle.init(drawing:))
     #expect(circles.map(\.startAngle) == [0])
+  }
+
+  #if canImport(UIKit)
+    /// A stroked circle string keeps its colour's own alpha (0x80) in the outline as in the fill:
+    /// the canvas has already put the paint alpha (0.25) on the context.
+    @Test func aStrokedCircleStringAppliesThePaintAlphaOnce() throws {
+      let colorAlpha: CGFloat = 0x80 / 255
+      let snapshot = NativeSwiftDrawCommandSnapshot(
+        kind: NativeSwiftDrawKind.textOnCircle,
+        values: [Self.center, Self.center, Self.radius, Documents.textOnCircleStartAngle, 0, 0, 0],
+        colorARGB: 0x80ff_0000, alpha: 0.25, strokeWidth: 2, isStroke: true, strokeCap: .butt,
+        strokeJoin: .miter, blendMode: .sourceOver, path: [], pathWinding: .nonZero, image: nil,
+        textureImageID: nil, textureTileModeX: 0, textureTileModeY: 0, shaderMatrix: nil,
+        filterQuality: nil, usesComponentGeometry: false, gradient: nil,
+        text: Documents.textOnCircleText, textSize: Documents.textOnCircleTextSize, textFlags: 0,
+        unsetValueIndices: [], offscreenTarget: nil)
+      let command = NativeDrawCommand(snapshot)
+      let attributes = NativeTextAttributes.string(
+        for: command, font: .systemFont(ofSize: 18), scale: 1, layoutDirection: .leftToRight,
+        keepingColorAlpha: true
+      ).attributes(at: 0, effectiveRange: nil)
+      let fill = try #require(attributes[.foregroundColor] as? UIColor)
+      let stroke = try #require(attributes[.strokeColor] as? UIColor)
+      #expect(abs(fill.cgColor.alpha - colorAlpha) < 1e-3)
+      #expect(abs(stroke.cgColor.alpha - colorAlpha) < 1e-3)
+    }
+  #endif
+
+  /// The circle's text size must be finite, as a text component's is: an infinite one refuses
+  /// the frame rather than reaching the font.
+  @Test func anInfiniteCircleTextSizeRefusesTheFrame() throws {
+    let data = Documents.textOnCircle(textSize: .infinity)
+    #if canImport(UIKit)
+      let session = try NativeSwiftDocumentSession.open(data: data)
+      #expect(throws: RemoteComposeNativeLimitError.self) {
+        _ = try NativeDocument(
+          frame: .init(session: session, snapshot: try session.snapshot(), wallClock: nil),
+          timeSeconds: 0, limits: .default)
+      }
+    #elseif canImport(AppKit)
+      #expect(throws: RemoteComposeNativeLimitError.self) { try png(data) }
+    #endif
   }
 
   /// The circle's string is typeset every frame, so it spends the frame's text budget as a text
@@ -183,9 +243,9 @@ import Testing
         try frame(text, budget: text.utf8.count - 1)
       }
     #elseif canImport(AppKit)
-      // The AppKit policy has the default limits, and the decoder caps one text below them, so
-      // the same long string is drawn until it no longer fits.
-      let text = String(repeating: "x", count: 4000)
+      // The AppKit policy has the default limits and the decoder caps one text below them, so
+      // the longest string the decoder takes is drawn until the frame no longer fits.
+      let text = String(repeating: "x", count: nativeSwiftMaximumStringBytes)
       let fits = RemoteComposeNativeExecutionLimits.default.maximumTextBytes / text.utf8.count
       _ = try png(Documents.textOnCircle(text: text, draws: fits))
       #expect(throws: RemoteComposeNativeLimitError.self) {
@@ -194,7 +254,7 @@ import Testing
     #endif
   }
 
-  /// Opt-in: writes the PR's evidence when `RC_TEXT_ON_CIRCLE_OUT` names a directory, and passes
+  /// Opt-in: writes the before/after evidence when `RC_TEXT_ON_CIRCLE_OUT` names a directory, and passes
   /// without writing otherwise — the Kotlin evidence strip's dial without and with its curved
   /// label, rendered by this host, and the labelled dial's document, for rendering on a base
   /// build.
