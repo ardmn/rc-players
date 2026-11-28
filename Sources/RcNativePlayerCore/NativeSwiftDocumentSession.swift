@@ -20,8 +20,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// The texts a write set — a host's, a document action's, a custom component's — which every
   /// resolution puts back over the document's (`RcPlayerState.textOverrides`).
   private var textOverrides: [Int: String] = [:]
-  /// The float view of every numeric value, live (`RcPlayerState.floats`). Writes go through
-  /// `storeFloat`, `setFloat` or `setInteger` so the integer view moves with it.
+  /// The float view of every numeric value, live (`RcPlayerState.floats`). Value writes go through
+  /// `storeFloat`, `setFloat` or `setInteger` so the integer view moves with it; only a system
+  /// load (float only), a carried value and a time attribute's clear write the views themselves.
   ///
   /// Exclusivity checks are off for this and `integers`: `stateLock` already serialises access, and
   /// the check cost about a tenth of a resolution at 5000 values (`scenarios.resolutionCost`). So
@@ -667,8 +668,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// Text `id` as it stands now, for an action that sends or stores it
   /// (`RcPlayerState.currentText`).
   ///
-  /// A derived text is recomputed by its producer, inputs first, because its inputs may have moved
-  /// since the last frame. O(the texts `id` depends on), walked with an explicit stack.
+  /// A text with a producer is recomputed, inputs first, because its inputs may have moved since
+  /// the last frame; any other text is sent as it stands. O(the texts `id` depends on).
   private func currentText(_ id: Int) -> String? {
     guard textOverrides[id] == nil, document.textProducers[id] != nil else { return texts[id] }
     var order: [ParsedTextOperation] = []
@@ -694,8 +695,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 
   /// Every value the document holds at `timeSeconds`, after one resolution at that instant.
   ///
-  /// Resolves as `snapshot` does, minus impulses and frame effects, so a probe after a `snapshot`
-  /// at the same instant is a second pass: values that read their previous ones move again.
+  /// Resolves as `snapshot` does, minus impulses, so a probe after a `snapshot` at the same instant
+  /// is a second pass: values that read their previous ones move again. Its run actions replace
+  /// any frame effects not yet taken.
   @_spi(Conformance) public func probeValues(
     timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock? = nil
   ) throws -> NativeSwiftProbeValues {
@@ -1625,10 +1627,11 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 
   /// One resolution at `timeSeconds`: `beginFrame`, every step once in wire order against the live
   /// store, then the measured component values. No fixed point: a step that reads a later step's
-  /// output reads the previous resolution's value, as in Kotlin.
+  /// numeric output reads the previous resolution's value, as in Kotlin.
   ///
   /// Cost: O(steps + the expression words they evaluate), plus the component-value estimates; the
-  /// steps run once more when a component value moved or a step failed waiting for one.
+  /// steps run once more when a component value moved or a step failed waiting for a component
+  /// value or a later step's output.
   private func resolveFrame(
     timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock?,
     measuredComponents: [Int: NativeSwiftMeasuredSize]
@@ -1706,11 +1709,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     loadSystemVariables(timeSeconds: timeSeconds, wallClock: wallClock)
   }
 
-  /// `RcPlayerState.loadSystemVariables`: each unclaimed system value as a float only.
+  /// `RcPlayerState.loadSystemVariables`: each unclaimed system value as a float only, except
+  /// `EPOCH_SECOND`, which a wall clock sets in both views.
   ///
   /// The animation clock is the host's logical timeline, which a capture can hold still. Without a
-  /// wall clock the calendar is unset and `CONTINUOUS_SEC` falls back to it, so a document that
-  /// animates off it still moves.
+  /// wall clock the calendar is unset and `CONTINUOUS_SEC` falls back to the animation clock, so a
+  /// document that animates off it still moves.
   private func loadSystemVariables(timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock?) {
     typealias System = NativeSwiftSystemVariables
     let animationTime = Float(timeSeconds)
@@ -2014,8 +2018,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       let units = Array((texts[subtext.textID] ?? "").utf16)
       let startPosition = NativeSwiftFloatExpression.resolve(subtext.start, values: floats)
       let start = nativeSwiftClampedInt(startPosition).clamped(to: 0...units.count)
-      let length = nativeSwiftClampedInt(
-        NativeSwiftFloatExpression.resolve(subtext.length, values: floats))
+      let lengthValue = NativeSwiftFloatExpression.resolve(subtext.length, values: floats)
+      let length = nativeSwiftClampedInt(lengthValue)
       // Clamp against the remaining units before adding, so a saturated length cannot overflow.
       let end =
         length == Self.subtextToEnd

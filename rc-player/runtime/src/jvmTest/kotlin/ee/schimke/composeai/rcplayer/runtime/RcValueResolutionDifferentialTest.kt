@@ -237,8 +237,9 @@ class RcValueResolutionDifferentialTest {
                 }
               words += RcFloatExpressionEvaluator.operatorWord(operator)
             }
-            // One float expression per id: the Kotlin player memoises inputs by output id, so a
-            // second expression at that id is wrongly skipped. With no free id, emit a constant.
+            // One float expression per id: Kotlin memoises inputs by output id, so a second
+            // expression there is wrongly skipped while the first's inputs stand still.
+            // With no free id, emit a constant.
             val freeIDs = generateSequence(::writeID).take(FREE_ID_DRAWS)
             val id = freeIDs.firstOrNull { it !in floatExpressionIds }
             if (id == null) {

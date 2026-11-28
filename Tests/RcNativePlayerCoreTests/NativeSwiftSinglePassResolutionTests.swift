@@ -48,6 +48,7 @@ import Testing
   /// Integer-expression masks: bit n marks token n as a variable id (the low bits) or an operator.
   private static let variableThenOperator = 0b101
   private static let operatorAtThirdToken = 0b100
+  private static let allLiterals = 0
 
   /// `TextFromFloat`'s digits word: digits before the point in the high half, after it in the low.
   private static func digits(before: Int, after: Int) -> Int { (before << 16) | after }
@@ -319,7 +320,7 @@ import Testing
     document.u8(Op.idList).int(titles).int(2).int(66).int(67)
     document.u8(Op.layoutRoot).int(1)
     document.u8(Op.layoutContent).int(2)
-    document.u8(Op.integerExpression).int(69).int(0).int(1).int(1)
+    document.u8(Op.integerExpression).int(69).int(Self.allLiterals).int(1).int(1)
     document.u8(Op.textLookupInt).int(70).int(titles).int(69)
     document.u8(Op.containerEnd)
     Self.drawText(document, id: 70)
@@ -911,7 +912,7 @@ import Testing
     document.header(width: 100, height: 100)
     document.u8(Op.dataFloat).int(58).float(source)
     document.namedVariable(id: 58, type: Named.float, name: "source")
-    // Animation words in the high half, one value word in the low (`FloatExpression.java:367-368`).
+    // Animation words in the high half, one value word in the low (`FloatExpression.java:358-359`).
     document.u8(Op.animatedFloat).int(59).int((animation.count << 16) | 1)
       .int(Writer.nanReference(58))
     for word in animation { document.int(word) }
@@ -1296,7 +1297,7 @@ import Testing
       .int(System.timeInSeconds).int(0).int(Writer.integerOperator(NativeSwiftIntegerOperator.add))
     document.u8(Op.animatedFloat).int(70).int(3).int(Writer.nanReference(60)).float(10)
       .int(Self.mul)
-    document.u8(Op.integerExpression).int(60).int(0).int(1).int(5)
+    document.u8(Op.integerExpression).int(60).int(Self.allLiterals).int(1).int(5)
     document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
     let snapshot = try NativeSwiftDocumentSession.open(data: document.data)
       .snapshot(timeSeconds: 0, wallClock: NativeSwiftWallClock(epochMillis: 1_780_000_000_000))

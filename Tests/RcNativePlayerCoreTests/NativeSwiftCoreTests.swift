@@ -1897,9 +1897,12 @@ import Testing
     #expect(
       unclocked.floats[28] == nil && unclocked.floats[24] == 2023,
       "an unclocked time attribute resolved to \(String(describing: unclocked.floats[28]))")
-    // A session that resolved with a clock before leaves 28 unset again, as it leaves the calendar.
+    // A session that resolved with a clock before leaves 28 unset again, as it leaves the calendar,
+    // and still resolves the stated instant's fields.
     let reused = try timedSession.probeValues(timeSeconds: 0)
-    #expect(reused.floats[28] == nil, "\(String(describing: reused.floats[28]))")
+    #expect(
+      reused.floats[28] == nil && reused.floats[24] == 2023,
+      "\(String(describing: reused.floats[28]))")
     let timedSnapshot = try timedSession.snapshot()
     #expect(
       !timedSnapshot.needsWallClockRefresh,

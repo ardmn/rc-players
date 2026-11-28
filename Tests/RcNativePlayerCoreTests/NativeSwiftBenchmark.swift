@@ -371,8 +371,9 @@ import Testing
     typealias Op = NativeSwiftWireOpcode
     let add = Writer.floatOperator(NativeSwiftFloatOperator.add)
     let movingID = 20000
-    // Integer-expression mask: token 0 is a variable id, token 2 an operator.
+    // Integer-expression masks: bit n marks token n as a variable id or an operator.
     let variableThenOperator = 0b101
+    let singleVariable = 0b1
     let writer = Writer()
     writer.header(width: 100, height: 100)
     writer.u8(Op.animatedFloat).int(movingID).int(3)
@@ -404,8 +405,8 @@ import Testing
         writer.u8(Op.animatedFloat).int(staticID).int(1).int(Writer.literal(3))
       }
       if shape != .floats {
-        // I60 = one token, a variable id (mask 1).
-        writer.u8(Op.integerExpression).int(60).int(1).int(1)
+        // I60 = one token, a variable id.
+        writer.u8(Op.integerExpression).int(60).int(singleVariable).int(1)
           .int(shape == .integerOverMoving ? movingID : staticID)
       }
     }
