@@ -20,7 +20,8 @@ public enum RemoteRowsBuilder {
 }
 
 /// Sections on the grouped background, as SwiftUI's `List` with the inset-grouped style: a
-/// settings screen.
+/// settings screen. The list fills the space it is offered and scrolls when its sections are
+/// longer.
 ///
 /// ```swift
 /// RemoteList {
@@ -42,10 +43,12 @@ public struct RemoteList<Content: RemoteView>: RemoteView {
   public var body: some RemoteView {
     let content = content
     return ThemedView { theme, _ in
-      RemoteVStack(alignment: .leading, spacing: Self.sectionSpacing) { content }
+      // The sections are the scroll view's own children, rather than a stack's inside it: a
+      // level less for the players to recurse through. The margin is the scroll view's padding,
+      // inside its background.
+      RemoteScrollView(spacing: Self.sectionSpacing, alignment: .leading) { content }
         .padding(.horizontal, Self.margin)
         .padding(.vertical, Self.margin)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.groupedBackground)
     }
   }

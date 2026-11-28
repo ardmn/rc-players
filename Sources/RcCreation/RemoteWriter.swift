@@ -21,6 +21,9 @@ package final class RemoteWriter {
   private var stringIDs: [RemoteString.Node: Int32] = [:]
   private var intIDs: [Int32: Int32] = [:]
   private var colorIDs: [RemoteColor.Storage: Int32] = [:]
+  /// Each scroll position's ids, and the positions a scroll view has been written with.
+  private var scrollPositions: [RemoteScrollPosition: ScrollIDs] = [:]
+  private var scrolledPositions: Set<RemoteScrollPosition> = []
   /// Each variable's declared id, by name, and the type and value it was declared with.
   private var variables: [String: (id: Int32, declaration: VariableDeclaration)] = [:]
 
@@ -168,6 +171,10 @@ package final class RemoteWriter {
       return declared
     case .canvasSize, .canvasPixels:
       throw RemoteEncodingError.canvasSizeOutsideCanvas
+    case .scroll(let position, let value):
+      let pixels = RemoteFloat.Node.declared(scrollIDs(position).id(value))
+      id = try floatID(
+        displayScale == 1 ? pixels : .binary(.divide, pixels, .constant(displayScale)))
     case .integerView(let integer):
       // The integer's own id: the players publish its value as a float too. A float read as an
       // integer shares the float's id, so it is copied by an `IntegerExpression` first, whose
@@ -204,7 +211,7 @@ package final class RemoteWriter {
   {
     switch node {
     case .constant(let literal): words.append(try Self.finite(literal))
-    case .variable, .declared, .system, .canvasSize, .canvasPixels, .integerView:
+    case .variable, .declared, .system, .canvasSize, .canvasPixels, .scroll, .integerView:
       words.append(Self.reference(try floatID(node)))
     case .unary(let operation, let operand):
       try appendRPN(operand, to: &words)
@@ -229,7 +236,7 @@ package final class RemoteWriter {
     case .canvasPixels(let axis): return .declared(try axisID(axis))
     case .canvasSize(let axis):
       return .binary(.divide, .declared(try axisID(axis)), .constant(displayScale))
-    case .constant, .variable, .system, .declared: return node
+    case .constant, .variable, .system, .declared, .scroll: return node
     case .integerView(let integer): return .integerView(try resolvingCanvasSize(integer))
     case .unary(let operation, let operand):
       return .unary(operation, try resolvingCanvasSize(operand))
@@ -649,6 +656,138 @@ package final class RemoteWriter {
         width: widthFixed ? nil : .fill(1), height: heightFixed ? nil : .fill(1)), body)
   }
 
+  /// A scroll view: a column or row that fills the space it is offered, clipped and scrolled by
+  /// the scroll modifier, as AndroidX's `verticalScroll` and `horizontalScroll` write it.
+  func writeScrollView(
+    _ scroll: RemoteScrollConfiguration, content: some RemoteStackContent
+  ) throws(RemoteEncodingError) {
+    try withFillOnFreeAxes { () throws(RemoteEncodingError) in
+      try withModifier(.scroll(scroll)) { () throws(RemoteEncodingError) in
+        switch scroll.axis {
+        case .vertical:
+          let layout = ColumnLayout(
+            componentId: newComponentID(), animationId: IdEncoding.noId,
+            horizontalPositioning: scroll.alignment.wire, verticalPositioning: ColumnLayout.top,
+            spacedBy: try pixels(scroll.spacing))
+          try writeLayout(.columnLayout(layout), kind: .verticalStack, content: content)
+        case .horizontal:
+          let layout = RowLayout(
+            componentId: newComponentID(), animationId: IdEncoding.noId,
+            horizontalPositioning: RowLayout.start, verticalPositioning: RowLayout.center,
+            spacedBy: 0)
+          try writeLayout(.rowLayout(layout), kind: .horizontalStack, content: content)
+        }
+      }
+    }
+  }
+
+  /// The float ids of a scroll: its position, how far it can travel, and the extent its notches
+  /// divide (the content's length), all in pixels and written by the player.
+  struct ScrollIDs {
+    let position: Int32
+    let maximum: Int32
+    let notchMaximum: Int32
+
+    func id(_ value: RemoteScrollPosition.Value) -> Int32 {
+      switch value {
+      case .offset: position
+      case .maximumOffset: maximum
+      case .contentLength: notchMaximum
+      }
+    }
+  }
+
+  /// The ids of `position`'s scroll, made on first use: by the scroll view, or by a view that
+  /// reads the position, whichever is written first.
+  func scrollIDs(_ position: RemoteScrollPosition) -> ScrollIDs {
+    if let ids = scrollPositions[position] { return ids }
+    let ids = ScrollIDs(position: newDataID(), maximum: newDataID(), notchMaximum: newDataID())
+    scrollPositions[position] = ids
+    return ids
+  }
+
+  /// A scroll modifier, as AndroidX's writer shapes it: a clip, `ScrollModifierOperation` with
+  /// the ids of the position and of the extents the player measures, and the position as a touch
+  /// expression, the only child of the scroll's container.
+  private func writeScroll(_ scroll: RemoteScrollConfiguration) throws(RemoteEncodingError) {
+    let ids: ScrollIDs
+    if let position = scroll.position {
+      guard scrolledPositions.insert(position).inserted else {
+        throw RemoteEncodingError.scrollPositionReused
+      }
+      ids = scrollIDs(position)
+    } else {
+      ids = ScrollIDs(position: newDataID(), maximum: newDataID(), notchMaximum: newDataID())
+    }
+    guard scroll.initialOffset >= 0, scroll.initialOffset.isFinite else {
+      throw RemoteEncodingError.invalidScrollOffset(scroll.initialOffset)
+    }
+    if let pageCount = scroll.pageCount, !(1...WireLimits.maxTouchStops).contains(pageCount) {
+      throw RemoteEncodingError.invalidPageCount(pageCount)
+    }
+    let start = try pixels(scroll.initialOffset)
+    if start > 0 {
+      declare(.floatConstant(FloatConstant(id: ids.position, value: start)))
+    }
+    emit(.clipRectModifierOperation(ClipRectModifierOperation()))
+    emit(
+      .scrollModifierOperation(
+        ScrollModifierOperation(
+          direction: scroll.axis == .vertical ? Scroll.vertical : Scroll.horizontal,
+          position: Self.reference(ids.position), max: Self.reference(ids.maximum),
+          notchMax: Self.reference(ids.notchMaximum))))
+    // The touch expression starts at the offset too: a player that applies it before the first
+    // touch writes its value over the declared one.
+    // The position follows the drag along the axis, the opposite way: dragging up scrolls down.
+    let touch =
+      scroll.axis == .vertical ? RemoteContextIds.idTouchPosY : RemoteContextIds.idTouchPosX
+    // Paging snaps to evenly spaced notches over the content's length, one per page.
+    let (stopMode, stopSpec): (Int32, [Float]) =
+      if let pageCount = scroll.pageCount {
+        (TouchStopMode.notchesEven, [Float(pageCount), Self.reference(ids.notchMaximum)])
+      } else {
+        (TouchStopMode.gently, [])
+      }
+    emit(
+      .touchExpression(
+        TouchExpression(
+          id: ids.position, value: start, min: 0, max: Self.reference(ids.maximum),
+          velocityId: 0, touchEffects: Scroll.touchEffects,
+          expression: [Self.reference(touch), -1, Self.operatorWord(.multiply)],
+          stopMode: stopMode, stopSpec: stopSpec)))
+    emit(.containerEnd(ContainerEnd()))
+  }
+
+  /// The scroll modifier's wire values, as AndroidX's writer has them.
+  private enum Scroll {
+    /// `ScrollModifierOperation`'s directions.
+    static let vertical: Int32 = 0
+    static let horizontal: Int32 = 1
+    /// The touch effects AndroidX's scroll writes.
+    static let touchEffects: Int32 = 3
+  }
+
+  /// `TouchExpression`'s stop modes, every value AndroidX's `TouchExpression` defines: how the
+  /// value settles when the touch ends.
+  enum TouchStopMode {
+    /// Decelerates after a fling (`STOP_GENTLY`): a scroll's.
+    static let gently: Int32 = 0
+    /// `STOP_INSTANTLY`.
+    static let instantly: Int32 = 1
+    /// `STOP_ENDS`.
+    static let ends: Int32 = 2
+    /// `STOP_NOTCHES_EVEN`: evenly spaced notches.
+    static let notchesEven: Int32 = 3
+    /// `STOP_NOTCHES_PERCENTS`.
+    static let notchesPercents: Int32 = 4
+    /// `STOP_NOTCHES_ABSOLUTE`.
+    static let notchesAbsolute: Int32 = 5
+    /// `STOP_ABSOLUTE_POS`.
+    static let absolutePosition: Int32 = 6
+    /// `STOP_NOTCHES_SINGLE_EVEN`.
+    static let notchesSingleEven: Int32 = 7
+  }
+
   /// A spacer: flexible space along the enclosing stack, or a fixed gap.
   func writeSpacer(length: RemoteFloat?) throws(RemoteEncodingError) {
     let axisIsWidth: Bool?
@@ -987,6 +1126,8 @@ package final class RemoteWriter {
       emit(.clickModifier(ClickModifier()))
       for operation in resolved { emit(operation) }
       emit(.containerEnd(ContainerEnd()))
+    case .scroll(let scroll):
+      try writeScroll(scroll)
     case .accessibilityLabel, .accessibilityValue, .accessibilityRole, .accessibilityChildren:
       preconditionFailure("accessibility modifiers merge into one CoreSemantics")
     }
