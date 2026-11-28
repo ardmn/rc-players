@@ -112,6 +112,28 @@ import Testing
     #expect(try session.probeValues(timeSeconds: 0).floats[70] == 9)
   }
 
+  /// The same for an id a `TextLength` computes: AndroidX's `overrideFloat` ignores an equal value
+  /// for any id (RemoteComposeState.java:318-324), so the length keeps following the text.
+  @Test func aHostWriteEqualToATextLengthLeavesItDriven() throws {
+    typealias Op = NativeSwiftWireOpcode
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.text(id: 20, "hello")
+    document.namedVariable(id: 20, type: NativeSwiftNamedVariableType.string, name: "USER:text")
+    document.u8(Op.dataFloat).int(80).float(0)
+    document.namedVariable(id: 80, type: NativeSwiftNamedVariableType.float, name: "USER:length")
+    document.u8(Op.textLength).int(80).int(20)
+    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    #expect(try session.probeValues(timeSeconds: 0).floats[80] == 5)
+    #expect(session.setFloat(5, for: "USER:length"))
+    #expect(session.setString("123456789", for: "USER:text"))
+    #expect(try session.probeValues(timeSeconds: 0).floats[80] == 9)
+    // A different value is the host's, as AndroidX marks it overridden.
+    #expect(session.setFloat(2, for: "USER:length"))
+    #expect(try session.probeValues(timeSeconds: 0).floats[80] == 2)
+  }
+
   /// A host offset reaches the snapshot as a finite number: NaN reads 0 and an infinity is held at
   /// the largest finite float of its sign, as the Kotlin player's `javaRoundToInt` reads it and as
   /// `resolvedFloat` saturates a padding.
