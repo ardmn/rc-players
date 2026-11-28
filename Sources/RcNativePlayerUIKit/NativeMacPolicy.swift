@@ -123,8 +123,10 @@ public enum NativeMacPolicy {
           node.text?.value, node.custom?.config, node.accessibility?.contentDescription,
           node.accessibility?.text, node.accessibility?.stateDescription,
         ], limits: executionLimits)
+      // A text draw's string costs what a text node's does.
       for command in node.commands {
-        try budget.recordCommand(pathElementCount: command.path.count, limits: executionLimits)
+        try budget.recordCommand(
+          pathElementCount: command.path.count, strings: [command.text], limits: executionLimits)
       }
       pending.append(contentsOf: node.children.map { ($0, depth + 1) })
     }

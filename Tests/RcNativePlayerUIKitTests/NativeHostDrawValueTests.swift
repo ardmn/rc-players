@@ -85,4 +85,21 @@ import Testing
       #expect(rects.filter { !$0.isStroke }.count == 1, "\(width): the fill")
     }
   }
+
+  /// `Canvas.drawLine` strokes whatever the paint's style, so a fill paint's infinite width
+  /// draws no line, as Skia rejects its bounds and the Kotlin player's `drawLine` takes the width.
+  @Test func aLineReadsTheStrokeWidthOfAFillPaint() throws {
+    typealias Paint = NativeSwiftPaintCommand
+    let document = Self.canvas { wire in
+      wire.u8(Op.paintValues).int(3).int(Paint.strokeWidth).int(Self.reference(Self.floatID))
+        .int(Paint.style | NativeSwiftPaintStyle.fill << 16)
+      wire.u8(Op.drawLine).float(0).float(0).float(10).float(10)
+    }
+    func lines(_ width: Float) throws -> Int {
+      let draws = try Self.keptDraws(document, width)
+      return draws.filter { $0.kind == NativeSwiftDrawKind.line }.count
+    }
+    #expect(try lines(.infinity) == 0)
+    #expect(try lines(2) == 1)
+  }
 }

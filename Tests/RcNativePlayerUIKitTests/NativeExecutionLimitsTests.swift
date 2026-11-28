@@ -73,6 +73,10 @@ import Testing
     expect(.invalidCanvasDimension(actual: 0)) {
       try numbers.validateDocumentDimensions([0, 100], limits: .default)
     }
+    // A non-finite size is an invalid dimension on every path; `nonFiniteValue` is never thrown.
+    expect(.invalidCanvasDimension(actual: .infinity)) {
+      try numbers.validateCanvasDimensions([.infinity], limits: .default)
+    }
     var work = NativeFrameBudget()
     expect(.frameWorkExceeded(actual: 3, maximum: 2)) {
       try work.recordCommand(

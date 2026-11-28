@@ -384,14 +384,14 @@ struct ParsedDrawCommand {
     kind: Int, words: [UInt32], paint: ParsedPaint, path: ParsedPath? = nil,
     image: ParsedImageDraw? = nil, alphaWord: UInt32? = nil, textID: Int? = nil,
     textStart: Int? = nil, textEnd: Int? = nil, textFlags: Int = 0,
-    nanSentinelIndices: [Int] = [], offscreenTarget: NativeSwiftOffscreenTargetSnapshot? = nil,
+    nanMeansUnsetIndices: [Int] = [], offscreenTarget: NativeSwiftOffscreenTargetSnapshot? = nil,
     matrixFlags: Int = 0
   ) {
     self.kind = kind
     self.words = words
-    nanMeansUnsetIndices = nanSentinelIndices.filter(words.indices.contains)
+    self.nanMeansUnsetIndices = nanMeansUnsetIndices.filter(words.indices.contains)
     self.nanSentinelIndices = Set(
-      nanMeansUnsetIndices.filter { NativeSwiftFloatExpression.referenceID(words[$0]) == 0 })
+      self.nanMeansUnsetIndices.filter { NativeSwiftFloatExpression.referenceID(words[$0]) == 0 })
     staticValues = words.contains { NativeSwiftFloatExpression.referenceID($0) != nil }
       ? nil : words.map(Float.init(bitPattern:))
     self.paint = paint

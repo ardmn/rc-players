@@ -100,9 +100,10 @@
           }
         }
         // `NativeNode` drops what a non-finite value stops drawing and clamps the rest; each
-        // command still counts against the budget.
+        // command still counts against the budget, and a text draw's string as a text node's.
         for command in node.commands {
-          try budget.recordCommand(pathElementCount: command.path.count, limits: limits)
+          try budget.recordCommand(
+            pathElementCount: command.path.count, strings: [command.text], limits: limits)
         }
         if let custom = node.custom {
           try budget.recordWork(custom.properties.count, limits: limits)

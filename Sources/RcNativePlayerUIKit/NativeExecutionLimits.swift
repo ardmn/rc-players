@@ -14,8 +14,9 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   /// The UTF-8 bytes of text one frame may lay out. A document's string counts at each place it is
   /// shown; a host's counts once, at most `longestDocumentTextBytes`, so it renders at any length.
   /// Every place a document string is shown costs its bytes of `maximumFrameWork`, and a host's up
-  /// to `hostStringPlacementWork`, which bounds the layout work. The default holds four host
-  /// strings of any length.
+  /// to `hostStringPlacementWork`, which bounds the layout work. The default,
+  /// 4 × `longestDocumentTextBytes`, holds four distinct host strings of any length when the frame
+  /// shows no other text, or three beside up to 48 KiB of the document's own.
   public var maximumTextBytes: Int
   /// The largest view or canvas side. The document's own size over it is refused; the UIKit
   /// player clamps a resolved exact width or height to it instead (`layoutDimension`).
@@ -106,10 +107,12 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   private static let arcAngleIndices = 4...5
 
   /// Whether a draw command's geometry, paint and path are all finite: Skia draws nothing for a
-  /// non-finite shape (`SkCanvas::quickReject`). Only a stroke reads the stroke width.
+  /// non-finite shape (`SkCanvas::quickReject`). Only a stroke reads the stroke width, and
+  /// `DrawLine` is always one (`Canvas.drawLine` ignores the paint's style).
   func isDrawable(_ command: NativeSwiftDrawCommandSnapshot) -> Bool {
     let geometryIsFinite = command.geometryValues.allSatisfy(\.isFinite)
-    let strokeIsFinite = !command.isStroke || command.strokeWidth.isFinite
+    let readsStrokeWidth = command.isStroke || command.kind == NativeSwiftDrawKind.line
+    let strokeIsFinite = !readsStrokeWidth || command.strokeWidth.isFinite
     let paintIsFinite = strokeIsFinite && command.alpha.isFinite
     return geometryIsFinite && paintIsFinite
       && command.path.allSatisfy { $0.values.allSatisfy(\.isFinite) }
@@ -130,7 +133,8 @@ public enum RemoteComposeNativeLimitError: Error, Equatable, LocalizedError, Sen
   case textTooLong(actual: Int, maximum: Int)
   case invalidCanvasDimension(actual: Double)
   case canvasTooLarge(actual: Double, maximum: Double)
-  /// Thrown only for a non-finite canvas size; a resolved value is normalised or dropped instead.
+  /// Not thrown: a non-finite canvas size is `invalidCanvasDimension`, and a resolved value is
+  /// normalised or dropped. Kept as public API.
   case nonFiniteValue(componentID: Int, field: String)
   /// Not thrown: resolved coordinates are clamped to `maximumCoordinateMagnitude`. Kept as public
   /// API.
@@ -293,7 +297,7 @@ struct NativeFrameBudget: Equatable, Sendable {
   ) throws {
     for value in values {
       guard value.isFinite else {
-        throw RemoteComposeNativeLimitError.nonFiniteValue(componentID: 0, field: "canvas")
+        throw RemoteComposeNativeLimitError.invalidCanvasDimension(actual: value)
       }
       guard value >= 0, value <= limits.maximumCanvasDimension else {
         throw RemoteComposeNativeLimitError.canvasTooLarge(

@@ -33,6 +33,7 @@ import Testing
     return Double(source[literal].replacingOccurrences(of: "_", with: ""))
   }
 
+  /// The same number; Kotlin spends it per paint and Swift per document, a known divergence.
   @Test func theLoopBudgetMatchesTheKotlinPlayer() throws {
     let kotlin = try Self.kotlinConstant("MAX_LOOP_OPERATIONS_PER_FRAME", in: Self.kotlinState)
     #expect(kotlin == Double(NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument))
@@ -43,6 +44,13 @@ import Testing
     #expect(unset == Double(NativeSwiftTextSnapshot.androidDefaultSize))
     let largest = try Self.kotlinConstant("RC_MAX_TEXT_SIZE_PX", in: Self.kotlinPlayer)
     #expect(largest == Double(NativeSwiftTextSnapshot.maximumSize))
+  }
+
+  @Test func theAutosizeDefaultsMatchTheKotlinPlayer() throws {
+    let minimum = try Self.kotlinConstant("RC_AUTOSIZE_DEFAULT_MIN_PX", in: Self.kotlinPlayer)
+    #expect(minimum == Double(NativeSwiftTextAutosize.defaultMinimumFontSize))
+    let maximum = try Self.kotlinConstant("RC_AUTOSIZE_DEFAULT_MAX_PX", in: Self.kotlinPlayer)
+    #expect(maximum == Double(NativeSwiftTextAutosize.defaultMaximumFontSize))
   }
 
   @Test func theNormalWeightMatchesTheKotlinPlayer() throws {

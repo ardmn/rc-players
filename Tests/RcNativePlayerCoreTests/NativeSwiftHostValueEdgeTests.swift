@@ -71,6 +71,25 @@ import Testing
         == forwards)
   }
 
+  /// A marquee moves, and so needs frames, only when it has a finite sweep: overflowing content and
+  /// a velocity that is neither 0 nor NaN, as `androidXMarqueeOffset` reads the duration.
+  @Test func aMarqueeWithoutAFiniteSweepNeedsNoFrames() {
+    func marquee(_ velocity: Float) -> NativeSwiftMarqueeSnapshot {
+      NativeSwiftMarqueeSnapshot(
+        iterations: -1, animationMode: 0, repeatDelayMillis: 0, initialDelayMillis: 0, spacing: 0,
+        velocity: velocity)
+    }
+    for velocity: Float in [0, .nan, .infinity] {
+      #expect(!marquee(velocity).moves(overflowDistance: 200, density: 1), "\(velocity)")
+    }
+    for velocity: Float in [30, -30] {
+      #expect(marquee(velocity).moves(overflowDistance: 200, density: 1), "\(velocity)")
+    }
+    for overflow: Float in [0, -5, .infinity, .nan] {
+      #expect(!marquee(30).moves(overflowDistance: overflow, density: 1), "\(overflow)")
+    }
+  }
+
   /// A host write equal to the value an expression gives its id changes nothing, so the expression
   /// keeps driving it: AndroidX's `overrideFloat` writes and marks an override only for a value
   /// `!=` the one held (RemoteComposeState.java:318-324).
@@ -91,6 +110,63 @@ import Testing
     #expect(session.setFloat(5, for: "USER:sum"))
     #expect(session.setFloat(9, for: "USER:input"))
     #expect(try session.probeValues(timeSeconds: 0).floats[70] == 9)
+  }
+
+  /// A host's autosize bounds as the Kotlin player's `rcAutoSizeRange` takes them: AndroidX's 4 and
+  /// 400 for a NaN or non-positive bound (CoreText.java:720-721), each at most
+  /// `RC_MAX_TEXT_SIZE_PX`, and the minimum never above the maximum.
+  @Test func aHostAutosizeBoundIsCappedAsTheKotlinPlayerCapsIt() throws {
+    typealias Op = NativeSwiftWireOpcode
+    typealias Property = NativeSwiftTextProperty
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.text(id: 20, "fit")
+    for (id, name) in [(70, "USER:min"), (71, "USER:max")] {
+      document.u8(Op.dataFloat).int(id).float(1)
+      document.namedVariable(id: id, type: NativeSwiftNamedVariableType.float, name: name)
+    }
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.coreText).int(20).u16(3)
+    document.u8(Property.autosize).u8(1)
+    document.u8(Property.minFontSize).int(Writer.nanReference(70))
+    document.u8(Property.maxFontSize).int(Writer.nanReference(71))
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    let cases: [(minimum: Float, maximum: Float, expected: NativeSwiftTextAutosize)] = [
+      (.infinity, .infinity, NativeSwiftTextAutosize(minimumFontSize: 1e6, maximumFontSize: 1e6)),
+      (.nan, .nan, NativeSwiftTextAutosize(minimumFontSize: 4, maximumFontSize: 400)),
+      (-.infinity, 3e9, NativeSwiftTextAutosize(minimumFontSize: 4, maximumFontSize: 1e6)),
+      (900, 20, NativeSwiftTextAutosize(minimumFontSize: 20, maximumFontSize: 20)),
+    ]
+    for (minimum, maximum, expected) in cases {
+      let session = try NativeSwiftDocumentSession.open(data: document.data)
+      #expect(session.setFloat(minimum, for: "USER:min"))
+      #expect(session.setFloat(maximum, for: "USER:max"))
+      let root = try session.snapshot(timeSeconds: 0).root
+      let text = try #require(Self.nodes(root).compactMap(\.text).first)
+      #expect(text.autosize == expected, "\(minimum)...\(maximum)")
+    }
+  }
+
+  /// The same for an id a `TextLength` computes: AndroidX's `overrideFloat` ignores an equal value
+  /// for any id (RemoteComposeState.java:318-324), so the length keeps following the text.
+  @Test func aHostWriteEqualToATextLengthLeavesItDriven() throws {
+    typealias Op = NativeSwiftWireOpcode
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.text(id: 20, "hello")
+    document.namedVariable(id: 20, type: NativeSwiftNamedVariableType.string, name: "USER:text")
+    document.u8(Op.dataFloat).int(80).float(0)
+    document.namedVariable(id: 80, type: NativeSwiftNamedVariableType.float, name: "USER:length")
+    document.u8(Op.textLength).int(80).int(20)
+    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    #expect(try session.probeValues(timeSeconds: 0).floats[80] == 5)
+    #expect(session.setFloat(5, for: "USER:length"))
+    #expect(session.setString("123456789", for: "USER:text"))
+    #expect(try session.probeValues(timeSeconds: 0).floats[80] == 9)
+    // A different value is the host's, as AndroidX marks it overridden.
+    #expect(session.setFloat(2, for: "USER:length"))
+    #expect(try session.probeValues(timeSeconds: 0).floats[80] == 2)
   }
 
   /// A host offset reaches the snapshot as a finite number: NaN reads 0 and an infinity is held at
@@ -367,9 +443,10 @@ import Testing
   }
 
   /// The budget is spent once per document, when the loops are unrolled at decode: a loop in a
-  /// component that is GONE still uses its share. AndroidX counts per paint
-  /// (RemoteContext.java:1146) and paints no GONE component, so there the shown canvas draws its
-  /// 5,000 passes; here it draws none. A known difference (`maximumLoopOperationsPerDocument`).
+  /// component that is GONE still uses its share. AndroidX (RemoteContext.java:1146) and the Kotlin
+  /// player (`MAX_LOOP_OPERATIONS_PER_FRAME`) count per paint and paint no GONE component, so there
+  /// the shown canvas draws its 5,000 passes; here it draws none. A known divergence
+  /// (`maximumLoopOperationsPerDocument`).
   @Test func aLoopInAGoneCanvasStillUsesItsShareOfTheBudget() throws {
     typealias Op = NativeSwiftWireOpcode
     let document = Writer()

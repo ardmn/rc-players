@@ -172,9 +172,13 @@ public struct NativeSwiftVisibilityFunction: @unchecked Sendable {
   ///
   /// The arguments are loaded into the function's argument ids — as many as it declares — the
   /// component id as an integer too, then the body runs in wire order: each expression just before
-  /// the command that follows it, each command against the values at its position. A non-finite
-  /// value stays in its command, which the renderer drops as it drops the frame's own. Throws when
+  /// the command that follows it, each command against the values at its position. Throws when
   /// an expression or a command cannot resolve; a host then paints the component as it is.
+  ///
+  /// - Important: a command's values may be NaN or infinite, as a host's value or the body's own
+  ///   arithmetic makes them; this does not throw for them. This package's renderers drop such a
+  ///   draw as Skia does (`NativeCanvasCommands.drawable`), and a host drawing the commands itself
+  ///   must do the same.
   public func commands(x: Float, y: Float, width: Float, height: Float) throws
     -> [NativeSwiftDrawCommandSnapshot]
   {

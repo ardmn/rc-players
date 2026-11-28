@@ -904,8 +904,8 @@ public enum NativeSwiftGestureKind: Int, CaseIterable, Equatable, Sendable {
 /// AndroidX's `MarqueeModifierOperation`, with its float fields resolved for the frame.
 ///
 /// A marquee does not set `needsContinuousFrames`: content that fits its box never moves, and only
-/// the host's measurement knows whether it does. A host keeps the frames coming while a marquee's
-/// overflow is positive, as the Compose player acquires frame demand only then.
+/// the host's measurement knows whether it does. A host keeps the frames coming while `moves` holds,
+/// as the Compose player acquires frame demand only for an overflowing marquee.
 public struct NativeSwiftMarqueeSnapshot: Equatable, Sendable {
   /// How many sweeps to run; -1 repeats forever. The reference's sinusoidal timeline ignores it.
   public let iterations: Int
@@ -942,16 +942,28 @@ public struct NativeSwiftMarqueeSnapshot: Equatable, Sendable {
   public func offset(
     overflowDistance: Float, density: Float, elapsedSeconds: TimeInterval
   ) -> Float {
-    guard overflowDistance > 0 else { return 0 }
+    guard let durationSeconds = sweepSeconds(overflowDistance: overflowDistance, density: density)
+    else { return 0 }
     let initialDelaySeconds = initialDelayMillis / 1_000
     let sinceStartSeconds = Float(elapsedSeconds) - initialDelaySeconds
     guard sinceStartSeconds > initialDelaySeconds else { return 0 }
-    // AndroidX divides by the signed velocity, but its phase only feeds a cosine, so a negative
-    // velocity sweeps exactly as its magnitude does.
-    let durationSeconds = overflowDistance / (density * velocity.magnitude)
-    guard durationSeconds.isFinite, durationSeconds > 0 else { return 0 }
     let phase = sinceStartSeconds.truncatingRemainder(dividingBy: durationSeconds) / durationSeconds
     return -overflowDistance * ((1 - cos(phase * 2 * Float.pi)) / 2)
+  }
+
+  /// Whether the content ever leaves its rest position, so a host needs frames for it: only with a
+  /// sweep `offset` can run.
+  public func moves(overflowDistance: Float, density: Float) -> Bool {
+    sweepSeconds(overflowDistance: overflowDistance, density: density) != nil
+  }
+
+  /// One sweep's duration, or nil when it is not finite and positive (no overflow, a velocity of 0
+  /// or NaN), where `androidXMarqueeOffset` holds the content still. AndroidX divides by the signed
+  /// velocity, but its phase only feeds a cosine, so a negative velocity sweeps as its magnitude.
+  private func sweepSeconds(overflowDistance: Float, density: Float) -> Float? {
+    guard overflowDistance > 0 else { return nil }
+    let durationSeconds = overflowDistance / (density * velocity.magnitude)
+    return durationSeconds.isFinite && durationSeconds > 0 ? durationSeconds : nil
   }
 }
 
@@ -1114,6 +1126,23 @@ public struct NativeSwiftTextAutosize: Equatable, Sendable {
   public init(minimumFontSize: Float, maximumFontSize: Float) {
     self.minimumFontSize = minimumFontSize
     self.maximumFontSize = maximumFontSize
+  }
+
+  /// AndroidX `CoreText`'s bounds when the document sets none (CoreText.java:720-721); Kotlin's
+  /// `RC_AUTOSIZE_DEFAULT_MIN_PX` and `RC_AUTOSIZE_DEFAULT_MAX_PX`.
+  static let defaultMinimumFontSize: Float = 4
+  static let defaultMaximumFontSize: Float = 400
+
+  /// The Kotlin player's `rcAutoSizeRange`: an unset or non-positive bound (the wire's -1) takes
+  /// its default, each is at most `NativeSwiftTextSnapshot.maximumSize`, and the minimum never
+  /// passes the maximum. AndroidX's own search never ends on an infinite bound (CoreText.java:725).
+  static func resolved(minimum: Float?, maximum: Float?) -> NativeSwiftTextAutosize {
+    func bound(_ value: Float?, default fallback: Float) -> Float {
+      min(value.flatMap { $0 > 0 ? $0 : nil } ?? fallback, NativeSwiftTextSnapshot.maximumSize)
+    }
+    let upper = bound(maximum, default: defaultMaximumFontSize)
+    let lower = min(bound(minimum, default: defaultMinimumFontSize), upper)
+    return NativeSwiftTextAutosize(minimumFontSize: lower, maximumFontSize: upper)
   }
 
   /// The font size the text takes: what autosize chooses, as the reference's

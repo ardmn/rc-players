@@ -461,10 +461,10 @@ may write any float. An exact width or height of NaN sizes the component by its 
 +inf fills what the parent allows, as the Kotlin player's `Dp.Unspecified` and Compose's constraints
 take them; any other dimension, padding or spacing reads NaN as 0 and an infinity as the largest
 finite float of its sign. A text size below 0 or NaN is the 12 pixels an Android paint keeps, and
-one past 1e6 (an infinity included) is 1e6, as the Kotlin player caps it; a NaN `widthIn` /
-`heightIn` maximum is no bound, the Kotlin player's `Dp.Unspecified`. The explicit refusal survives where a field genuinely cannot
-resolve later — `floatWord(_:requireLiteral: true)`, which is what a background written as colour
-channels rather than a colour id still uses.
+one past 1e6 (an infinity included) is 1e6, as the Kotlin player caps it, autosize bounds too; a
+NaN `widthIn` / `heightIn` maximum is no bound, the Kotlin player's `Dp.Unspecified`. The explicit
+refusal survives where a field genuinely cannot resolve later — `floatWord(_:requireLiteral: true)`,
+which is what a background written as colour channels rather than a colour id still uses.
 
 This also closed a quieter bug on the way. A Row read its spacing with `requireLiteral: false` and
 stored the reference word's raw bits into a plain `Float`, so a computed `spacedBy` laid out at
@@ -827,6 +827,12 @@ canvas dimensions, finite coordinate magnitude, and total frame work. Every init
 input-produced frame passes the same typed validation before view reconciliation or Core Graphics.
 Custom components require an explicit host registry; documents never instantiate arbitrary
 Objective-C classes by name.
+
+Loops (`LoopStart`) are unrolled once, at decode, within one budget for the whole document: 20,000
+loop operations, AndroidX's per-frame `MAX_OP_COUNT`. This is a known divergence: AndroidX and the
+Kotlin player count from zero on every paint and only the loops that paint, so on them a loop in a
+GONE component or under a false conditional leaves the budget to the others; here it still spends
+its share.
 
 ## Evolution plan
 

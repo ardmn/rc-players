@@ -121,6 +121,39 @@ import Testing
     #endif
   }
 
+  /// A canvas's text draws cost what text nodes do: a megabyte host string drawn in as many places
+  /// is refused the same way, not laid out once per draw.
+  @Test func manyCanvasDrawsOfAMegabyteHostStringExceedTheFrameWork() throws {
+    typealias Op = NativeSwiftWireOpcode
+    let places =
+      RemoteComposeNativeExecutionLimits.default.maximumFrameWork
+      / RemoteComposeNativeExecutionLimits.hostStringPlacementWork + 1
+    let wire = NativeTestWire()
+    wire.header(width: 100, height: 100)
+    wire.u8(Op.dataText).int(700).utf8("short")
+      .named(700, NativeTestWire.NamedType.string, Self.hostName)
+    wire.u8(Op.layoutRoot).int(1).u8(Op.layoutCanvas).int(2).int(-1)
+    for _ in 0..<places {
+      wire.u8(Op.drawTextAnchored).int(700).float(0).float(10).float(0).float(0).int(0)
+    }
+    wire.u8(Op.containerEnd).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: wire.data)
+    #expect(session.setString(String(repeating: "m", count: 1_000_000), for: Self.hostName))
+    let snapshot = try session.snapshot(timeSeconds: 0)
+    #if canImport(AppKit) && !canImport(UIKit)
+      #expect(throws: RemoteComposeNativeLimitError.self) {
+        _ = try NativeMacPolicy.evaluate(snapshot, compatibility: .compatible)
+      }
+    #elseif canImport(UIKit)
+      #expect(throws: RemoteComposeNativeLimitError.self) {
+        _ = try NativeDocument(
+          frame: NativeSnapshotSessionHandle.Frame(
+            session: session, snapshot: snapshot, wallClock: nil),
+          timeSeconds: 0, limits: .default)
+      }
+    #endif
+  }
+
   /// The corpus's headphone card shows its megabyte title and detail in several places, which
   /// render, as on Kotlin.
   @Test func theHeadphoneCardRendersAMegabyteTitleAndDetail() throws {

@@ -51,6 +51,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// The ids a float expression computes: their float view is the expression's, which an integer
   /// write that changes nothing leaves as it was.
   private let floatExpressionIDs: Set<Int>
+  /// Every id a document operation computes a float for (expressions, text lengths, time and
+  /// colour attributes, component values, lookups, integer expressions, matrix outputs): a host
+  /// write equal to its value leaves it computed.
+  private let computedFloatIDs: Set<Int>
   /// Set once a document operation is seen writing `EPOCH_SECOND`'s id itself.
   private var documentClaimsEpochSecond = false
   /// The colours a host has set by name, which a theme switch leaves alone.
@@ -103,6 +107,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     }
     self.imageSizeByID = imageSizeByID
     floatExpressionIDs = Set(document.expressions.map(\.id))
+    computedFloatIDs = Self.computedFloatIDs(of: document)
     var slotIDs = Set(document.integers.keys)
     slotIDs.formUnion(document.integerExpressionOrder)
     slotIDs.formUnion(document.idLookups.map(\.outputID))
@@ -247,6 +252,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     wireOrderedExpressions = other.wireOrderedExpressions
     imageSizeByID = other.imageSizeByID
     floatExpressionIDs = other.floatExpressionIDs
+    computedFloatIDs = other.computedFloatIDs
     documentClaimsEpochSecond = other.documentClaimsEpochSecond
     hostSetColors = other.hostSetColors
     writtenIntegerAndTextIDs = other.writtenIntegerAndTextIDs
@@ -1128,21 +1134,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         alignment: source.alignment,
         overflow: source.overflow,
         maximumLines: source.maximumLines,
-        autosize: try source.autosize.map { range in
-          // An unset bound is -1 on the wire (or absent). The Compose player's defaults: 400 for
-          // the maximum, 4 for the minimum, and the minimum never above the maximum.
-          var minimum: Float = -1
-          if let word = range.minimumWord {
-            minimum = resolvedFloat(word, values: values)
-          }
-          var maximum: Float = -1
-          if let word = range.maximumWord {
-            maximum = resolvedFloat(word, values: values)
-          }
-          let resolvedMaximum = maximum > 0 ? maximum : 400
-          return NativeSwiftTextAutosize(
-            minimumFontSize: min(minimum > 0 ? minimum : 4, resolvedMaximum),
-            maximumFontSize: resolvedMaximum)
+        autosize: source.autosize.map { range in
+          NativeSwiftTextAutosize.resolved(
+            minimum: range.minimumWord.map { resolvedFloat($0, values: values) },
+            maximum: range.maximumWord.map { resolvedFloat($0, values: values) })
         },
         fontSettings: fontSettings(source, values: values),
         sizeIsDensityTyped: sizeIsDensityTyped)
@@ -1526,13 +1521,29 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   }
 
   /// A host's float write, AndroidX's `RemoteComposeState.overrideFloat` (java:318-324): nothing
-  /// for the value an expression's output holds now, so the expression keeps driving it; otherwise
-  /// `storeFloat`. An equal write to any other id is still stored, which only records it for a
-  /// reopened session (`writtenNamedValues`). NaN is never equal to itself and is always written.
+  /// for the value a computed id (`computedFloatIDs`, or one no document float seeds, as a clock)
+  /// holds now, so it stays computed; otherwise `storeFloat`. An equal write to a document's plain
+  /// float is still stored, which only records it for a reopened session (`writtenNamedValues`).
+  /// NaN is never equal to itself and is always written.
   private func overrideFloat(_ id: Int, _ value: Float) {
-    let isDriven = floatExpressionIDs.contains(id) && floatOverrides[id] == nil
-    guard !(isDriven && value == heldFloats[id]) else { return }
+    let isComputed =
+      floatOverrides[id] == nil && (computedFloatIDs.contains(id) || floats[id] == nil)
+    guard !(isComputed && value == heldFloats[id]) else { return }
     storeFloat(id, value)
+  }
+
+  /// The ids `computedFloatIDs` holds. O(the document's operations), once per open.
+  private static func computedFloatIDs(of document: ParsedDocument) -> Set<Int> {
+    var ids = Set(document.expressions.map(\.id))
+    ids.formUnion(document.textLengths.map(\.outputID))
+    ids.formUnion(document.timeAttributes.map(\.outputID))
+    ids.formUnion(document.colorAttributes.map(\.outputID))
+    ids.formUnion(document.componentValues.map(\.valueID))
+    ids.formUnion(document.idLookups.map(\.outputID))
+    ids.formUnion(document.dataMapLookups.map(\.outputID))
+    ids.formUnion(document.integerExpressionOrder)
+    for operation in document.matrixVectorMath { ids.formUnion(operation.outputIDs) }
+    return ids
   }
 
   /// The longest text a `TextMerge` may produce, in UTF-16 units (`MAX_TEXT_LENGTH`,
