@@ -15,6 +15,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcDocumentCodec
 import ee.schimke.composeai.rcplayer.protocol.RcDraw4
 import ee.schimke.composeai.rcplayer.protocol.RcDrawTextAnchored
 import ee.schimke.composeai.rcplayer.protocol.RcDynamicFloatList
+import ee.schimke.composeai.rcplayer.protocol.RcFitBoxLayout
 import ee.schimke.composeai.rcplayer.protocol.RcFloatConstant
 import ee.schimke.composeai.rcplayer.protocol.RcFloatExpression
 import ee.schimke.composeai.rcplayer.protocol.RcFloatWord
@@ -123,7 +124,8 @@ class RcHostValueEdgeRenderTest {
   fun aMegabyteWordLaysOutInTime() =
     assertRenders(
       (textCases.filter { it.name != "long-text-length-as-width" } +
-          Case("core-text", coreTextDocument(fontSize = literal(12f))))
+          Case("core-text", coreTextDocument(fontSize = literal(12f))) +
+          Case("text-in-fit-box", fitBoxTextDocument()))
         .map { case -> Triple(case, "1 MB", RcNamedValue.Text(MEGABYTE_WORD)) },
     ) {
       TEXT_NAME
@@ -361,6 +363,36 @@ class RcHostValueEdgeRenderTest {
         listOf(RcWidthModifier(RcDimensionType.EXACT, reference(LENGTH))),
         data = listOf(RcTextLength(LENGTH, HOST_TEXT_ID)),
       ),
+    )
+
+  /**
+   * The host's text in a 60 px box in a `FitBox`, which asks its child's intrinsic height at the
+   * box's width (the width fits, so the height is asked).
+   */
+  private fun fitBoxTextDocument(): RcDocument =
+    document(
+      listOf(
+        RcRootLayout(1),
+        RcFitBoxLayout(3, 30, 1, 1),
+        RcLayoutContent(4),
+        RcBoxLayout(7, 70, 1, 1),
+        RcWidthModifier(RcDimensionType.EXACT, literal(60f)),
+        RcLayoutContent(8),
+        RcTextLayout(
+          componentId = 5,
+          animationId = 50,
+          textId = HOST_TEXT_ID,
+          color = INK,
+          fontSize = literal(12f),
+          fontStyle = 0,
+          fontWeight = literal(400f),
+          fontFamilyId = -1,
+          textAlignAndFlags = RcTextLayout.ALIGN_LEFT,
+          overflow = RcTextLayout.OVERFLOW_CLIP,
+          maxLines = Int.MAX_VALUE,
+        ),
+        RcLayoutContent(6),
+      ) + List(7) { END },
     )
 
   /** TextStyle.java's autosize flag (22) and its min (25) and max (26) font sizes. */

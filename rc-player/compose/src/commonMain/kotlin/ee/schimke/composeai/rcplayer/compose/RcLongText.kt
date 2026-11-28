@@ -151,6 +151,17 @@ internal fun rcVisibleTextPrefix(
   return text
 }
 
+/** [text]'s first [RC_LONG_TEXT_LENGTH] chars, never between the halves of a surrogate pair. */
+private fun longTextHead(text: String): String {
+  val length =
+    if (text.length > RC_LONG_TEXT_LENGTH && text[RC_LONG_TEXT_LENGTH - 1].isHighSurrogate()) {
+      RC_LONG_TEXT_LENGTH + 1
+    } else {
+      RC_LONG_TEXT_LENGTH
+    }
+  return text.take(length)
+}
+
 /** Right-to-left letters, Arabic digits and the bidi controls. */
 private fun isRightToLeft(char: Char): Boolean =
   when (char.code) {
@@ -208,9 +219,14 @@ private class RcWholeTextIntrinsicsNode(var element: RcWholeTextIntrinsicsElemen
     return layout(placeable.width, placeable.height) { placeable.place(0, 0) }
   }
 
+  /**
+   * The text laid out at [width]. At a bounded width only its first [RC_LONG_TEXT_LENGTH] chars
+   * are: Skia breaks a long word quadratically (a megabyte took 87 s under a `FitBox`), so the
+   * height is then that prefix's, a lower bound, exact once the prefix fills [maxLines].
+   */
   private fun laidOut(width: Int): TextLayoutResult =
     element.textMeasurer.measure(
-      text = element.text,
+      text = if (width == Constraints.Infinity) element.text else longTextHead(element.text),
       style = element.style,
       overflow = element.overflow,
       maxLines = element.maxLines,
