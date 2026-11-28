@@ -61,8 +61,9 @@ public enum NativeSwiftSystemVariables {
   public static let year = 35
 
   /// Every id this player loads at the start of a resolution, unless a float write, a host write
-  /// or a declaration claimed it (`RcPlayerState.claimedSystemIds`). Kotlin's `RcSystemVariables.ALL` is this plus
-  /// `unsuppliedIDs`; `NativeSwiftValueResolutionDifferentialTests` fails when the two drift.
+  /// or a declaration claimed it (`RcPlayerState.claimedSystemIds`). Kotlin's
+  /// `RcSystemVariables.ALL` is this plus `unsuppliedIDs`;
+  /// `NativeSwiftValueResolutionDifferentialTests` fails when the two drift.
   static let allIDs = [
     continuousSeconds, timeInSeconds, timeInMinutes, timeInHours, calendarMonth, offsetToUTC,
     weekDay, dayOfMonth, density, animationTime, epochSecond, fontSize, dayOfYear, year,

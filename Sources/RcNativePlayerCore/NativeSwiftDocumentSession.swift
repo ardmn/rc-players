@@ -1627,8 +1627,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 
   /// One resolution at `timeSeconds`: `beginFrame`, every step once in wire order against the live
   /// store, then the measured component values. No fixed point: a step that reads a later step's
-  /// number or colour reads the previous resolution's value (a text reads the document's), as in
-  /// Kotlin.
+  /// number or colour reads the previous resolution's value, as in Kotlin; a text reads the
+  /// document's or a written one.
   ///
   /// Cost: O(steps + the expression words they evaluate), plus the component-value estimates; the
   /// steps run once more when a component value moved or a step failed waiting for a component
