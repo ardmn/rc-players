@@ -13,8 +13,9 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   public var maximumPathElementCount: Int
   /// The UTF-8 bytes of text one frame may lay out. A document's string counts at each place it is
   /// shown; a host's counts once, at most `longestDocumentTextBytes`, so it renders at any length.
-  /// Every place either is shown also costs that much `maximumFrameWork`, which bounds the layout
-  /// work. The default holds four host strings of any length.
+  /// Every place a document string is shown costs its bytes of `maximumFrameWork`, and a host's up
+  /// to `hostStringPlacementWork`, which bounds the layout work. The default holds four host
+  /// strings of any length.
   public var maximumTextBytes: Int
   /// The largest view or canvas side. The document's own size over it is refused; the UIKit
   /// player clamps a resolved exact width or height to it instead (`layoutDimension`).
@@ -51,6 +52,13 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   /// The longest UTF-8 text a document can make itself: a `TextMerge` result of at most 16K UTF-16
   /// units (TextMerge.java:41), 3 bytes each. Any longer string is a host's.
   public static let longestDocumentTextBytes = 3 * 16 * 1024
+
+  /// The work one place showing a host's string (or one longer than `longestDocumentTextBytes`)
+  /// costs, at most: the default `maximumFrameWork` then lets a document lay such a string out in
+  /// about 48 places per frame (the corpus's headphone card shows one in 17). The host chooses the
+  /// string's length; the document only chooses how many times it is laid out, and this bounds
+  /// that multiplier.
+  public static let hostStringPlacementWork = 4 * 1024
 
   /// A resolved layout float (padding, spacing, offset, constraint, z-index) as UIKit can take it:
   /// NaN reads 0, as in Java's `(int)`; the rest is held to ±`maximumCoordinateMagnitude`.
@@ -238,15 +246,18 @@ struct NativeFrameBudget: Equatable, Sendable {
     let longest = RemoteComposeNativeExecutionLimits.longestDocumentTextBytes
     var addedBytes = 0
     var addedWork = 0
+    // The strings of one place (a node's text and the accessibility copies of it) lay out once.
+    var chargedHereStrings: Set<String> = []
     for string in strings.compactMap({ $0 }) {
       let bytes = string.utf8.count
-      // A host's string counts once in the text, at most `longest`, but each place it is shown
-      // costs that much work, so a document can lay one out a few times per frame, not thousands.
-      // The lookups hash it, O(length).
+      // A host's string counts once in the text, at most `longest`, and each place it is shown
+      // costs up to `hostStringPlacementWork`, so a document can lay one out in a few places per
+      // frame, not thousands. The lookups hash it, O(length).
       if bytes > longest || hostStrings.contains(string) {
-        let charged = min(bytes, longest)
-        if countedHostStrings.insert(string).inserted { addedBytes += charged }
-        addedWork += charged
+        if countedHostStrings.insert(string).inserted { addedBytes += min(bytes, longest) }
+        if chargedHereStrings.insert(string).inserted {
+          addedWork += min(bytes, RemoteComposeNativeExecutionLimits.hostStringPlacementWork)
+        }
       } else {
         addedBytes += bytes
         addedWork += bytes

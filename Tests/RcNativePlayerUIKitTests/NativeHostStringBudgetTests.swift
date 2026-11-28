@@ -74,19 +74,25 @@ import Testing
   }
 
   /// A host's string counts once against the frame's text, at most the longest text a document can
-  /// make, but every place it is shown costs that much work; a document's string counts its bytes
-  /// each time in both.
+  /// make, and every place it is shown costs up to `hostStringPlacementWork`; a node's text and its
+  /// accessibility copy of it are one place. A document's string counts its bytes each time in
+  /// both.
   @Test func aHostStringCostsWorkEachTimeAndADocumentStringItsBytes() throws {
     let longest = RemoteComposeNativeExecutionLimits.longestDocumentTextBytes
+    let placement = RemoteComposeNativeExecutionLimits.hostStringPlacementWork
     let hostBytes = 40_000
     let host = String(repeating: "h", count: hostBytes)
     var budget = NativeFrameBudget(hostStrings: [host])
-    for _ in 0..<2 { try budget.recordStrings([host], limits: .default) }
-    #expect(budget.textBytes == hostBytes && budget.work == 2 * hostBytes)
+    for _ in 0..<2 { try budget.recordStrings([host, host], limits: .default) }
+    #expect(budget.textBytes == hostBytes && budget.work == 2 * placement)
+    let short = "short"
+    var shortBudget = NativeFrameBudget(hostStrings: [short])
+    try shortBudget.recordStrings([short], limits: .default)
+    #expect(shortBudget.work == short.utf8.count)
     // Longer than any document text, so it is a host's whatever the snapshot names.
     let long = String(repeating: "l", count: longest + 1)
     try budget.recordStrings([long], limits: .default)
-    #expect(budget.textBytes == hostBytes + longest && budget.work == 2 * hostBytes + longest)
+    #expect(budget.textBytes == hostBytes + longest && budget.work == 3 * placement)
     var document = NativeFrameBudget(hostStrings: [host])
     let documentText = String(repeating: "d", count: hostBytes)
     #expect(throws: RemoteComposeNativeLimitError.self) {
@@ -95,21 +101,45 @@ import Testing
   }
 
   /// A megabyte host string shown by many texts is refused by the frame's work budget rather than
-  /// laid out once per text: 20 texts would be 20 MB of layout on the main thread.
+  /// laid out once per text: 60 texts would be 60 MB of layout on the main thread.
   @Test func manyTextsShowingAMegabyteHostStringExceedTheFrameWork() throws {
     let host = String(repeating: "m", count: 1_000_000)
+    let places =
+      RemoteComposeNativeExecutionLimits.default.maximumFrameWork
+      / RemoteComposeNativeExecutionLimits.hostStringPlacementWork + 1
     var budget = NativeFrameBudget(hostStrings: [host])
     #expect(throws: RemoteComposeNativeLimitError.self) {
-      for _ in 0..<20 { try budget.recordStrings([host], limits: .default) }
+      for _ in 0..<places { try budget.recordStrings([host], limits: .default) }
     }
     #if canImport(AppKit) && !canImport(UIKit)
-      let session = try NativeSwiftDocumentSession.open(data: Self.document(texts: 20))
+      let session = try NativeSwiftDocumentSession.open(data: Self.document(texts: places))
       #expect(session.setString(host, for: Self.hostName))
       let snapshot = try session.snapshot(timeSeconds: 0)
       #expect(throws: RemoteComposeNativeLimitError.self) {
         _ = try NativeMacPolicy.evaluate(snapshot, compatibility: .compatible)
       }
     #endif
+  }
+
+  /// The corpus's headphone card shows its megabyte title and detail in several places, which
+  /// render, as on Kotlin.
+  @Test func theHeadphoneCardRendersAMegabyteTitleAndDetail() throws {
+    let card = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent("rc-player/edit/src/jvmTest/fixtures/cadence-headphone-fixed.rc")
+    for names in [["USER:title"], ["USER:detail"], ["USER:title", "USER:detail"]] {
+      let session = try NativeSwiftDocumentSession.open(data: try Data(contentsOf: card))
+      for name in names {
+        let text = String(repeating: name == "USER:title" ? "t" : "d", count: 1_000_000)
+        #expect(session.setString(text, for: name), "\(name)")
+      }
+      let snapshot = try session.snapshot(timeSeconds: 0)
+      #if canImport(AppKit) && !canImport(UIKit)
+        #expect(throws: Never.self, "\(names)") {
+          _ = try NativeMacPolicy.evaluate(snapshot, compatibility: .compatible)
+        }
+      #endif
+    }
   }
 
   /// The corpus's banner shows three host strings; at a megabyte each it renders, as on Kotlin.
