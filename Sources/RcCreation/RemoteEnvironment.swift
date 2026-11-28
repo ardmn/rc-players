@@ -36,14 +36,21 @@ private struct TintKey: RemoteEnvironmentKey {
 }
 
 private struct ForegroundStyleKey: RemoteEnvironmentKey {
-  static let defaultValue = RemoteColor.primary
+  static let defaultValue = RemoteColor.label
 }
 
 extension RemoteEnvironmentValues {
   /// The colour text and icons take unless they set their own, as SwiftUI's `foregroundStyle`.
+  ///
+  /// A hierarchical style set here is the foreground it replaces, dimmed: `.secondary` within
+  /// red is red at 60%, and within `.secondary`, the foreground at 36%. However it is set (the
+  /// `foregroundStyle` modifier, `environment(\.foregroundStyle, _)`, an environment reader), the
+  /// value read back is always a concrete colour.
   public var foregroundStyle: RemoteColor {
     get { self[ForegroundStyleKey.self] }
-    set { self[ForegroundStyleKey.self] = newValue }
+    set {
+      self[ForegroundStyleKey.self] = newValue.resolved(against: self[ForegroundStyleKey.self])
+    }
   }
 
   /// The accent colour controls take, as SwiftUI's `tint`.

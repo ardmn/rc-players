@@ -2183,8 +2183,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
     case Mode.hsv...Mode.idARGB:
       let alpha: Float =
         switch mode {
-        case Mode.hsv: Float(expression.modeAndAlpha >> 16) / AndroidXColorMath.maximum
-        case Mode.argb: Float(expression.modeAndAlpha >> 16) / AndroidXColorMath.argbAlphaScale
+        case Mode.hsv: Float(expression.alphaField) / AndroidXColorMath.maximum
+        case Mode.argb: Float(expression.alphaField) / AndroidXColorMath.argbAlphaScale
         default: NativeSwiftFloatExpression.resolve(expression.alphaReferenceWord, values: floats)
         }
       return mode == Mode.hsv

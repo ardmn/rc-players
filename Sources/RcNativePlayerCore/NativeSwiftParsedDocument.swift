@@ -203,6 +203,11 @@ struct ParsedColorExpression {
   let second: Int
   let third: Int
 
+  /// The unsigned upper half of `modeAndAlpha`: the alpha byte, fixed-point alpha or alpha float id.
+  /// The word is signed on the wire, so an id of 0x8000 or more makes it negative; masking keeps
+  /// that id rather than a sign-extended negative value.
+  var alphaField: UInt32 { UInt32(truncatingIfNeeded: modeAndAlpha >> 16) & 0xffff }
+
   /// The float words this expression reads, which depend on its mode.
   ///
   /// Modes 0...3 blend two **colours**: their first two fields are literal ARGB or colour ids, not
@@ -228,8 +233,7 @@ struct ParsedColorExpression {
 
   /// `ID_ARGB`'s alpha: the float id the mode word's high half names, as a reference word.
   var alphaReferenceWord: UInt32 {
-    NativeSwiftFloatExpression.referenceWord(
-      UInt32(truncatingIfNeeded: modeAndAlpha >> 16) & 0xffff)
+    NativeSwiftFloatExpression.referenceWord(alphaField)
   }
 }
 

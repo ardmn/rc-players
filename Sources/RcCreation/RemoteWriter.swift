@@ -168,6 +168,15 @@ package final class RemoteWriter {
       return declared
     case .canvasSize, .canvasPixels:
       throw RemoteEncodingError.canvasSizeOutsideCanvas
+    case .integerView(let integer):
+      // The integer's own id: the players publish its value as a float too. A float read as an
+      // integer shares the float's id, so it is copied by an `IntegerExpression` first, whose
+      // output holds the truncated value.
+      if case .floatView = integer {
+        id = try intID(.binary(.add, integer, .constant(0)))
+      } else {
+        id = try intID(integer)
+      }
     case .constant(let literal):
       id = newDataID()
       declare(.floatConstant(FloatConstant(id: id, value: literal)))
@@ -195,7 +204,7 @@ package final class RemoteWriter {
   {
     switch node {
     case .constant(let literal): words.append(try Self.finite(literal))
-    case .variable, .declared, .system, .canvasSize, .canvasPixels:
+    case .variable, .declared, .system, .canvasSize, .canvasPixels, .integerView:
       words.append(Self.reference(try floatID(node)))
     case .unary(let operation, let operand):
       try appendRPN(operand, to: &words)
@@ -221,6 +230,20 @@ package final class RemoteWriter {
     case .canvasSize(let axis):
       return .binary(.divide, .declared(try axisID(axis)), .constant(displayScale))
     case .constant, .variable, .system, .declared: return node
+    case .integerView(let integer): return .integerView(try resolvingCanvasSize(integer))
+    case .unary(let operation, let operand):
+      return .unary(operation, try resolvingCanvasSize(operand))
+    case .binary(let operation, let lhs, let rhs):
+      return .binary(operation, try resolvingCanvasSize(lhs), try resolvingCanvasSize(rhs))
+    }
+  }
+  /// `node` with each float it truncates resolved against the canvas being drawn.
+  private func resolvingCanvasSize(_ node: RemoteInt.Node) throws(RemoteEncodingError)
+    -> RemoteInt.Node
+  {
+    switch node {
+    case .constant, .variable: return node
+    case .floatView(let float): return .floatView(try resolvingCanvasSize(float))
     case .unary(let operation, let operand):
       return .unary(operation, try resolvingCanvasSize(operand))
     case .binary(let operation, let lhs, let rhs):
@@ -286,6 +309,8 @@ package final class RemoteWriter {
   /// The id of an integer holding `node`: a constant, a variable, or an `IntegerExpression`.
   func intID(_ node: RemoteInt.Node) throws(RemoteEncodingError) -> Int32 {
     if case .constant(let value) = node { return intID(try Self.int32(value)) }
+    // A canvas size is this canvas's: resolved before the cache, as `floatID` resolves it.
+    let node = node.readsCanvasSize ? try resolvingCanvasSize(node) : node
     if let id = intNodeIDs[node] { return id }
     let id: Int32
     switch node {
@@ -309,13 +334,13 @@ package final class RemoteWriter {
       id = try floatID(float)
     case .unary(let operation, let operand):
       id = try declareIntegerExpression(node) { () throws(RemoteEncodingError) in
-        [(try intID(operand), true), (IntegerExpressionOperator.offset + operation.code, true)]
+        [(try intID(operand), true), (operation.code, true)]
       }
     case .binary(let operation, let lhs, let rhs):
       id = try declareIntegerExpression(node) { () throws(RemoteEncodingError) in
         [
           (try intID(lhs), true), (try intID(rhs), true),
-          (IntegerExpressionOperator.offset + operation.code, true),
+          (operation.code, true),
         ]
       }
     }
@@ -357,11 +382,11 @@ package final class RemoteWriter {
     case .variable, .floatView: words.append((try intID(node), true))
     case .unary(let operation, let operand):
       try appendIntegerRPN(operand, to: &words)
-      words.append((IntegerExpressionOperator.offset + operation.code, true))
+      words.append((operation.code, true))
     case .binary(let operation, let lhs, let rhs):
       try appendIntegerRPN(lhs, to: &words)
       try appendIntegerRPN(rhs, to: &words)
-      words.append((IntegerExpressionOperator.offset + operation.code, true))
+      words.append((operation.code, true))
     }
   }
 
@@ -378,8 +403,8 @@ package final class RemoteWriter {
 
   /// The visibility a condition gives: `visible` while it holds, `gone` while it does not.
   private func visibilityID(_ condition: RemoteBool) throws(RemoteEncodingError) -> Int32 {
-    let visible = Int32(WireExpressionConstants.visibilityVisible)
-    let gone = Int32(WireExpressionConstants.visibilityGone)
+    let visible = ComponentVisibility.visible
+    let gone = ComponentVisibility.gone
     // The condition is 1 or 0; scaled onto the two visibility values. With today's values (1 and
     // 0) that is the condition itself.
     var visibility = condition.int
@@ -399,6 +424,41 @@ package final class RemoteWriter {
   /// `value` as a literal ARGB word, or the id of the colour the player resolves.
   func color(_ value: RemoteColor) throws(RemoteEncodingError) -> ResolvedColor {
     switch value.storage {
+    case .hierarchical:
+      // A hierarchical style used other than as the foreground (a background, a stroke) is the
+      // foreground the view is drawn under.
+      return try color(value.resolved(against: environment.foregroundStyle))
+    case .variableWithOpacity(let variable, let factor):
+      if let id = colorIDs[value.storage] { return .id(id) }
+      guard case .id(let source) = try color(RemoteColor(variable)) else {
+        preconditionFailure("a variable colour is an id")
+      }
+      // The variable's channels, and its alpha times `factor`, rebuilt as an ARGB colour whose
+      // alpha is a float id (`ColorExpression`'s ID-ARGB mode), as the value changes.
+      func channel(_ type: Int32) -> Int32 {
+        let id = newDataID()
+        declare(.colorAttribute(ColorAttribute(id: id, colorId: source, type: Int16(type))))
+        return id
+      }
+      let red = channel(ColorAttribute.colorRed)
+      let green = channel(ColorAttribute.colorGreen)
+      let blue = channel(ColorAttribute.colorBlue)
+      let alpha = try floatID(
+        (RemoteFloat(node: .declared(channel(ColorAttribute.colorAlpha)))
+          * RemoteFloat(factor)).node)
+      // The alpha's id is written in the mode word's upper 16 bits.
+      guard alpha <= Int32(UInt16.max) else {
+        throw RemoteEncodingError.integerOutOfRange(Int(alpha))
+      }
+      func word(_ id: Int32) -> Int32 { Int32(bitPattern: Self.reference(id).bitPattern) }
+      let id = newDataID()
+      declare(
+        .colorExpression(
+          ColorExpression(
+            id: id, flagsAndMode: ColorExpression.idargbMode | alpha << 16, arg1: word(red),
+            arg2: word(green), arg3: word(blue))))
+      colorIDs[value.storage] = id
+      return .id(id)
     case .fixed(let literal): return .literal(literal.argb)
     case .adaptive(let light, let dark):
       if let id = colorIDs[value.storage] { return .id(id) }
@@ -868,9 +928,7 @@ package final class RemoteWriter {
       if shape != .rectangle { try write(.clip(shape)) }
       let (flags, colorID, channels) = try colorFields(
         color,
-        colorRefFlag: Int32(
-          BackgroundModifierOperation.BitLayout.flagsColorRefMask
-            << BackgroundModifierOperation.BitLayout.flagsColorRefShift))
+        colorRefFlag: BackgroundModifierOperation.colorRef)
       emit(
         .backgroundModifierOperation(
           BackgroundModifierOperation(
@@ -879,9 +937,7 @@ package final class RemoteWriter {
     case .border(let color, let width, let cornerRadius):
       let (flags, colorID, channels) = try colorFields(
         color,
-        colorRefFlag: Int32(
-          BorderModifierOperation.BitLayout.flagsColorRefMask
-            << BorderModifierOperation.BitLayout.flagsColorRefShift))
+        colorRefFlag: BorderModifierOperation.colorRef)
       emit(
         .borderModifierOperation(
           BorderModifierOperation(
@@ -944,6 +1000,9 @@ package final class RemoteWriter {
       channels: (red: Float, green: Float, blue: Float, alpha: Float)
     )
   {
+    // A hierarchical style is the foreground it is drawn under: resolved first, so a literal
+    // keeps its exact components.
+    let color = color.resolved(against: environment.foregroundStyle)
     switch try self.color(color) {
     case .literal:
       guard case .fixed(let value) = color.storage else { preconditionFailure() }

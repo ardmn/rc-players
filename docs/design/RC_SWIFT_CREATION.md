@@ -108,13 +108,13 @@ name.
 | Environment | `RemoteEnvironmentKey`, `RemoteEnvironmentValues`, `environment(_:_:)`, `RemoteEnvironmentReader`, `tint` | nothing: read while writing |
 | Images and paths | `RemoteImage` (a view), `RemotePath` (SVG path data) that a canvas fills or strokes | `BitmapData`, `PathData`, draw ops |
 | Drawing | `RemoteCanvas { context, size in … }` with `fill` and `stroke` of rects, rounded rects, ellipses, circles and lines | `CanvasLayout`, `CanvasContent`, `ComponentValue`, `PaintData`, draw ops |
-| Colour | `RemoteColorValue` (literal), `RemoteColor.fixed`, `.adaptive(light:dark:)`, `.variable`; a colour is also a view | `ColorTheme`, `ColorConstant`, `NamedVariable` |
+| Colour | `RemoteColorValue` (literal), `RemoteColor.fixed`, `.adaptive(light:dark:)`, `.variable`; the hierarchical `.primary`, `.secondary`, `.tertiary`, `.quaternary`; a colour is also a view | `ColorTheme`, `ColorConstant`, `NamedVariable`; for a variable foreground dimmed, `ColorAttribute` and `ColorExpression` |
 | Modifiers | `frame`, `flexWeight`, `padding`, `offset`, `zIndex`, `background`, `clipShape`, `border`, `visibility`, `hidden`, `visible(if:)`, `onTapGesture`; `RemoteButton`; your own with `RemoteViewModifier` and `modifier(_:)` | the matching modifier ops; a rounded `background` as `DrawContentOperation` + `CanvasOperations` |
 | Accessibility | `accessibilityLabel`, `accessibilityValue`, `accessibilityRole`, `accessibilityElement(children:)` | one `CoreSemantics` per view |
 | State | `RemoteVariable<Double / Int / Bool / String / RemoteColorValue / RemoteVisibility / some RemoteStateValue>` | `FloatConstant`, `IntegerConstant`, `TextData`, `ColorConstant`, `NamedVariable` |
 | Conditions | `RemoteBool` and `RemoteInt`: `== != < <= > >=`, `&&`, `\|\|`, `!`, `+ - * / %` over variables; `RemoteInt(.hour)` and the other player values; `RemoteInt(truncating:)` a float; `< <= > >=` on `RemoteFloat` | `IntegerExpression`, a float read through its integer view |
 | Expressions | `+ - * /`, `min`, `max`, `magnitude`, `clamped(to:)` on `RemoteFloat` and on `Double` variables | one `FloatExpression` per expression, in reverse-Polish order |
-| Text from values | interpolation: `"\(x, decimals: 2)"`, `"\(variable)"` | `TextFromFloat`, `TextMerge` |
+| Text from values | interpolation: `"\(x, decimals: 2)"`, `"\(variable)"`, `"\(count + 1)"` for a `RemoteInt`; `RemoteFloat(_:)` of a `RemoteInt` | `TextFromFloat` (an integer through its float view), `TextMerge` |
 | Actions | `.host(id:)`, `.host(_:value:)`, `.set(_:to:)` on a variable or a state, `.toggle(_:)`, `.increment(_:by:in:)` | `HostAction`, `HostNamedAction`, value-change actions |
 
 ## Decisions
@@ -172,6 +172,29 @@ name.
   `LayoutContent` and two `ContainerEnd`s; a canvas adds `CanvasContent`, and binds its size to its
   `LayoutContent`, as AndroidX binds a component's size. `TextLayout` is used rather than
   `CoreText` because every player profile reads it.
+- **`.secondary` is hierarchical.** As SwiftUI's, `.primary`, `.secondary`, `.tertiary` and
+  `.quaternary` are the foreground a view is drawn under at 100%, 60%, 30% and 18% (Apple's
+  label opacities), so secondary text under a red foreground is red at 60%, and under an
+  accessory widget's white, white at 60%. `.foregroundStyle(.secondary)` resolves against the
+  foreground it is set inside, so nesting compounds; a hierarchical colour used elsewhere (a
+  background) takes the foreground in the environment. A literal or light/dark foreground is
+  dimmed as the document is written; a variable one on the player, its channels read with
+  `ColorAttribute` and rebuilt with the alpha scaled (`ColorExpression`'s ID-ARGB mode).
+
+  ![Hierarchical styles](../../renders/swift-creation/hierarchical-cmp-jvm.png)
+
+- **An integer is also a float, so it is written as text.** The players keep each integer as a
+  float too, so `"\(page + 1) of 4"` formats the integer's own id with `TextFromFloat`, and
+  `RemoteFloat(count)` reads it in float arithmetic. A float read as an integer
+  (`RemoteInt(truncating:)`) shares the float's id, so it is copied through an `IntegerExpression`
+  first, whose output holds the truncated value. Before, Swift found no `RemoteInt` interpolation,
+  typed the literal as a `String`, and the text showed the struct's description. Rendered by the
+  CMP player from [`IntText.swift.txt`](../../renders/swift-creation/IntText.swift.txt), before and
+  after:
+
+  ![Before](../../renders/swift-creation/int-text-before-cmp-jvm.png)
+  ![After](../../renders/swift-creation/int-text-cmp-jvm.png)
+
 - **A float is also an integer.** As AndroidX's `setFloat` publishes, every float has an integer
   view, truncated toward zero, and an integer reader (an `IntegerExpression`, a `StateLayout`
   index) names the float's id to read it. `RemoteInt(.weekday)`, `RemoteInt(truncating:)` and the
