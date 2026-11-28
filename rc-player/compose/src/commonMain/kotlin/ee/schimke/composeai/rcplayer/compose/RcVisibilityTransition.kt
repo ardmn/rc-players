@@ -124,7 +124,9 @@ internal fun RcVisibilityTransition(
       } else Modifier
     val inner = drawn.then(rotation)
     // Outside the custom draw, so an invisible component's function paints nothing either.
-    content(if (shown.value == 2) Modifier.alpha(0f).then(inner) else inner)
+    RcPaintedUnless(shown.value == 2) {
+      content(if (shown.value == 2) Modifier.alpha(0f).then(inner) else inner)
+    }
   }
 }
 

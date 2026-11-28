@@ -997,6 +997,7 @@ public final class ee/schimke/composeai/rcplayer/runtime/RcPlayerState {
 	public final fun getValueReadObserver ()Lkotlin/jvm/functions/Function1;
 	public final fun hasComponentValues (I)Z
 	public final fun inLoopPass (Ljava/lang/Object;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
+	public final fun inUnpaintedLoopPass (Ljava/lang/Object;Lkotlin/jvm/functions/Function0;)Ljava/lang/Object;
 	public final fun integer (I)Ljava/lang/Integer;
 	public final fun isContinuouslyDriven (I)Z
 	public final fun long (I)Ljava/lang/Long;
