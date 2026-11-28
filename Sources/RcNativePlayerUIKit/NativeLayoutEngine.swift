@@ -86,6 +86,12 @@ struct NativeLayoutNode: Equatable {
 }
 
 extension NativeLayoutNode {
+  /// A `widthIn` / `heightIn` maximum: `noMaximum` (the wire's unset -1) is no bound, and any other
+  /// negative leaves no size, as AndroidX's `min(maxWidth, max)` (BaseModernMeasurePolicy.java:73).
+  static func sizeInMaximum(_ value: Float, limits: RemoteComposeNativeExecutionLimits) -> CGFloat? {
+    value == NativeSwiftNodeSnapshot.noMaximum ? nil : max(0, limits.layoutCoordinate(value))
+  }
+
   /// A layout node with every resolved float normalised through `limits`, so any value a host
   /// wrote lays out with finite geometry.
   init(snapshot: NativeSwiftNodeSnapshot, limits: RemoteComposeNativeExecutionLimits = .default) {
@@ -97,12 +103,9 @@ extension NativeLayoutNode {
     heightType = snapshot.heightType
     heightValue = limits.layoutDimension(snapshot.heightValue, type: snapshot.heightType)
     minimumWidth = limits.layoutCoordinate(snapshot.minimumWidth)
-    // A negative maximum is `NativeSwiftNodeSnapshot.noMaximum`: no bound.
-    maximumWidth =
-      snapshot.maximumWidth < 0 ? nil : limits.layoutCoordinate(snapshot.maximumWidth)
+    maximumWidth = Self.sizeInMaximum(snapshot.maximumWidth, limits: limits)
     minimumHeight = limits.layoutCoordinate(snapshot.minimumHeight)
-    maximumHeight =
-      snapshot.maximumHeight < 0 ? nil : limits.layoutCoordinate(snapshot.maximumHeight)
+    maximumHeight = Self.sizeInMaximum(snapshot.maximumHeight, limits: limits)
     padding = NativeLayoutInsets(
       top: limits.layoutCoordinate(snapshot.padding.top),
       left: limits.layoutCoordinate(snapshot.padding.left),

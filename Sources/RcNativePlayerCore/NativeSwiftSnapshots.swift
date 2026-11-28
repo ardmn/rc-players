@@ -457,10 +457,10 @@ public struct NativeSwiftNodeSnapshot: Sendable {
   public let heightValue: Float
   public let padding: NativeSwiftInsets
   public let minimumWidth: Float
-  /// The `widthIn` maximum, or `noMaximum` (any negative value reads as none).
+  /// The `widthIn` maximum, or `noMaximum` (none); any other negative leaves no width.
   public let maximumWidth: Float
   public let minimumHeight: Float
-  /// The `heightIn` maximum, or `noMaximum` (any negative value reads as none).
+  /// The `heightIn` maximum, or `noMaximum` (none); any other negative leaves no height.
   public let maximumHeight: Float
   /// The `maximumWidth` / `maximumHeight` of a node with no maximum: the wire's literal -1.
   public static let noMaximum: Float = -1

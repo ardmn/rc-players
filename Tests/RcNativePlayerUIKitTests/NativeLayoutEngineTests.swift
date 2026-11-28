@@ -349,6 +349,55 @@ import Testing
     expectFrame(filled, 2, CGRect(x: 0, y: 0, width: 200, height: 100))
   }
 
+  /// A `widthIn` / `heightIn` maximum below 0 leaves no width, as AndroidX's `min(maxWidth, max)`
+  /// does (BaseModernMeasurePolicy.java:71-78) and as the Kotlin player does; only the wire's unset
+  /// `-1` is no bound (Kotlin's `aNegativeWidthInMaximumLeavesNoWidth`).
+  @Test func aNegativeSizeInMaximumLeavesNoSize() throws {
+    typealias Op = NativeSwiftWireOpcode
+    func document(_ opcode: Int, maximum: Float) -> Data {
+      var bytes: [UInt8] = []
+      func u8(_ value: Int) { bytes.append(UInt8(truncatingIfNeeded: value)) }
+      func int(_ value: Int) {
+        let raw = UInt32(bitPattern: Int32(value))
+        for shift in [24, 16, 8, 0] { u8(Int(raw >> UInt32(shift))) }
+      }
+      func float(_ value: Float) { int(Int(Int32(bitPattern: value.bitPattern))) }
+      u8(Op.header)
+      for word in [1, 0, 0, 100, 60, 0, 0] { int(word) }
+      u8(Op.layoutRoot)
+      int(1)
+      u8(Op.layoutContent)
+      int(2)
+      u8(Op.layoutCanvas)
+      int(3)
+      int(30)
+      u8(opcode)
+      float(0)
+      float(maximum)
+      u8(Op.canvasOperations)
+      u8(Op.drawRect)
+      for value: Float in [0, 0, 40, 40] { float(value) }
+      for _ in 0..<4 { u8(Op.containerEnd) }
+      return Data(bytes)
+    }
+    let cases: [(Float, CGFloat?)] = [(-.infinity, 0), (-5, 0), (-1, nil), (.infinity, nil), (50, 50)]
+    for opcode in [Op.modifierWidthIn, Op.modifierHeightIn] {
+      for (maximum, expected) in cases {
+        let root = try NativeSwiftDocumentSession.open(data: document(opcode, maximum: maximum))
+          .snapshot().root
+        var pending = [root]
+        var canvas: NativeSwiftNodeSnapshot?
+        while let node = pending.popLast() {
+          if node.componentID == 3 { canvas = node }
+          pending += node.children
+        }
+        let node = NativeLayoutNode(snapshot: try #require(canvas))
+        let bound = opcode == Op.modifierWidthIn ? node.maximumWidth : node.maximumHeight
+        #expect(bound == expected, "opcode \(opcode), \(maximum): \(String(describing: bound))")
+      }
+    }
+  }
+
   @Test func canvasContentIsReadFromTheSnapshot() throws {
     typealias Op = NativeSwiftWireOpcode
     // root { canvas 2 { [content 5 {] canvas content 3 { rect } [}] } }, and a canvas holding a
