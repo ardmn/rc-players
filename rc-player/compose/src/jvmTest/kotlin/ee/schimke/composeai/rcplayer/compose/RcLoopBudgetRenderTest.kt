@@ -5,6 +5,7 @@ import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.unit.Density
 import ee.schimke.composeai.rcplayer.protocol.RcCanvasLayout
+import ee.schimke.composeai.rcplayer.protocol.RcCollapsibleRowLayout
 import ee.schimke.composeai.rcplayer.protocol.RcColumnLayout
 import ee.schimke.composeai.rcplayer.protocol.RcConditionalOperations
 import ee.schimke.composeai.rcplayer.protocol.RcDimensionType
@@ -51,11 +52,47 @@ class RcLoopBudgetRenderTest {
     )
   }
 
+  /** AndroidX lays an INVISIBLE component out and does not paint it, so its loop spends nothing. */
+  @Test
+  fun aLoopWhoseComponentTurnedInvisibleLeavesTheBudgetToLaterLoops() {
+    assertTheSecondCanvasDrawsOnceTheFirstLoopStops(
+      canvas(FIRST, endlessLoop(), visibility = RcVisibilityModifier(HOST_ID)),
+      stopped = INVISIBLE,
+    )
+  }
+
   /**
-   * [first]'s loop spends the whole budget while the host value is [SHOWN]; once the host writes
-   * [HIDDEN], the second canvas's one-pass loop draws its red square.
+   * Known limitation, pinned: a child a collapsible row drops for want of room is neither placed
+   * nor drawn, so the count its last drawing recorded stands and a later loop stays blank, where
+   * AndroidX, which does not paint it, draws that loop.
    */
-  private fun assertTheSecondCanvasDrawsOnceTheFirstLoopStops(first: List<RcOperation>) {
+  @Test
+  fun aLoopWhoseComponentACollapsibleRowDropsStillHoldsTheBudget() {
+    val row =
+      listOf(
+        RcCollapsibleRowLayout(5, -1, 1, 1, literal(0f)),
+        RcWidthModifier(RcDimensionType.EXACT, HOST),
+        RcHeightModifier(RcDimensionType.EXACT, literal(CANVAS_HEIGHT)),
+        RcLayoutContent(6),
+      ) + canvas(FIRST, endlessLoop(), width = 30f) + listOf(END, END)
+    assertTheSecondCanvasDrawsOnceTheFirstLoopStops(
+      row,
+      shown = WIDTH.toFloat(),
+      stopped = 10f,
+      redAfter = 0,
+    )
+  }
+
+  /**
+   * [first]'s loop spends the whole budget while the host value is [shown]; once the host writes
+   * [stopped], the second canvas's one-pass loop draws its red square ([redAfter] pixels).
+   */
+  private fun assertTheSecondCanvasDrawsOnceTheFirstLoopStops(
+    first: List<RcOperation>,
+    shown: Float = SHOWN,
+    stopped: Float = HIDDEN,
+    redAfter: Int = (SIZE * SIZE).toInt(),
+  ) {
     val second =
       canvas(
         SECOND,
@@ -69,7 +106,7 @@ class RcLoopBudgetRenderTest {
       RcDocument(
         RcHeader(RcVersion(1, 0, 0), legacyWidth = WIDTH, legacyHeight = HEIGHT, modern = false),
         listOf(
-          RcFloatConstant(HOST_ID, literal(SHOWN)),
+          RcFloatConstant(HOST_ID, literal(shown)),
           RcNamedVariable(HOST_ID, RcNamedVariable.FLOAT_TYPE, HOST_NAME),
           RcFloatConstant(ENDLESS_ID, literal(Float.POSITIVE_INFINITY)),
           RcRootLayout(1),
@@ -79,7 +116,7 @@ class RcLoopBudgetRenderTest {
         ) + first + second + List(4) { END },
       )
     val values =
-      mutableStateMapOf<String, RcNamedValue>(HOST_NAME to RcNamedValue.FloatValue(SHOWN))
+      mutableStateMapOf<String, RcNamedValue>(HOST_NAME to RcNamedValue.FloatValue(shown))
     val scene =
       ImageComposeScene(width = WIDTH, height = HEIGHT, density = Density(1f)) {
         RcComposePlayer(document, namedValues = values)
@@ -96,22 +133,23 @@ class RcLoopBudgetRenderTest {
         return (0 until WIDTH * HEIGHT).count { bitmap.getColor(it % WIDTH, it / WIDTH) == RED }
       }
       assertEquals(0, redPixels(), "the first loop spends the budget")
-      Snapshot.withMutableSnapshot { values[HOST_NAME] = RcNamedValue.FloatValue(HIDDEN) }
-      assertEquals((SIZE * SIZE).toInt(), redPixels(), "the second loop draws")
+      Snapshot.withMutableSnapshot { values[HOST_NAME] = RcNamedValue.FloatValue(stopped) }
+      assertEquals(redAfter, redPixels(), "the second loop draws")
     } finally {
       scene.close()
     }
   }
 
-  /** A canvas [WIDTH] by [CANVAS_HEIGHT] drawing [draws] in red. */
+  /** A canvas [width] by [CANVAS_HEIGHT] drawing [draws] in red. */
   private fun canvas(
     id: Int,
     draws: List<RcOperation>,
     visibility: RcOperation? = null,
+    width: Float = WIDTH.toFloat(),
   ): List<RcOperation> =
     listOfNotNull(
       RcCanvasLayout(id, -1),
-      RcWidthModifier(RcDimensionType.EXACT, literal(WIDTH.toFloat())),
+      RcWidthModifier(RcDimensionType.EXACT, literal(width)),
       RcHeightModifier(RcDimensionType.EXACT, literal(CANVAS_HEIGHT)),
       visibility,
       RcNoArg(RcOpcodes.CANVAS_OPERATIONS),
@@ -142,9 +180,10 @@ class RcLoopBudgetRenderTest {
     const val ENDLESS_ID = 101
     const val HOST_NAME = "USER:v"
 
-    /** AndroidX `Component.Visibility.VISIBLE` and `GONE` (Component.java:548-549). */
+    /** AndroidX `Component.Visibility.VISIBLE`, `GONE`, `INVISIBLE` (Component.java:548-550). */
     const val SHOWN = 1f
     const val HIDDEN = 0f
+    const val INVISIBLE = 2f
 
     /** AndroidX `PaintBundle.COLOR` (PaintBundle.java:810): the colour that follows. */
     const val PAINT_COLOR = 4

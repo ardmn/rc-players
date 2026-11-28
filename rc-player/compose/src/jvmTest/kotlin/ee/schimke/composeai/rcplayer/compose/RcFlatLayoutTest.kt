@@ -25,8 +25,10 @@ import ee.schimke.composeai.rcplayer.protocol.RcBorderModifier
 import ee.schimke.composeai.rcplayer.protocol.RcBoxLayout
 import ee.schimke.composeai.rcplayer.protocol.RcColumnLayout
 import ee.schimke.composeai.rcplayer.protocol.RcCoreText
+import ee.schimke.composeai.rcplayer.protocol.RcDimensionConstraintsModifier
 import ee.schimke.composeai.rcplayer.protocol.RcDimensionType
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
+import ee.schimke.composeai.rcplayer.protocol.RcFitBoxLayout
 import ee.schimke.composeai.rcplayer.protocol.RcFloatConstant
 import ee.schimke.composeai.rcplayer.protocol.RcFloatExpression
 import ee.schimke.composeai.rcplayer.protocol.RcFloatWord
@@ -48,6 +50,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcTextData
 import ee.schimke.composeai.rcplayer.protocol.RcTextStyleProperty
 import ee.schimke.composeai.rcplayer.protocol.RcVersion
 import ee.schimke.composeai.rcplayer.protocol.RcVisibilityModifier
+import ee.schimke.composeai.rcplayer.protocol.RcWidthInModifier
 import ee.schimke.composeai.rcplayer.protocol.RcWidthModifier
 import ee.schimke.composeai.rcplayer.protocol.RcZIndexModifier
 import ee.schimke.composeai.rcplayer.runtime.RcFloatExpressionEvaluator
@@ -204,11 +207,96 @@ class RcFlatLayoutTest {
     }
   }
 
+  /**
+   * A negative `widthIn` maximum other than -1 (unset) leaves no width: AndroidX's default measure
+   * policy takes min(maxWidth, max) unchecked (BaseModernMeasurePolicy.java:71-73, 111-112).
+   */
+  @Test
+  fun aNegativeWidthInMaximumLeavesNoWidth() {
+    for ((maximum, expected) in
+      listOf(Float.NEGATIVE_INFINITY to 0, -5f to 0, -1f to 50, Float.POSITIVE_INFINITY to 50)) {
+      val widthIn = RcWidthInModifier(RcFloatWord.literal(-1f), RcFloatWord.literal(maximum))
+      val document =
+        document(
+          RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)),
+          listOf(box(10, 1f, 50f, 20f, leading = listOf(widthIn))),
+        )
+      for (flatten in listOf(false, true)) {
+        assertEquals(
+          expected,
+          redPixelsInFirstRow(document, width = 100, height = 60, flatten),
+          "$maximum, flatten $flatten",
+        )
+      }
+    }
+  }
+
+  /**
+   * A required minimum width past Int or infinite takes the space there is, from the left edge, as
+   * an exact one does (min(maxWidth, size), LegacyMeasurePolicy.java:45).
+   */
+  @Test
+  fun aRequiredMinimumWidthPastIntOrInfiniteTakesTheSpaceThereIs() {
+    for (minimum in listOf(3e9f, Float.POSITIVE_INFINITY)) {
+      val required =
+        RcDimensionConstraintsModifier(
+          RcDimensionConstraintsModifier.REQUIRED_HORIZONTAL,
+          RcFloatWord.literal(minimum),
+          RcFloatWord.literal(-1f),
+        )
+      // A start-aligned box holding a 10 px green box: green from x = 0 when it starts there.
+      val requiredBox = buildList {
+        add(RcBoxLayout(30, -1, 1, 1))
+        add(required)
+        add(RcWidthModifier(RcDimensionType.WRAP, RcFloatWord.literal(0f)))
+        add(RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(20f)))
+        add(RcLayoutContent(31))
+        addAll(box(20, 0f, 10f, 20f))
+        add(end)
+        add(end)
+      }
+      val document =
+        document(RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)), listOf(requiredBox))
+      for (flatten in listOf(false, true)) {
+        assertEquals(
+          10,
+          pixelsInFirstRow(document, width = 100, height = 60, flatten, GREEN, inFirst = 10),
+          "$minimum, flatten $flatten",
+        )
+      }
+    }
+  }
+
+  /**
+   * A FitBox takes an alternative whose exact width is infinite: AndroidX checks only `widthIn`'s
+   * minimum (FitBoxLayout.java:136-150), and the child measures min(maxWidth, inf).
+   */
+  @Test
+  fun aFitBoxTakesAnAlternativeWithAnInfiniteExactWidth() {
+    val document =
+      document(
+        RcFitBoxLayout(3, -1, 1, 4),
+        listOf(box(10, 1f, Float.POSITIVE_INFINITY, 20f), box(20, 0f, 10f, 20f)),
+      )
+
+    assertEquals(100, redPixelsInFirstRow(document, width = 100, height = 60, flatten = false))
+  }
+
   private fun redPixelsInFirstRow(
     document: RcDocument,
     width: Int,
     height: Int,
     flatten: Boolean,
+  ): Int = pixelsInFirstRow(document, width, height, flatten, RED)
+
+  /** How many of the first [inFirst] pixels of row 1 are [color]. */
+  private fun pixelsInFirstRow(
+    document: RcDocument,
+    width: Int,
+    height: Int,
+    flatten: Boolean,
+    color: Int,
+    inFirst: Int = width,
   ): Int {
     val scene =
       ImageComposeScene(width = width, height = height, density = Density(1f)) {
@@ -219,7 +307,7 @@ class RcFlatLayoutTest {
     try {
       val bitmap = Bitmap().apply { allocN32Pixels(width, height) }
       check(scene.render(0L).readPixels(bitmap))
-      return (0 until width).count { bitmap.getColor(it, 1) == RED }
+      return (0 until inFirst).count { bitmap.getColor(it, 1) == color }
     } finally {
       scene.close()
     }
@@ -1012,5 +1100,7 @@ class RcFlatLayoutTest {
     const val NOT_A_NUMBER = 45
     /** The background of [box] with red 1. */
     const val RED = 0xffff0000.toInt()
+    /** The background of [box] with red 0. */
+    const val GREEN = 0xff00ff00.toInt()
   }
 }

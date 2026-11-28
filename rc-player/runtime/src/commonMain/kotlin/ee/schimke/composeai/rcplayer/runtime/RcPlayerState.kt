@@ -78,8 +78,9 @@ import ee.schimke.composeai.rcplayer.trace.rcTrace
  * `Limits.MAX_OP_COUNT` (Limits.java:24, androidx-main 4cd983e99fe). AndroidX counts every pass and
  * every body operation at every depth (LoopOperation.java:126-140), from zero each paint
  * (CoreDocument.java:2357), and throws past it; here the loop stops. AndroidX also counts a frame's
- * other operations; only loops count here. The Swift player's constant of the same name is its
- * twin.
+ * other operations; only loops count here. The Swift player's
+ * `NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument` holds the same number but spends it
+ * per document, at decode.
  */
 private const val MAX_LOOP_OPERATIONS_PER_FRAME = 20_000
 
@@ -273,6 +274,12 @@ private constructor(
 
   /** Colour ids the host overrides by name; document writes to them are ignored ([setColor]). */
   private val colorOverrides = mutableSetOf<Int>()
+
+  /**
+   * Float ids a host's named write pinned (AndroidX `mFloatOverride`): a float expression no longer
+   * writes them, until [clearNamedValue].
+   */
+  private val hostFloatOverrides = mutableSetOf<Int>()
   private val idMaps = mutableMapOf<Int, RcIdMap>()
   private val bitmaps = mutableMapOf<Int, RcBitmapData>()
   private val floatExpressionEvaluator = RcFloatExpressionEvaluator(arrays = ::floatArray)
@@ -981,9 +988,10 @@ private constructor(
    *
    * A host's NaN bound runs what Java's loop runs, and a loop that never ends stops when the budget
    * is spent. Compose redraws only what changed, so each outermost document loop starts with what
-   * the loops before it in document order used when they last ran in a pass still drawn (see
-   * [inLoopPass]), as in AndroidX's full paint. A pass runs only if it fits whole; a loop outside
-   * the document has the whole budget.
+   * the loops before it in document order used when a painted drawing still on screen last ran them
+   * (see [inLoopPass]), as in AndroidX's full paint, whose order differs only inside `DrawContent`.
+   * A loop run outside a painted drawing records nothing. A pass runs only if it fits whole; a loop
+   * outside the document has the whole budget.
    */
   public fun forEachLoopValue(
     operation: RcLoopOperation,
@@ -1025,19 +1033,32 @@ private constructor(
     forEachLoopValue(operation, bodyOperations = 0, block)
 
   /**
-   * Runs [block] as one top-level drawing of [owner]'s operations. The loop budget the previous
-   * drawing of [owner] recorded is released first, so a loop it no longer runs (a false
-   * conditional, the other theme) stops spending later loops' budget, as in AndroidX, which counts
-   * only what paints (CoreDocument.java:2357).
+   * Runs [block] as one painted top-level drawing of [owner]'s operations. What the previous
+   * drawing of [owner] recorded and this one does not record again is released at the end, so a
+   * loop it no longer runs (a false conditional, the other theme) stops spending later loops'
+   * budget, as in AndroidX, which counts only what paints (CoreDocument.java:2357). Later loops
+   * draw again ([onRepaint]) when that frees budget.
    */
-  public fun <T> inLoopPass(owner: Any, block: () -> T): T = loopBudget.inPass(owner, block)
+  public fun <T> inLoopPass(owner: Any, block: () -> T): T =
+    loopBudget.inPass(owner, ::repaintForFreedBudget, block)
+
+  /**
+   * Runs [block] as a drawing of [owner] that is not painted (an INVISIBLE component, which
+   * AndroidX skips): it releases what [owner] recorded, and its loops record nothing.
+   */
+  public fun <T> inUnpaintedLoopPass(owner: Any, block: () -> T): T =
+    loopBudget.unpainted(owner, ::repaintForFreedBudget, block)
+
+  private fun repaintForFreedBudget() {
+    onRepaint?.invoke()
+  }
 
   /**
    * Releases what [owner]'s drawings recorded: it is no longer drawn (GONE, or disposed). Later
    * loops draw again ([onRepaint]) when that frees budget.
    */
   public fun releaseLoopPass(owner: Any) {
-    if (loopBudget.release(owner)) onRepaint?.invoke()
+    if (loopBudget.release(owner)) repaintForFreedBudget()
   }
 
   /** How deep [forEachLoopValue] is nested, and the operations its outermost loop has left. */
@@ -1633,7 +1654,7 @@ private constructor(
   }
 
   public fun applyFloatExpression(operation: RcFloatExpression) {
-    if (operation.id in overriddenFloats) return
+    if (operation.id in overriddenFloats || operation.id in hostFloatOverrides) return
     // Inputs unchanged since its last evaluation: its value stands, as Compose's `derivedStateOf`
     // keeps a value whose dependencies did not move. The inputs are read through the observed maps,
     // so whatever evaluates this (a component's draw) still depends on them.
@@ -2396,7 +2417,14 @@ private constructor(
         if (variable.id in RcSystemVariables.ALL && variable.id !in documentClaimedSystemIds) {
           claimedSystemIds.remove(variable.id)
         } else {
-          documentNamedValues[name]?.let { setNamedValue(name, it) }
+          // Unpinned, as AndroidX's clearFloatOverride: the remembered value stands until the
+          // document's expression writes again, and writing it is no new pin.
+          hostFloatOverrides.remove(variable.id)
+          when (val recorded = documentNamedValues[name]) {
+            is RcNamedValue.FloatValue -> setFloat(variable.id, recorded.value)
+            null -> Unit
+            else -> setNamedValue(name, recorded)
+          }
         }
       else -> documentNamedValues[name]?.let { setNamedValue(name, it) }
     }
@@ -2460,7 +2488,12 @@ private constructor(
       is RcNamedValue.Text -> setText(variable.id, value.value)
       // `setFloat`, not `storeFloat`: a host overriding a named *system* variable claims it, the
       // same as any other host write, or the next frame's clock would replace the override.
-      is RcNamedValue.FloatValue -> setFloat(variable.id, value.value)
+      is RcNamedValue.FloatValue -> {
+        // AndroidX's overrideFloat pins only a value `!=` the one held (unset is 0), NaN included.
+        val held: Float = floats.peek(variable.id) ?: 0f
+        if (value.value != held) hostFloatOverrides += variable.id
+        setFloat(variable.id, value.value)
+      }
       is RcNamedValue.Color -> {
         colorOverrides.add(variable.id)
         colors[variable.id] = value.argb

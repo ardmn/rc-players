@@ -335,6 +335,7 @@ import ee.schimke.composeai.rcplayer.trace.RcTraceCategory
 import ee.schimke.composeai.rcplayer.trace.rcTrace
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.math.PI
+import kotlin.math.absoluteValue
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -1746,6 +1747,7 @@ private fun RenderLayoutNodeContent(
               ?.takeIf { it.isNotEmpty() }
               ?.let { operations ->
                 ReleaseLoopPassOnDispose(state, operations)
+                val painted = LocalRcPainted.current
                 val clockGate = RcClockDrawGate(LocalRcGateClockDraws.current)
                 Canvas(Modifier.fillMaxSize()) {
                   clockGate.follow(frameTime) // Redraw with the clock; see [RcClockDrawGate].
@@ -1771,6 +1773,7 @@ private fun RenderLayoutNodeContent(
                             drawSelf = null,
                           ),
                         captures = captures,
+                        painted = painted,
                       )
                     }
                   }
@@ -1793,6 +1796,7 @@ private fun RenderLayoutNodeContent(
           // does) reads its width and height back, and drawing with `Modifier.fillMaxSize()` alone
           // never published them, so every coordinate derived from them collapsed to the origin.
           ReleaseLoopPassOnDispose(state, node.operations)
+          val painted = LocalRcPainted.current
           val clockGate = RcClockDrawGate(LocalRcGateClockDraws.current)
           Canvas(effectiveModifier.fillMaxSize()) {
             clockGate.follow(frameTime) // Redraw with the clock; see [RcClockDrawGate].
@@ -1812,6 +1816,7 @@ private fun RenderLayoutNodeContent(
                   offscreenTargets = offscreenTargets,
                   active = RcActiveComponent(node.componentId, size, drawSelf = null),
                   captures = captures,
+                  painted = painted,
                 )
               }
             }
@@ -2607,10 +2612,12 @@ private fun RenderLayoutNodeContent(
               if (chosen == null || contentVisibility == 0) emptyList()
               else
                 subcompose(RcFitBoxSlot.Content) {
-                    if (contentVisibility == 2) {
-                      Box(Modifier.alpha(0f)) { alternatives(chosen) }
-                    } else {
-                      alternatives(chosen)
+                    RcPaintedUnless(contentVisibility == 2) {
+                      if (contentVisibility == 2) {
+                        Box(Modifier.alpha(0f)) { alternatives(chosen) }
+                      } else {
+                        alternatives(chosen)
+                      }
                     }
                   }
                   .map { it.measure(loose) }
@@ -2646,13 +2653,19 @@ private fun RenderLayoutNodeContent(
     forceGone || ignoreOwnVisibility || node.modifiers.visibility == null || lookaheadScope == null
   if (node is RcLayoutNode.Content) {
     if (visibility == 0) goneReport()
-    else body(if (visibility == 2) modifier.alpha(0f) else modifier)
+    else
+      RcPaintedUnless(visibility == 2) {
+        body(if (visibility == 2) modifier.alpha(0f) else modifier)
+      }
   } else {
     if (visibilityFixed) {
       // No wrapper: the component itself is the child its parent orders, and it already carries
       // its own `zIndex` from its modifier chain. Adding it here as well would sum the two.
       if (visibility == 0) goneReport()
-      else body(if (visibility == 2) boundsModifier.alpha(0f) else boundsModifier)
+      else
+        RcPaintedUnless(visibility == 2) {
+          body(if (visibility == 2) boundsModifier.alpha(0f) else boundsModifier)
+        }
     } else {
       RcVisibilityTransition(
         visibility = visibility,
@@ -2672,6 +2685,16 @@ private fun RenderLayoutNodeContent(
   }
 }
 
+/**
+ * [content], not painted when [invisible] or under an unpainted component ([LocalRcPainted]).
+ * Always the same provider, so switching keeps [content]'s state.
+ */
+@Composable
+internal fun RcPaintedUnless(invisible: Boolean, content: @Composable () -> Unit) {
+  val painted = LocalRcPainted.current && !invisible
+  CompositionLocalProvider(LocalRcPainted provides painted, content = content)
+}
+
 /** The two subcompositions [RcLayoutNode.FitBox] measures in: intrinsics probe, then the winner. */
 private enum class RcFitBoxSlot {
   Probe,
@@ -2679,6 +2702,12 @@ private enum class RcFitBoxSlot {
 }
 
 private val LocalRcLookaheadScope = compositionLocalOf<LookaheadScope?> { null }
+
+/**
+ * Whether the components below are painted: false under an INVISIBLE one, which AndroidX lays out
+ * but does not paint, so its loops spend no frame budget (`inUnpaintedLoopPass`).
+ */
+internal val LocalRcPainted = compositionLocalOf { true }
 
 /**
  * Frames a deferring player waits after a host change before it looks for its animations to end:
@@ -3462,6 +3491,7 @@ private fun Modifier.applyComponentModifiers(
   val frameTime = LocalRcFrameTime.current
   val paintVersion = LocalRcPaintVersion.current
   canvasOperations?.let { ReleaseLoopPassOnDispose(state, it) }
+  val painted = LocalRcPainted.current
   // A `RippleModifier` is an `Indication` at its wire position, driven by the presses of the
   // component's clickable through this shared source (see `applyAndroidXRipple`).
   val rippleInteractions =
@@ -3557,6 +3587,7 @@ private fun Modifier.applyComponentModifiers(
                 RcActiveComponent(it, size, drawSelf = { drawContent() })
               },
             captures = captures,
+            painted = painted,
           )
         }
       }
@@ -4524,15 +4555,20 @@ private fun Modifier.applyAndroidXMarquee(
 ): Modifier {
   val density = androidx.compose.ui.platform.LocalDensity.current
   val spacing = state.dpTypedDp(state.resolve(operation.spacing), density)
+  // AndroidX sweeps -v as v (MarqueeModifierOperation.paint, java:180-184); a velocity with no
+  // sweep stands still, as no iteration: basicMarquee's tween would divide by its 0 ms duration.
+  val speed = state.resolve(operation.velocity).absoluteValue
+  val moves = speed.isFinite() && speed > 0f
+  val iterations = if (operation.iterations == -1) Int.MAX_VALUE else operation.iterations
   return basicMarquee(
-    iterations = if (operation.iterations == -1) Int.MAX_VALUE else operation.iterations,
+    iterations = if (moves) iterations else 0,
     animationMode =
       if (operation.animationMode == 0) MarqueeAnimationMode.Immediately
       else MarqueeAnimationMode.WhileFocused,
     repeatDelayMillis = state.resolve(operation.repeatDelayMillis).toInt().coerceAtLeast(0),
     initialDelayMillis = state.resolve(operation.initialDelayMillis).toInt().coerceAtLeast(0),
-    spacing = MarqueeSpacing(spacing),
-    velocity = state.resolve(operation.velocity).dp,
+    spacing = MarqueeSpacing(if (spacing.value.isFinite()) spacing else 0.dp),
+    velocity = if (moves) speed.dp else 0.dp,
   )
 }
 
@@ -6411,6 +6447,7 @@ private fun DrawScope.drawOperations(
   active: RcActiveComponent? = null,
   captures: RcComponentCaptures? = null,
   inFunction: Boolean = false,
+  painted: Boolean = true,
 ) {
   val activeTargets =
     targets
@@ -6442,8 +6479,13 @@ private fun DrawScope.drawOperations(
         activeTargets,
       )
     }
-    // A component's own drawing owns the loop budget its loops record (see `inLoopPass`).
-    if (targets == null && !inFunction) state.inLoopPass(operations, draw) else draw()
+    // A component's own drawing owns the loop budget its loops record (see `inLoopPass`); an
+    // INVISIBLE one is not painted and records none.
+    when {
+      targets != null || inFunction -> draw()
+      painted -> state.inLoopPass(operations, draw)
+      else -> state.inUnpaintedLoopPass(operations, draw)
+    }
   } finally {
     state.endPaint()
     activeTargets.leave(this)

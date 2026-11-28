@@ -162,6 +162,19 @@ private fun longTextHead(text: String): String {
   return text.take(length)
 }
 
+/**
+ * Whether [text] has a run of more than [length] chars with no whitespace. Linear; a text with no
+ * space at all (CJK, say) counts as one word, so its intrinsic height stays a lower bound.
+ */
+internal fun rcHasWordLongerThan(text: String, length: Int): Boolean {
+  var run = 0
+  for (char in text) {
+    run = if (char.isWhitespace()) 0 else run + 1
+    if (run > length) return true
+  }
+  return false
+}
+
 /** Right-to-left letters, Arabic digits and the bidi controls. */
 private fun isRightToLeft(char: Char): Boolean =
   when (char.code) {
@@ -202,6 +215,9 @@ private data class RcWholeTextIntrinsicsElement(
   val maxLines: Int,
   val textMeasurer: TextMeasurer,
 ) : ModifierNodeElement<RcWholeTextIntrinsicsNode>() {
+  /** Whether [text] has a word Skia would break quadratically: one scan, on the first ask. */
+  val hasOverlongWord: Boolean by lazy { rcHasWordLongerThan(text, RC_LONG_TEXT_LENGTH) }
+
   override fun create() = RcWholeTextIntrinsicsNode(this)
 
   override fun update(node: RcWholeTextIntrinsicsNode) {
@@ -220,13 +236,16 @@ private class RcWholeTextIntrinsicsNode(var element: RcWholeTextIntrinsicsElemen
   }
 
   /**
-   * The text laid out at [width]. At a bounded width only its first [RC_LONG_TEXT_LENGTH] chars
-   * are: Skia breaks a long word quadratically (a megabyte took 87 s under a `FitBox`), so the
-   * height is then that prefix's, a lower bound, exact once the prefix fills [maxLines].
+   * The text laid out at [width]. Skia breaks a word longer than a line quadratically (a megabyte
+   * word took 87 s under a `FitBox`), so at a bounded width a text with a word past
+   * [RC_LONG_TEXT_LENGTH] lays out only its first [RC_LONG_TEXT_LENGTH] chars: its height is then a
+   * lower bound, exact once the prefix fills [maxLines]. Any other text lays out whole.
    */
   private fun laidOut(width: Int): TextLayoutResult =
     element.textMeasurer.measure(
-      text = if (width == Constraints.Infinity) element.text else longTextHead(element.text),
+      text =
+        if (width != Constraints.Infinity && element.hasOverlongWord) longTextHead(element.text)
+        else element.text,
       style = element.style,
       overflow = element.overflow,
       maxLines = element.maxLines,

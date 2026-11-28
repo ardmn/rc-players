@@ -505,7 +505,7 @@ public constructor(bytes: ByteArray) {
         wakeAfterSeconds = wakeAfterSeconds ?: -1f,
       )
 
-  /** Write a float through a return property declared by a custom component. */
+  /** Write any float, as [setFloat] takes it, through a custom component's return property. */
   @Throws(IllegalArgumentException::class)
   public fun returnCustomFloat(
     componentId: Int,
@@ -513,7 +513,6 @@ public constructor(bytes: ByteArray) {
     value: Float,
     timeSeconds: Float = state.animationTimeSeconds,
   ): RcNativeSessionUpdate {
-    require(value.isFinite()) { "Native custom float must be finite" }
     requireValidNativeTime(timeSeconds)
     pendingEvents.clear()
     beginScheduledWork()
@@ -575,6 +574,35 @@ public constructor(bytes: ByteArray) {
     }
   }
 }
+
+/** AndroidX's `ImageScaling.SCALE_FIXED_SCALE`, the one scale type that reads its scale factor. */
+private const val SCALE_TYPE_FIXED_SCALE = 7
+
+/**
+ * An alpha as a 0-1 fraction: AndroidX packs it with `(int) (a * 255 + 0.5f)` (Utils.toARGB), so
+ * NaN is transparent and the infinities clamp.
+ */
+private fun rcAlphaFraction(alpha: Float): Float = if (alpha.isNaN()) 0f else alpha.coerceIn(0f, 1f)
+
+/**
+ * Gradient stops as Skia takes them: each pinned to [previous, 1] (`SkTPin` in
+ * `SkGradientBaseShader`), which makes a NaN stop the previous one.
+ */
+private fun skiaPinnedStops(stops: List<Float>): List<Float> {
+  var previous = 0f
+  return stops.map { stop ->
+    val pinned = if (stop.isNaN()) previous else stop.coerceIn(previous, 1f)
+    previous = pinned
+    pinned
+  }
+}
+
+/** A `TextLayout`'s size in points: Android's default and cap are pixels, so normalise first. */
+private fun nativeTextSize(
+  operation: RcTextLayout,
+  state: RcPlayerState,
+  document: RcDocument,
+): Float = rcTextSizePixels(state.resolve(operation.fontSize)) / document.header.density
 
 private fun requireValidNativeTime(timeSeconds: Float) {
   require(timeSeconds.isFinite() && timeSeconds >= 0f) {
@@ -1021,7 +1049,7 @@ public object RcNativeSnapshotBridge {
               val childOperation = childContainers[index].operation
               return when (childOperation) {
                 is RcTextLayout -> {
-                  val fontSize = state.resolve(childOperation.fontSize) / document.header.density
+                  val fontSize = nativeTextSize(childOperation, state, document)
                   val text = state.text(childOperation.textId).orEmpty()
                   if (horizontal) text.length * fontSize * 0.55f
                   else fontSize * 1.2f * childOperation.maxLines.coerceAtMost(2)
@@ -1158,32 +1186,28 @@ public object RcNativeSnapshotBridge {
       if (operation is RcImageLayout) {
         val bitmap =
           requireNotNull(bitmaps[operation.bitmapId]) { "Missing bitmap ${operation.bitmapId}" }
-        val alpha = state.resolve(operation.alpha)
-        require(alpha.isFinite()) { "ImageLayout alpha must be finite" }
-        commands +=
-          NativePaint(alpha = alpha.coerceIn(0f, 1f))
-            .command(
-              RcNativeDrawCommand.IMAGE,
-              image =
-                validatedImageDraw(
-                  RcNativeImageDraw(
-                    imageId = operation.bitmapId,
-                    sourceLeft = 0f,
-                    sourceTop = 0f,
-                    sourceRight = bitmap.width.toFloat(),
-                    sourceBottom = bitmap.height.toFloat(),
-                    destinationLeft = 0f,
-                    destinationTop = 0f,
-                    destinationRight = bitmap.width.toFloat(),
-                    destinationBottom = bitmap.height.toFloat(),
-                    scaleType = operation.scaleType,
-                  ),
-                  bitmaps,
-                ),
-            )
+        val image =
+          drawableImage(
+            RcNativeImageDraw(
+              imageId = operation.bitmapId,
+              sourceLeft = 0f,
+              sourceTop = 0f,
+              sourceRight = bitmap.width.toFloat(),
+              sourceBottom = bitmap.height.toFloat(),
+              destinationLeft = 0f,
+              destinationTop = 0f,
+              destinationRight = bitmap.width.toFloat(),
+              destinationBottom = bitmap.height.toFloat(),
+              scaleType = operation.scaleType,
+            ),
+            bitmaps,
+          )
+        val alpha = rcAlphaFraction(state.resolve(operation.alpha))
+        if (image != null) {
+          commands += NativePaint(alpha = alpha).command(RcNativeDrawCommand.IMAGE, image = image)
+        }
       } else if (operation is RcTextLayout) {
-        // Android's default and cap are pixels: normalise, then divide.
-        val size = rcTextSizePixels(state.resolve(operation.fontSize)) / document.header.density
+        val size = nativeTextSize(operation, state, document)
         val weight = rcTextWeight(state.resolve(operation.fontWeight))
         require(operation.textAlign in 1..6) {
           "TextLayout alignment ${operation.textAlign} is invalid"
@@ -1286,39 +1310,39 @@ public object RcNativeSnapshotBridge {
         require(overflow in 1..5) { "CoreText overflow $overflow is invalid" }
         require(maxLines >= 1) { "CoreText maxLines must be positive" }
         require(fontStyle and 3 == fontStyle) { "CoreText font style $fontStyle is invalid" }
-        require(letterSpacing.isFinite()) { "CoreText letter spacing must be finite" }
-        require(lineHeightAdd.isFinite()) { "CoreText line-height addition must be finite" }
-        require(lineHeightMultiplier.isFinite() && lineHeightMultiplier > 0f) {
-          "CoreText line-height multiplier must be finite and positive"
+        // Android lays out no line for a non-finite spacing; a negative multiplier is 0 in UIKit.
+        val spacingIsDrawable =
+          letterSpacing.isFinite() && lineHeightAdd.isFinite() && lineHeightMultiplier.isFinite()
+        if (spacingIsDrawable) {
+          commands +=
+            NativePaint(
+                color = if (colorId == -1) literalColor else state.color(colorId),
+                textSize = size,
+              )
+              .command(
+                RcNativeDrawCommand.TEXT,
+                values = listOf(0f, size, -1f, -1f),
+                text = state.text(operation.textId).orEmpty(),
+                textWeight = weight,
+                textStyle =
+                  RcNativeTextStyle(
+                    fontStyle = fontStyle,
+                    fontFamilyId = fontFamilyId,
+                    fontFamilyName = familyName,
+                    alignment = alignment,
+                    overflow = overflow,
+                    maxLines = maxLines,
+                    letterSpacing = letterSpacing,
+                    lineHeightAdd = lineHeightAdd,
+                    lineHeightMultiplier = lineHeightMultiplier.coerceAtLeast(0f),
+                    breakStrategy = intProperty(15, 0),
+                    hyphenation = intProperty(16, 0),
+                    justified = intProperty(17, 0) == 1,
+                    underline = booleanProperty(18),
+                    strikeThrough = booleanProperty(19),
+                  ),
+              )
         }
-        commands +=
-          NativePaint(
-              color = if (colorId == -1) literalColor else state.color(colorId),
-              textSize = size,
-            )
-            .command(
-              RcNativeDrawCommand.TEXT,
-              values = listOf(0f, size, -1f, -1f),
-              text = state.text(operation.textId).orEmpty(),
-              textWeight = weight,
-              textStyle =
-                RcNativeTextStyle(
-                  fontStyle = fontStyle,
-                  fontFamilyId = fontFamilyId,
-                  fontFamilyName = familyName,
-                  alignment = alignment,
-                  overflow = overflow,
-                  maxLines = maxLines,
-                  letterSpacing = letterSpacing,
-                  lineHeightAdd = lineHeightAdd,
-                  lineHeightMultiplier = lineHeightMultiplier,
-                  breakStrategy = intProperty(15, 0),
-                  hyphenation = intProperty(16, 0),
-                  justified = intProperty(17, 0) == 1,
-                  underline = booleanProperty(18),
-                  strikeThrough = booleanProperty(19),
-                ),
-            )
         if (booleanProperty(22)) {
           diagnostics.unsupportedLimitation(
             operation,
@@ -1951,74 +1975,62 @@ public object RcNativeSnapshotBridge {
       is RcDrawBitmap -> {
         val imageId = state.drawId(operation.imageId)
         val bitmap = requireNotNull(bitmaps[imageId]) { "Missing bitmap $imageId" }
-        commands +=
-          paint.command(
-            RcNativeDrawCommand.IMAGE,
-            image =
-              validatedImageDraw(
-                RcNativeImageDraw(
-                  imageId = imageId,
-                  sourceLeft = 0f,
-                  sourceTop = 0f,
-                  sourceRight = bitmap.width.toFloat(),
-                  sourceBottom = bitmap.height.toFloat(),
-                  destinationLeft = state.resolve(operation.left),
-                  destinationTop = state.resolve(operation.top),
-                  destinationRight = state.resolve(operation.right),
-                  destinationBottom = state.resolve(operation.bottom),
-                  contentDescription =
-                    operation.contentDescriptionId.takeUnless { it == 0 }?.let(state::text),
-                ),
-                bitmaps,
-              ),
+        drawableImage(
+            RcNativeImageDraw(
+              imageId = imageId,
+              sourceLeft = 0f,
+              sourceTop = 0f,
+              sourceRight = bitmap.width.toFloat(),
+              sourceBottom = bitmap.height.toFloat(),
+              destinationLeft = state.resolve(operation.left),
+              destinationTop = state.resolve(operation.top),
+              destinationRight = state.resolve(operation.right),
+              destinationBottom = state.resolve(operation.bottom),
+              contentDescription =
+                operation.contentDescriptionId.takeUnless { it == 0 }?.let(state::text),
+            ),
+            bitmaps,
           )
+          ?.let { commands += paint.command(RcNativeDrawCommand.IMAGE, image = it) }
       }
       is RcDrawBitmapInt ->
-        commands +=
-          paint.command(
-            RcNativeDrawCommand.IMAGE,
-            image =
-              validatedImageDraw(
-                RcNativeImageDraw(
-                  imageId = state.drawId(operation.imageId),
-                  sourceLeft = operation.srcLeft.toFloat(),
-                  sourceTop = operation.srcTop.toFloat(),
-                  sourceRight = operation.srcRight.toFloat(),
-                  sourceBottom = operation.srcBottom.toFloat(),
-                  destinationLeft = operation.dstLeft.toFloat(),
-                  destinationTop = operation.dstTop.toFloat(),
-                  destinationRight = operation.dstRight.toFloat(),
-                  destinationBottom = operation.dstBottom.toFloat(),
-                  contentDescription =
-                    operation.contentDescriptionId.takeUnless { it == 0 }?.let(state::text),
-                ),
-                bitmaps,
-              ),
+        drawableImage(
+            RcNativeImageDraw(
+              imageId = state.drawId(operation.imageId),
+              sourceLeft = operation.srcLeft.toFloat(),
+              sourceTop = operation.srcTop.toFloat(),
+              sourceRight = operation.srcRight.toFloat(),
+              sourceBottom = operation.srcBottom.toFloat(),
+              destinationLeft = operation.dstLeft.toFloat(),
+              destinationTop = operation.dstTop.toFloat(),
+              destinationRight = operation.dstRight.toFloat(),
+              destinationBottom = operation.dstBottom.toFloat(),
+              contentDescription =
+                operation.contentDescriptionId.takeUnless { it == 0 }?.let(state::text),
+            ),
+            bitmaps,
           )
+          ?.let { commands += paint.command(RcNativeDrawCommand.IMAGE, image = it) }
       is RcDrawBitmapScaled ->
-        commands +=
-          paint.command(
-            RcNativeDrawCommand.IMAGE,
-            image =
-              validatedImageDraw(
-                RcNativeImageDraw(
-                  imageId = state.drawId(operation.imageId),
-                  sourceLeft = state.resolve(operation.srcLeft),
-                  sourceTop = state.resolve(operation.srcTop),
-                  sourceRight = state.resolve(operation.srcRight),
-                  sourceBottom = state.resolve(operation.srcBottom),
-                  destinationLeft = state.resolve(operation.dstLeft),
-                  destinationTop = state.resolve(operation.dstTop),
-                  destinationRight = state.resolve(operation.dstRight),
-                  destinationBottom = state.resolve(operation.dstBottom),
-                  scaleType = operation.scaleType,
-                  scaleFactor = state.resolve(operation.scaleFactor),
-                  contentDescription =
-                    operation.contentDescriptionId.takeUnless { it == 0 }?.let(state::text),
-                ),
-                bitmaps,
-              ),
+        drawableImage(
+            RcNativeImageDraw(
+              imageId = state.drawId(operation.imageId),
+              sourceLeft = state.resolve(operation.srcLeft),
+              sourceTop = state.resolve(operation.srcTop),
+              sourceRight = state.resolve(operation.srcRight),
+              sourceBottom = state.resolve(operation.srcBottom),
+              destinationLeft = state.resolve(operation.dstLeft),
+              destinationTop = state.resolve(operation.dstTop),
+              destinationRight = state.resolve(operation.dstRight),
+              destinationBottom = state.resolve(operation.dstBottom),
+              scaleType = operation.scaleType,
+              scaleFactor = state.resolve(operation.scaleFactor),
+              contentDescription =
+                operation.contentDescriptionId.takeUnless { it == 0 }?.let(state::text),
+            ),
+            bitmaps,
           )
+          ?.let { commands += paint.command(RcNativeDrawCommand.IMAGE, image = it) }
       is RcIdOperation ->
         if (operation.opcode == RcOpcodes.DRAW_PATH || operation.opcode == RcOpcodes.CLIP_PATH) {
           // DrawPath names its path like any paint operation, possibly through a variable; ClipPath
@@ -2046,11 +2058,16 @@ public object RcNativeSnapshotBridge {
     }
   }
 
-  private fun validatedImageDraw(
+  /**
+   * [draw], or null when its rectangles cannot draw: non-finite, empty, or outside the bitmap. Skia
+   * draws nothing for them (`SkCanvas::quickReject`), and a host value can reach every one.
+   */
+  private fun drawableImage(
     draw: RcNativeImageDraw,
     bitmaps: Map<Int, RcBitmapData>,
-  ): RcNativeImageDraw {
+  ): RcNativeImageDraw? {
     val bitmap = requireNotNull(bitmaps[draw.imageId]) { "Missing bitmap ${draw.imageId}" }
+    require(draw.scaleType in 0..7) { "Bitmap ${draw.imageId} scale type is invalid" }
     val coordinates =
       listOf(
         draw.sourceLeft,
@@ -2063,27 +2080,19 @@ public object RcNativeSnapshotBridge {
         draw.destinationBottom,
         draw.scaleFactor,
       )
-    require(coordinates.all(Float::isFinite)) { "Bitmap ${draw.imageId} geometry must be finite" }
-    require(
+    val sourceInBitmap =
       draw.sourceLeft >= 0f &&
         draw.sourceTop >= 0f &&
         draw.sourceRight > draw.sourceLeft &&
         draw.sourceBottom > draw.sourceTop &&
         draw.sourceRight <= bitmap.width.toFloat() &&
-        draw.sourceBottom <= bitmap.height.toFloat(),
-    ) {
-      "Bitmap ${draw.imageId} source rectangle is outside ${bitmap.width}x${bitmap.height}"
-    }
-    require(
-      draw.destinationRight > draw.destinationLeft && draw.destinationBottom > draw.destinationTop,
-    ) {
-      "Bitmap ${draw.imageId} destination rectangle must have positive area"
-    }
-    require(draw.scaleType in 0..7) { "Bitmap ${draw.imageId} scale type is invalid" }
-    if (draw.scaleType == 7) {
-      require(draw.scaleFactor > 0f) { "Bitmap ${draw.imageId} scale factor must be positive" }
-    }
-    return draw
+        draw.sourceBottom <= bitmap.height.toFloat()
+    val destinationHasArea =
+      draw.destinationRight > draw.destinationLeft && draw.destinationBottom > draw.destinationTop
+    val scaleIsPositive = draw.scaleType != SCALE_TYPE_FIXED_SCALE || draw.scaleFactor > 0f
+    val drawable =
+      coordinates.all(Float::isFinite) && sourceInBitmap && destinationHasArea && scaleIsPositive
+    return draw.takeIf { drawable }
   }
 
   private fun nativePath(
@@ -2183,13 +2192,7 @@ public object RcNativeSnapshotBridge {
           "Gradient stop count $stopCount does not match $colorCount colors"
         }
         require(index + stopCount <= operation.words.size) { "Paint command 11 is truncated" }
-        val stops = List(stopCount) { state.resolveWord(operation.words[index++]) }
-        require(stops.all { it.isFinite() && it in 0f..1f }) {
-          "Gradient stops must be finite and between 0 and 1"
-        }
-        require(stops.zipWithNext().all { (low, high) -> low <= high }) {
-          "Gradient stops must be ordered"
-        }
+        val stops = skiaPinnedStops(List(stopCount) { state.resolveWord(operation.words[index++]) })
         val coordinateCount = if (gradientType == RcNativeGradient.LINEAR) 4 else 3
         // Sweep gradients encode only their center; radial gradients add radius.
         val actualCoordinateCount =
@@ -2199,12 +2202,11 @@ public object RcNativeSnapshotBridge {
         require(index + trailingWords <= operation.words.size) { "Paint command 11 is truncated" }
         val coordinateWords = List(actualCoordinateCount) { operation.words[index++] }
         val coordinates = coordinateWords.map { state.resolveWord(it) }
-        require(coordinates.all(Float::isFinite)) {
-          "Gradient coordinates must be finite: words=$coordinateWords resolved=$coordinates"
-        }
-        if (gradientType == RcNativeGradient.RADIAL) {
-          require(coordinates[2] > 0f) { "Radial gradient radius must be positive" }
-        }
+        // Skia makes no shader for a non-finite point or a radius that is not positive
+        // (SkGradientShader::MakeLinear / MakeRadial), and Android then paints the plain colour.
+        val shaderIsDrawable =
+          coordinates.all(Float::isFinite) &&
+            (gradientType != RcNativeGradient.RADIAL || coordinates[2] > 0f)
         val tileMode = if (gradientType == RcNativeGradient.SWEEP) 0 else operation.words[index++]
         require(tileMode in 0..3) { "Gradient tile mode $tileMode is invalid" }
         if (tileMode != 0) {
@@ -2215,16 +2217,18 @@ public object RcNativeSnapshotBridge {
           )
         }
         paint.gradient =
-          RcNativeGradient(
-            kind = gradientType,
-            colors = colors,
-            stops = stops,
-            first = coordinates[0],
-            second = coordinates[1],
-            third = coordinates.getOrElse(2) { 0f },
-            fourth = coordinates.getOrElse(3) { 0f },
-            tileMode = tileMode,
-          )
+          if (!shaderIsDrawable) null
+          else
+            RcNativeGradient(
+              kind = gradientType,
+              colors = colors,
+              stops = stops,
+              first = coordinates[0],
+              second = coordinates[1],
+              third = coordinates.getOrElse(2) { 0f },
+              fourth = coordinates.getOrElse(3) { 0f },
+              tileMode = tileMode,
+            )
         paint.textureImageId = -1
         continue
       }
@@ -2265,7 +2269,7 @@ public object RcNativeSnapshotBridge {
         4 -> paint.color = operation.words[index++]
         5 -> paint.strokeWidth = state.resolveWord(operation.words[index++])
         8 -> paint.stroke = command ushr 16 == 1
-        12 -> paint.alpha = state.resolveWord(operation.words[index++]).coerceIn(0f, 1f)
+        12 -> paint.alpha = rcAlphaFraction(state.resolveWord(operation.words[index++]))
         19 -> paint.color = state.color(operation.words[index++])
         24 -> {
           val bitmapId = operation.words[index++]

@@ -30,11 +30,13 @@ import ee.schimke.composeai.rcplayer.protocol.RcHostAction
 import ee.schimke.composeai.rcplayer.protocol.RcHostNamedAction
 import ee.schimke.composeai.rcplayer.protocol.RcHostNamedActionValue
 import ee.schimke.composeai.rcplayer.protocol.RcIdOperation
+import ee.schimke.composeai.rcplayer.protocol.RcImageLayout
 import ee.schimke.composeai.rcplayer.protocol.RcIntegerConstant
 import ee.schimke.composeai.rcplayer.protocol.RcLayoutContent
 import ee.schimke.composeai.rcplayer.protocol.RcNamedVariable
 import ee.schimke.composeai.rcplayer.protocol.RcNoArg
 import ee.schimke.composeai.rcplayer.protocol.RcOpcodes
+import ee.schimke.composeai.rcplayer.protocol.RcOperation
 import ee.schimke.composeai.rcplayer.protocol.RcPaddingModifier
 import ee.schimke.composeai.rcplayer.protocol.RcPaintData
 import ee.schimke.composeai.rcplayer.protocol.RcPathCommands
@@ -318,9 +320,200 @@ class RcNativeSnapshotTest {
     }
   }
 
-  /** A write the snapshot refuses, a `CoreText` line-height multiplier of -1, is rolled back. */
+  /** A session whose `USER:v` (id [HOST_VALUE]) feeds [operations] under a root layout. */
+  private fun hostValueSession(vararg operations: RcOperation): RcNativeSnapshotSession =
+    RcNativeSnapshotSession(
+      RcDocumentCodec.encode(
+        RcDocument(
+          RcHeader(RcVersion(1, 0, 0), legacyWidth = 100, legacyHeight = 40, modern = false),
+          listOf(
+            RcFloatConstant(HOST_VALUE, RcFloatWord.literal(1f)),
+            RcNamedVariable(HOST_VALUE, RcNamedVariable.FLOAT_TYPE, "USER:v"),
+            RcBitmapData(
+              imageId = 40,
+              width = 1,
+              height = 1,
+              type = RcBitmapData.TYPE_RAW8888,
+              encoding = RcBitmapData.ENCODING_INLINE,
+              data = byteArrayOf(-1, 0, 0, -1),
+            ),
+            RcTextData(60, "Title"),
+            RcRootLayout(-2),
+          ) + operations + RcNoArg(RcOpcodes.CONTAINER_END),
+        ),
+      ),
+    )
+
+  private fun allCommands(node: RcNativeNodeSnapshot): List<RcNativeDrawCommand> =
+    node.commands + node.children.flatMap(::allCommands)
+
+  /** Skia draws nothing for a non-finite destination (`SkCanvas::quickReject`); nor does this. */
   @Test
-  fun retainedSessionRollsBackNamedValueAfterInvalidSnapshot() {
+  fun aNonFiniteHostBitmapEdgeDropsTheBitmapDraw() {
+    val session =
+      hostValueSession(
+        RcDrawBitmap(
+          imageId = 40,
+          left = RcFloatWord(0x7fc00000 or HOST_VALUE),
+          top = RcFloatWord.literal(0f),
+          right = RcFloatWord.literal(10f),
+          bottom = RcFloatWord.literal(10f),
+          contentDescriptionId = 0,
+        ),
+      )
+
+    for (value in listOf(Float.NaN, Float.POSITIVE_INFINITY)) {
+      val update = session.setFloat("v", value)
+      assertTrue(update.accepted, "$value")
+      assertTrue(allCommands(update.snapshot.root).none { it.image != null }, "$value")
+    }
+  }
+
+  /** AndroidX packs a NaN image alpha with `(int) (a * 255)`, 0 (ImageLayout.java:185). */
+  @Test
+  fun aNaNHostImageAlphaDrawsTheImageTransparent() {
+    val session =
+      hostValueSession(
+        RcImageLayout(-3, 0, 40, 0, RcFloatWord(0x7fc00000 or HOST_VALUE)),
+        RcNoArg(RcOpcodes.CONTAINER_END),
+      )
+
+    val image =
+      allCommands(session.setFloat("v", Float.NaN).snapshot.root).single { it.image != null }
+
+    assertEquals(0f, image.alpha)
+  }
+
+  /**
+   * Skia pins each gradient stop to [previous, 1], a NaN one to the previous
+   * (SkGradientBaseShader).
+   */
+  @Test
+  fun aNonFiniteHostGradientStopIsPinnedAsSkiaPinsIt() {
+    val session =
+      hostValueSession(
+        RcPaintData(
+          listOf(
+            11,
+            2,
+            0xffff0000.toInt(),
+            0xff0000ff.toInt(),
+            2,
+            RcFloatWord(0x7fc00000 or HOST_VALUE).bits,
+            RcFloatWord.literal(0.5f).bits,
+            RcFloatWord.literal(0f).bits,
+            RcFloatWord.literal(0f).bits,
+            RcFloatWord.literal(20f).bits,
+            RcFloatWord.literal(0f).bits,
+            0,
+          ),
+        ),
+        RcDraw4(
+          RcOpcodes.DRAW_RECT,
+          RcFloatWord.literal(0f),
+          RcFloatWord.literal(0f),
+          RcFloatWord.literal(20f),
+          RcFloatWord.literal(20f),
+        ),
+      )
+    fun stops(value: Float) =
+      allCommands(session.setFloat("v", value).snapshot.root).single().gradient?.stops
+
+    assertEquals(listOf(0f, 0.5f), stops(Float.NaN))
+    assertEquals(listOf(1f, 1f), stops(Float.POSITIVE_INFINITY))
+    assertEquals(listOf(0f, 0.5f), stops(Float.NEGATIVE_INFINITY))
+  }
+
+  /**
+   * Skia makes no shader for a non-finite gradient point (SkLinearGradient), so the colour paints.
+   */
+  @Test
+  fun aNonFiniteHostGradientPointPaintsThePlainColour() {
+    val session =
+      hostValueSession(
+        RcPaintData(
+          listOf(
+            4,
+            0xff336699.toInt(),
+            11,
+            2,
+            0xffff0000.toInt(),
+            0xff0000ff.toInt(),
+            0,
+            RcFloatWord(0x7fc00000 or HOST_VALUE).bits,
+            RcFloatWord.literal(0f).bits,
+            RcFloatWord.literal(20f).bits,
+            RcFloatWord.literal(0f).bits,
+            0,
+          ),
+        ),
+        RcDraw4(
+          RcOpcodes.DRAW_RECT,
+          RcFloatWord.literal(0f),
+          RcFloatWord.literal(0f),
+          RcFloatWord.literal(20f),
+          RcFloatWord.literal(20f),
+        ),
+      )
+
+    val rect = allCommands(session.setFloat("v", Float.NaN).snapshot.root).single()
+
+    assertEquals(null, rect.gradient)
+    assertEquals(0xff336699.toInt(), rect.color)
+  }
+
+  /**
+   * A non-finite letter spacing or line height lays out no line on Android; the text is dropped.
+   */
+  @Test
+  fun aNonFiniteHostCoreTextSpacingDropsTheText() {
+    for (property in listOf(12, 13, 14)) {
+      val session =
+        hostValueSession(
+          RcCoreText(
+            60,
+            // TextStyle.java:48,52: 1 component id, 5 font size; 12-14 spacing and line height.
+            listOf(
+              RcTextStyleProperty.IntValue(1, -3),
+              RcTextStyleProperty.FloatValue(5, RcFloatWord.literal(12f)),
+              RcTextStyleProperty.FloatValue(property, RcFloatWord(0x7fc00000 or HOST_VALUE)),
+            ),
+          ),
+          RcNoArg(RcOpcodes.CONTAINER_END),
+        )
+
+      val update = session.setFloat("v", Float.NaN)
+
+      assertTrue(update.accepted, "property $property")
+      assertTrue(allCommands(update.snapshot.root).none { it.text != null }, "property $property")
+    }
+  }
+
+  /** A custom component's return channel takes any float, as `setFloat` does. */
+  @Test
+  fun aCustomFloatReturnTakesANonFiniteFloat() {
+    val session =
+      hostValueSession(
+        RcLayoutContent(-3),
+        RcCustomLayout(
+          componentId = 3,
+          animationId = 0,
+          configId = 60,
+          properties =
+            listOf(RcCustomProperty.floatReturn(2, RcFloatWord(0x7fc00000 or HOST_VALUE))),
+        ),
+        RcNoArg(RcOpcodes.CONTAINER_END),
+        RcNoArg(RcOpcodes.CONTAINER_END),
+      )
+
+    for (value in listOf(Float.NaN, Float.NEGATIVE_INFINITY)) {
+      assertTrue(session.returnCustomFloat(3, 2, value).accepted, "$value")
+    }
+  }
+
+  /** A negative line-height multiplier spaces lines as 0 does, as the UIKit renderer reads it. */
+  @Test
+  fun aNegativeHostLineHeightMultiplierIsZero() {
     val lineHeight = RcFloatWord(0x7fc00000 or 20)
     val document =
       RcDocument(
@@ -347,8 +540,11 @@ class RcNativeSnapshotTest {
     fun commands(node: RcNativeNodeSnapshot): List<RcNativeDrawCommand> =
       node.commands + node.children.flatMap(::commands)
 
-    assertFailsWith<IllegalArgumentException> { session.setFloat("lineHeight", -1f) }
-    assertEquals(12f, commands(session.snapshot().root).single { it.text != null }.textSize)
+    val update = session.setFloat("lineHeight", -1f)
+
+    assertTrue(update.accepted)
+    val text = commands(update.snapshot.root).single { it.text != null }
+    assertEquals(0f, checkNotNull(text.textStyle).lineHeightMultiplier)
   }
 
   @Test
@@ -1220,6 +1416,74 @@ class RcNativeSnapshotTest {
     assertEquals(50f, commands(snapshot.root).single().third)
   }
 
+  /** A NaN font size measures as Android's default 12 px (Paint.cpp keeps the previous size). */
+  @Test
+  fun aNaNTextSizeOnAWrappedSiblingLeavesTheWeightedWidthFinite() {
+    val reference = RcFloatWord(0x7fc00000 or 42)
+    val end = RcNoArg(RcOpcodes.CONTAINER_END)
+    val document =
+      RcDocument(
+        RcHeader(RcVersion(1, 0, 0), legacyWidth = 100, legacyHeight = 40, modern = false),
+        listOf(
+          RcFloatConstant(30, RcFloatWord.literal(12f)),
+          RcNamedVariable(30, RcNamedVariable.FLOAT_TYPE, "USER:size"),
+          RcTextData(20, "ab"),
+          RcRootLayout(-2),
+          RcLayoutContent(-3),
+          RcRowLayout(
+            -4,
+            0,
+            horizontalPositioning = 1,
+            verticalPositioning = 4,
+            spacedBy = RcFloatWord.literal(0f),
+          ),
+          RcWidthModifier(RcDimensionType.EXACT, RcFloatWord.literal(100f)),
+          RcHeightModifier(RcDimensionType.EXACT, RcFloatWord.literal(40f)),
+          RcLayoutContent(-5),
+          RcTextLayout(
+            componentId = -6,
+            animationId = 0,
+            textId = 20,
+            color = 0xff000000.toInt(),
+            fontSize = RcFloatWord(0x7fc00000 or 30),
+            fontStyle = 0,
+            fontWeight = RcFloatWord.literal(400f),
+            fontFamilyId = 0,
+            textAlignAndFlags = 1,
+            overflow = 1,
+            maxLines = 1,
+          ),
+          end,
+          RcCanvasLayout(-7, 0),
+          RcWidthModifier(RcDimensionType.WEIGHT, RcFloatWord.literal(1f)),
+          RcLayoutContent(-8),
+          RcComponentValue(RcComponentValue.WIDTH, componentId = -7, valueId = 42),
+          RcDraw4(
+            RcOpcodes.DRAW_RECT,
+            RcFloatWord.literal(0f),
+            RcFloatWord.literal(0f),
+            reference,
+            RcFloatWord.literal(10f),
+          ),
+          end,
+          end,
+          end,
+          end,
+          end,
+          end,
+        ),
+      )
+    fun commands(node: RcNativeNodeSnapshot): List<RcNativeDrawCommand> =
+      node.commands + node.children.flatMap(::commands)
+    val session = RcNativeSnapshotSession(RcDocumentCodec.encode(document))
+
+    val root = session.setFloat("size", Float.NaN).snapshot.root
+    val width = commands(root).single { it.text == null }.third
+
+    // "ab" estimated at 0.55 em per char, 12 px: 100 - 2 x 12 x 0.55.
+    assertEquals(100f - 2 * 12f * 0.55f, width, 0.001f)
+  }
+
   @Test
   fun weightedAllocationSubtractsFillSibling() {
     val reference = RcFloatWord(0x7fc00000 or 42)
@@ -1585,5 +1849,10 @@ class RcNativeSnapshotTest {
 
     assertEquals(-1f, box.maximumWidth)
     assertEquals(-1f, box.maximumHeight)
+  }
+
+  private companion object {
+    /** The id of `USER:v` in [hostValueSession]. */
+    const val HOST_VALUE = 20
   }
 }

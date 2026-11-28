@@ -5,6 +5,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcColorExpression
 import ee.schimke.composeai.rcplayer.protocol.RcDocument
 import ee.schimke.composeai.rcplayer.protocol.RcDynamicFloatList
 import ee.schimke.composeai.rcplayer.protocol.RcFloatConstant
+import ee.schimke.composeai.rcplayer.protocol.RcFloatExpression
 import ee.schimke.composeai.rcplayer.protocol.RcFloatList
 import ee.schimke.composeai.rcplayer.protocol.RcFloatWord
 import ee.schimke.composeai.rcplayer.protocol.RcHeader
@@ -33,6 +34,52 @@ class RcNamedValueOverrideTest {
         RcNamedVariable(53, RcNamedVariable.FLOAT_TYPE, "OTHER:plain"),
       ),
     )
+
+  /**
+   * A host float over an id an expression drives sticks when it differs from the value there and is
+   * no write when equal, as AndroidX's `overrideFloat` pins only what it writes
+   * (RemoteComposeState.java:314-324; `updateFloat` skips a pinned id, 294-305). Clearing unpins.
+   */
+  @Test
+  fun aHostFloatPinsAnExpressionsIdOnlyWhenItDiffers() {
+    val sum =
+      RcFloatExpression(
+        61,
+        listOf(
+          RcFloatWord(0x7fc00000 or 60),
+          RcFloatWord.literal(1f),
+          RcFloatExpressionEvaluator.operatorWord(RcFloatExpressionEvaluator.OFFSET + 1),
+        ),
+        null,
+      )
+    val state =
+      RcPlayerState(
+        RcDocument(
+          RcHeader(RcVersion(0, 1, 0)),
+          listOf(
+            RcFloatConstant(60, RcFloatWord.literal(2f)),
+            RcNamedVariable(60, RcNamedVariable.FLOAT_TYPE, "USER:y"),
+            sum,
+            RcNamedVariable(61, RcNamedVariable.FLOAT_TYPE, "USER:x"),
+          ),
+        ),
+      )
+    fun frame(y: Float): Float? {
+      state.setNamedValue("USER:y", RcNamedValue.FloatValue(y))
+      state.applyFloatExpression(sum)
+      return state.float(61)
+    }
+    assertEquals(3f, frame(2f))
+
+    state.setNamedValue("USER:x", RcNamedValue.FloatValue(3f))
+    assertEquals(6f, frame(5f), "an equal write pins nothing")
+
+    state.setNamedValue("USER:x", RcNamedValue.FloatValue(10f))
+    assertEquals(10f, frame(7f), "a different write pins the id")
+
+    state.clearNamedValue("USER:x")
+    assertEquals(9f, frame(8f), "clearing unpins it")
+  }
 
   @Test
   fun aBooleanOverrideWritesOneOrZeroToAnIntegerName() {

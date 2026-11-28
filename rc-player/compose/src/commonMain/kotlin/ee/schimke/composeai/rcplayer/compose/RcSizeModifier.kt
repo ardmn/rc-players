@@ -56,18 +56,31 @@ private data class RcSizeElement(
   }
 }
 
-/** A size's bounds in pixels, [Constraints.Infinity] for none: `SizeNode.targetConstraints`. */
+/**
+ * A size's bounds in pixels, [Constraints.Infinity] for none: `SizeNode.targetConstraints`. A min
+ * too large for an Int (from 2^31 px, +inf) is 0 here and [fillsWidth] / [fillsHeight]: it takes
+ * the space there is, as AndroidX's min(maxWidth, size) does (LegacyMeasurePolicy.java:45).
+ */
 private class RcSizeBounds(
   val minWidth: Int,
   val maxWidth: Int,
   val minHeight: Int,
   val maxHeight: Int,
+  val fillsWidth: Boolean,
+  val fillsHeight: Boolean,
 ) {
   val hasFixedWidth: Boolean
-    get() = minWidth == maxWidth
+    get() = !fillsWidth && minWidth == maxWidth
 
   val hasFixedHeight: Boolean
-    get() = minHeight == maxHeight
+    get() = !fillsHeight && minHeight == maxHeight
+
+  /** The min to measure with: the incoming max for a filling one, while that is bounded. */
+  fun measureMinWidth(incoming: Constraints): Int =
+    if (fillsWidth) fillPixels(incoming.maxWidth, maxWidth) else minWidth
+
+  fun measureMinHeight(incoming: Constraints): Int =
+    if (fillsHeight) fillPixels(incoming.maxHeight, maxHeight) else minHeight
 
   fun constrainWidth(width: Int) = width.coerceIn(minWidth, maxWidth)
 
@@ -77,6 +90,13 @@ private class RcSizeBounds(
 /** The largest size a `Constraints` holds on one axis, which keeps intrinsics clear of overflow. */
 private val LARGEST_CONSTRAINT_PIXELS =
   rcConstraints(Constraints.Infinity - 1, Constraints.Infinity - 1, 0, 0).maxWidth
+
+/**
+ * A filling min: the incoming [incomingMax] within the size's own [max]; in unbounded space (a
+ * scroll) the largest a `Constraints` holds, as large as it can be and still finite.
+ */
+private fun fillPixels(incomingMax: Int, max: Int): Int =
+  minOf(incomingMax, max).takeIf { it != Constraints.Infinity } ?: LARGEST_CONSTRAINT_PIXELS
 
 private class RcSizeNode(var element: RcSizeElement) : Modifier.Node(), LayoutModifierNode {
   private val Density.bounds: RcSizeBounds
@@ -90,17 +110,18 @@ private class RcSizeNode(var element: RcSizeElement) : Modifier.Node(), LayoutMo
         }
       val maxWidth = element.maxWidth.pixels() ?: Constraints.Infinity
       val maxHeight = element.maxHeight.pixels() ?: Constraints.Infinity
-      // An unbounded min is the largest a Constraints holds, which the incoming max then caps:
-      // AndroidX's min(size, max) (LegacyMeasurePolicy.java:45). Compose's SizeNode drops it.
-      fun minPixels(min: Dp, max: Int): Int =
-        min.pixels()?.coerceIn(0, max)?.let {
-          if (it == Constraints.Infinity) LARGEST_CONSTRAINT_PIXELS else it
-        } ?: 0
+      // Compose's SizeNode drops an unbounded min; here it fills (RcSizeBounds).
+      val minWidth = element.minWidth.pixels()?.coerceIn(0, maxWidth) ?: 0
+      val minHeight = element.minHeight.pixels()?.coerceIn(0, maxHeight) ?: 0
+      val fillsWidth = minWidth == Constraints.Infinity
+      val fillsHeight = minHeight == Constraints.Infinity
       return RcSizeBounds(
-        minPixels(element.minWidth, maxWidth),
-        maxWidth,
-        minPixels(element.minHeight, maxHeight),
-        maxHeight,
+        minWidth = if (fillsWidth) 0 else minWidth,
+        maxWidth = maxWidth,
+        minHeight = if (fillsHeight) 0 else minHeight,
+        maxHeight = maxHeight,
+        fillsWidth = fillsWidth,
+        fillsHeight = fillsHeight,
       )
     }
 
@@ -109,13 +130,15 @@ private class RcSizeNode(var element: RcSizeElement) : Modifier.Node(), LayoutMo
     constraints: Constraints,
   ): MeasureResult {
     val target = bounds
+    val minWidth = target.measureMinWidth(constraints)
+    val minHeight = target.measureMinHeight(constraints)
     val child =
       if (element.enforceIncoming) {
         // `Constraints.constrain`: the size, within the incoming bounds.
         rcConstraints(
-          target.minWidth.coerceIn(constraints.minWidth, constraints.maxWidth),
+          minWidth.coerceIn(constraints.minWidth, constraints.maxWidth),
           target.maxWidth.coerceIn(constraints.minWidth, constraints.maxWidth),
-          target.minHeight.coerceIn(constraints.minHeight, constraints.maxHeight),
+          minHeight.coerceIn(constraints.minHeight, constraints.maxHeight),
           target.maxHeight.coerceIn(constraints.minHeight, constraints.maxHeight),
         )
       } else {
@@ -123,7 +146,7 @@ private class RcSizeNode(var element: RcSizeElement) : Modifier.Node(), LayoutMo
         rcConstraints(
           ownIfSpecified(
             element.minWidth,
-            target.minWidth,
+            minWidth,
             constraints.minWidth.coerceAtMost(target.maxWidth),
           ),
           ownIfSpecified(
@@ -133,7 +156,7 @@ private class RcSizeNode(var element: RcSizeElement) : Modifier.Node(), LayoutMo
           ),
           ownIfSpecified(
             element.minHeight,
-            target.minHeight,
+            minHeight,
             constraints.minHeight.coerceAtMost(target.maxHeight),
           ),
           ownIfSpecified(
