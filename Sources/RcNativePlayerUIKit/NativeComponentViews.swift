@@ -263,6 +263,8 @@
     let layout: NativeLayoutNode
     /// The custom visibility animation the component is playing; its parent draws it in its place.
     let visibilityTransition: NativeSwiftVisibilityTransitionSnapshot?
+    /// The player's limits this node was built with, which its visibility overlay draws within.
+    let limits: RemoteComposeNativeExecutionLimits
     /// The opacity the component draws at when shown: its graphics layer's alpha.
     var shownOpacity: Float {
       graphicsLayer.map { max(0, min(1, $0.alpha)) } ?? 1
@@ -273,6 +275,7 @@
       limits: RemoteComposeNativeExecutionLimits = .default
     ) {
       layout = NativeLayoutNode(snapshot: snapshot, limits: limits)
+      self.limits = limits
       visibilityTransition = snapshot.visibilityTransition
       switch snapshot.kind {
       case .root: kind = .root
@@ -1410,7 +1413,10 @@
             x: Float(frame.minX), y: Float(frame.minY), width: Float(frame.width),
             height: Float(frame.height))
         else { return nil }
-        return NativeCanvasCommands.drawable(commands).map { NativeDrawCommand($0) }
+        let limits = child.node.limits
+        return NativeCanvasCommands.drawable(commands, limits: limits).map {
+          NativeDrawCommand($0, limits: limits)
+        }
       }
     }
 

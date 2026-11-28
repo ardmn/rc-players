@@ -112,9 +112,13 @@
       return bytes.data
     }
 
-    private func makeView(_ snapshot: NativeSwiftDocumentSnapshot) -> NativeComponentView {
+    private func makeView(
+      _ snapshot: NativeSwiftDocumentSnapshot,
+      limits: RemoteComposeNativeExecutionLimits = .default
+    ) -> NativeComponentView {
       let view = NativeComponentView(
-        node: NativeNode(swiftSnapshot: snapshot.root, densityBehavior: snapshot.densityBehavior),
+        node: NativeNode(
+          swiftSnapshot: snapshot.root, densityBehavior: snapshot.densityBehavior, limits: limits),
         images: [:], fontNames: [:], offscreenTargets: NativeOffscreenTargets(),
         customComponents: RemoteComposeNativeCustomComponentRegistry(),
         onGesture: { _, _, _ in }, onCustomReturn: { _, _, _ in })
@@ -211,6 +215,20 @@
       view.layoutIfNeeded()
       #expect(overlay(in: view) == nil)
       #expect(box.isHidden)
+    }
+
+    /// The overlay draws within the player's configured limits, as the frame's own draws do: with
+    /// coordinates held to ±1 the function's 10×10 square shrinks to a point at the box's corner.
+    @Test func anOverlayDrawsWithinThePlayersLimits() throws {
+      let (_, snapshot) = try transition(to: NativeSwiftVisibility.gone, elapsed: 0.15)
+      let view = makeView(
+        snapshot, limits: RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 1))
+      let canvas = try #require(overlay(in: view))
+      let frame = try #require(view.descendant(withID: Self.boxID)).frame
+      #expect(frame.minX == 0 && frame.minY == 0)
+      let image = render(canvas)
+      #expect(
+        matches(pixel(image, CGPoint(x: frame.minX + 5, y: frame.minY + 5)), [255, 0, 0, 255]))
     }
 
     @Test func anUndefinedFunctionDrawsTheComponentAsItIs() throws {
