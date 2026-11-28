@@ -24,8 +24,9 @@
     let rootAlignment: Int
     let frameSchedule: NativeFrameSchedule
     let executionBudget: NativeFrameBudget
-    /// Components whose measured geometry the document binds to a float. Empty for almost every
-    /// document; when it is not, the root view reports their real sizes back for a second pass.
+    /// Components whose measured geometry the document binds to a float, and scrolls whose extents
+    /// it reads. Empty for almost every document; when it is not, the root view reports their real
+    /// sizes back for a second pass.
     let boundComponents: Set<Int>
     /// Set only when the document binds component geometry. See `refined(measuredComponents:)`.
     private(set) var refiner: NativeSwiftDocumentSession?
@@ -591,6 +592,12 @@
     private var document: NativeDocument
     private var resources: NativeResourceStore
     private let onClickArea: (Float, Float) -> Void
+    /// Hands the live session what layout measured of the scrolls, since refinement runs on a copy;
+    /// returns whether the player took it. One it refused (a background scene, a full queue) is
+    /// offered again on the next layout pass.
+    private let onScrollLayout: ([Int: NativeSwiftScrollMeasurement]) -> Bool
+    /// What `onScrollLayout` last took, kept across documents so a settled layout sends once.
+    private var sentScrollLayout: [Int: NativeSwiftScrollMeasurement] = [:]
     /// The measurements the current tree was refined from, so a settled layout stops re-resolving.
     private var appliedMeasurements: [Int: NativeSwiftMeasuredSize] = [:]
     private let customComponents: RemoteComposeNativeCustomComponentRegistry
@@ -609,12 +616,14 @@
       customComponents: RemoteComposeNativeCustomComponentRegistry,
       onGesture: @escaping (Int, NativeSwiftGestureKind, NativeSwiftPointerSample?) -> Void,
       onClickArea: @escaping (Float, Float) -> Void,
-      onCustomReturn: @escaping (Int, Int, NativeCustomReturnValue) -> Void
+      onCustomReturn: @escaping (Int, Int, NativeCustomReturnValue) -> Void,
+      onScrollLayout: @escaping ([Int: NativeSwiftScrollMeasurement]) -> Bool
     ) {
       self.document = document
       self.resources = resources
       self.customComponents = customComponents
       self.onClickArea = onClickArea
+      self.onScrollLayout = onScrollLayout
       customComponentsRevision = customComponents.revision
       let offscreenTargets = NativeOffscreenTargets()
       self.offscreenTargets = offscreenTargets
@@ -643,10 +652,13 @@
       fatalError("init(coder:) is not supported")
     }
 
+    /// `sessionChanged`: the document comes from a newly opened session, which has been handed
+    /// no scroll layout yet.
     func update(
       document: NativeDocument,
       resources: NativeResourceStore,
-      customComponents: RemoteComposeNativeCustomComponentRegistry
+      customComponents: RemoteComposeNativeCustomComponentRegistry,
+      sessionChanged: Bool = false
     ) -> Bool {
       guard
         self.customComponents === customComponents,
@@ -661,6 +673,7 @@
       self.document = document
       self.resources = resources
       appliedMeasurements = [:]
+      if sessionChanged { sentScrollLayout = [:] }
       publishAccessibilityElements()
       setNeedsLayout()
       return true
@@ -752,6 +765,9 @@
       componentView.documentScale = 1
       componentView.layoutDirection =
         effectiveUserInterfaceLayoutDirection == .rightToLeft ? .rightToLeft : .leftToRight
+      // Measure what this pass lays out, not the previous pass: a scroll's extents exist only once
+      // its own children are arranged.
+      componentView.layoutIfNeeded()
       refineBoundGeometry()
       if var path = Self.dumpTreePath {
         if !path.hasPrefix("/") {
@@ -786,6 +802,10 @@
       guard !document.boundComponents.isEmpty, document.refiner != nil else { return }
       var measured: [Int: NativeSwiftMeasuredSize] = [:]
       componentView.collectMeasuredSizes(of: document.boundComponents, into: &measured)
+      let scrollLayout = measured.compactMapValues(\.scroll)
+      if scrollLayout != sentScrollLayout, onScrollLayout(scrollLayout) {
+        sentScrollLayout = scrollLayout
+      }
       guard measured != appliedMeasurements else { return }
       guard let refined = document.refined(measuredComponents: measured),
         componentView.canUpdate(
@@ -1276,6 +1296,10 @@
       for child in componentChildren { child.dumpTree(depth: depth + 1, into: &lines) }
     }
 
+    /// What the last layout measured of this scroll, reported back to the session with the other
+    /// measured components; nil when the component does not scroll or has not been laid out.
+    private var scrollMeasurement: NativeSwiftScrollMeasurement?
+
     func collectMeasuredSizes(
       of wanted: Set<Int>, into result: inout [Int: NativeSwiftMeasuredSize],
       inherited: CGSize? = nil
@@ -1295,7 +1319,8 @@
         let measurable = laidOutSize ?? inherited
         if let measurable {
           result[node.componentID] = NativeSwiftMeasuredSize(
-            width: Float(measurable.width), height: Float(measurable.height))
+            width: Float(measurable.width), height: Float(measurable.height),
+            scroll: scrollMeasurement)
         }
       }
       let forChildren = laidOutSize ?? inherited
@@ -1535,6 +1560,7 @@
 
     /// Writes an arrangement the engine produced for this container onto its children.
     private func apply(_ arrangement: NativeLayoutArrangement<NativeComponentView>) {
+      scrollMeasurement = arrangement.scrollMeasurement
       // Semantic elements resolve from the displayed views, so any change layout makes to what is
       // displayed (a collapsed or restored child, a flow's discarded item, a FitBox's choice) is
       // re-resolved here rather than at the next document update.

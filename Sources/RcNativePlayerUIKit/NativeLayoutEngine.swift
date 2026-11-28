@@ -62,6 +62,8 @@ struct NativeLayoutNode: Equatable {
   var zIndex: CGFloat = 0
   var visibility: Int = NativeSwiftVisibility.visible
   var scrollDirection: NativeSwiftScrollDirection? = nil
+  /// Whether the scroll modifier holds a touch expression, which caps its travel at the last child.
+  var scrollHasTouchExpression: Bool = false
   /// Whether the component carries a marquee, which lets its content run past the box along x.
   var marquee: Bool = false
   /// The axis this container's content is measured unbounded along: its scroll's, or x under a
@@ -113,6 +115,7 @@ extension NativeLayoutNode {
     zIndex = CGFloat(snapshot.zIndex)
     visibility = snapshot.visibility
     scrollDirection = snapshot.scrollDirection
+    scrollHasTouchExpression = snapshot.scrollHasTouchExpression
     marquee = snapshot.marquee != nil
     drawsContent = !snapshot.commands.isEmpty || snapshot.text != nil
     hasCustom = snapshot.custom != nil
@@ -215,6 +218,9 @@ struct NativeLayoutArrangement<Item: AnyObject> {
   var placements: [Placement] = []
   /// The content extent a scrolled container arranged against, along its scroll axis.
   var scrollExtent: CGFloat? = nil
+  /// What a scroll's layout publishes as its maximum offset and content length; nil when the
+  /// container does not scroll.
+  var scrollMeasurement: NativeSwiftScrollMeasurement? = nil
 }
 
 struct NativeLayoutEngine {
@@ -341,6 +347,13 @@ struct NativeLayoutEngine {
     frame.offsetBy(
       dx: node.offset.x * context.documentScale,
       dy: node.offset.y * context.documentScale)
+  }
+
+  /// Where `offsetFrame` placed `frame` from.
+  private func removingOffset(_ node: NativeLayoutNode, from frame: CGRect) -> CGRect {
+    frame.offsetBy(
+      dx: -node.offset.x * context.documentScale,
+      dy: -node.offset.y * context.documentScale)
   }
 
   private func alignedFrame(size: CGSize, in rect: CGRect, container: NativeLayoutNode) -> CGRect {
@@ -684,6 +697,52 @@ struct NativeLayoutEngine {
   /// Empty for a structural wrapper (its parent lays its children out) and for a text, image or
   /// custom component (the renderer sizes its own content to its bounds).
   func arrange<Item: NativeLayoutItem>(_ item: Item, in bounds: CGRect)
+    -> NativeLayoutArrangement<Item>
+  {
+    var result = arrangeChildren(item, in: bounds)
+    if let direction = item.layoutNode.scrollDirection {
+      result.scrollMeasurement = scrollMeasurement(
+        of: result.placements, in: bounds, direction: direction, container: item.layoutNode,
+        lastChildIsGone: Self.lastLayoutChild(of: item)?.layoutNode.visibility
+          == NativeSwiftVisibility.gone)
+    }
+    return result
+  }
+
+  /// A scroll's measurement, as AndroidX's measure policy reports it: the host is the scroll's
+  /// length within its padding (`BaseModernMeasurePolicy`'s inset maximum), the content is its
+  /// children's span from the content edge, laid out before any offset modifier moves them.
+  ///
+  /// `ScrollModifierOperation.getMaxScrollPosition` caps at the last child component whatever its
+  /// visibility. AndroidX's row and column leave a GONE child where the visible ones end, which is
+  /// past any overflow, so a GONE last child caps nothing.
+  private func scrollMeasurement<Item: NativeLayoutItem>(
+    of placements: [NativeLayoutArrangement<Item>.Placement], in bounds: CGRect,
+    direction: NativeSwiftScrollDirection, container: NativeLayoutNode, lastChildIsGone: Bool
+  ) -> NativeSwiftScrollMeasurement {
+    let content = contentRect(of: container, in: bounds)
+    let horizontal = direction == .horizontal
+    let contentStart = horizontal ? content.minX : content.minY
+    let frames = placements.map { removingOffset($0.item.layoutNode, from: $0.frame) }
+    let childEnd = frames.map { horizontal ? $0.maxX : $0.maxY }.max()
+    let lastChildStart = frames.last.map { horizontal ? $0.minX : $0.minY }
+    return NativeSwiftScrollMeasurement(
+      viewport: Float(horizontal ? content.width : content.height),
+      content: Float(max((childEnd ?? contentStart) - contentStart, 0)),
+      travelLimit: container.scrollHasTouchExpression && !lastChildIsGone
+        ? lastChildStart.map { Float($0 - contentStart) } : nil)
+  }
+
+  /// The last component `item` lays out in document order, GONE or not, looking through the
+  /// structural wrappers ``flattenedLayoutItems(of:)`` flattens.
+  static func lastLayoutChild<Item: NativeLayoutItem>(of item: Item) -> Item? {
+    guard let last = item.layoutChildren.last else { return nil }
+    let looksThrough =
+      last.layoutNode.visibility != NativeSwiftVisibility.gone && isStructural(last.layoutNode)
+    return looksThrough ? lastLayoutChild(of: last) ?? last : last
+  }
+
+  private func arrangeChildren<Item: NativeLayoutItem>(_ item: Item, in bounds: CGRect)
     -> NativeLayoutArrangement<Item>
   {
     let node = item.layoutNode

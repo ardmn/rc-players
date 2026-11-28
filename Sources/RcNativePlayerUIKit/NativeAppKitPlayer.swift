@@ -2007,6 +2007,9 @@ private final class NativeMacDocumentView: NSView {
   override func layout() {
     super.layout()
     component.frame = bounds
+    // Measure what this pass lays out, not the previous pass: a scroll's extents exist only once
+    // its own children are arranged.
+    component.layoutSubtreeIfNeeded()
     refineBoundGeometry()
   }
 
@@ -2987,7 +2990,8 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
     let measurable = bounds.size == .zero ? inherited : bounds.size
     if wanted.contains(node.componentID), let measurable {
       result[node.componentID] = NativeSwiftMeasuredSize(
-        width: Float(measurable.width), height: Float(measurable.height))
+        width: Float(measurable.width), height: Float(measurable.height),
+        scroll: scrollMeasurement)
     }
     for child in componentChildren {
       child.collectMeasuredSizes(of: wanted, into: &result, inherited: measurable)
@@ -3217,20 +3221,13 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
     guard let positionID = node.scrollPositionID, let direction = node.scrollDirection else {
       return nil
     }
-    // The modifier's maximum is an output slot the reference player fills from measurement; a fresh
-    // document therefore resolves it to zero. Derive the same travel from the laid-out content so a
-    // first drag can move, while still respecting a non-zero maximum the document already holds.
-    let contentEnd = flattenedLayoutItems.reduce(CGFloat.zero) { result, child in
-      let frame = child.convert(child.bounds, to: self)
-      return max(result, direction == .horizontal ? frame.maxX : frame.maxY)
-    }
-    // `contentEnd` and the trailing edge are in this component's coordinates. Subtracting only the
-    // content size would count leading padding as overflow and let exactly-fitting content scroll.
-    let viewportEnd = direction == .horizontal ? contentRect.maxX : contentRect.maxY
-    let measuredMaximum = Float(max(contentEnd - viewportEnd, 0))
+    // A document constant is the travel, as the touch expression's maximum is in AndroidX; a slot
+    // holds what this layout measures, which a drag reads directly so it moves before publishing.
+    let maximum =
+      node.scrollMaximumID == nil && node.scrollMaximum > 0
+      ? node.scrollMaximum : scrollMeasurement?.maximumOffset ?? node.scrollMaximum
     return NativeMacScrollTarget(
-      positionID: positionID, direction: direction, offset: node.scrollOffset,
-      maximum: max(node.scrollMaximum, measuredMaximum))
+      positionID: positionID, direction: direction, offset: node.scrollOffset, maximum: maximum)
   }
 
   override func layout() {
@@ -3373,6 +3370,7 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
 
   /// Writes an arrangement the engine produced for this container onto its children.
   private func apply(_ arrangement: NativeLayoutArrangement<NativeMacComponentView>) {
+    scrollMeasurement = arrangement.scrollMeasurement
     for change in arrangement.visibilityChanges {
       change.item.isHidden = change.isHidden
       if change.resetsAlpha, change.item.alphaValue != 1 { change.item.alphaValue = 1 }
@@ -3399,6 +3397,9 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
   private var isStructural: Bool {
     NativeLayoutEngine.isStructural(layoutNode)
   }
+  /// What the last layout measured of this scroll, reported back to the session with the other
+  /// measured components; nil when the component does not scroll or has not been laid out.
+  private var scrollMeasurement: NativeSwiftScrollMeasurement?
   private var flattenedLayoutItems: [NativeMacComponentView] {
     NativeLayoutEngine.flattenedLayoutItems(of: self)
   }

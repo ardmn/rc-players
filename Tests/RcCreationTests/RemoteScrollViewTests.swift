@@ -129,6 +129,54 @@ import Testing
     #expect(modifier.direction == 1)
   }
 
+  /// Layout loads the travel as AndroidX's `updateFloat` does, which skips an id the host
+  /// overrode: the host's value stays.
+  @Test func aHostWriteOfTheMaximumOutlivesLayout() throws {
+    let document = RemoteDocument(width: 200, height: 100) {
+      RemoteScrollView(.horizontal, pageCount: 4) { rows() }
+    }
+    let session = try NativeSwiftDocumentSession.open(data: document.encodedData())
+    let node = try scrolled(document)
+    let maximumID = try #require(node.scrollMaximumID)
+    let measured = [
+      node.componentID: NativeSwiftMeasuredSize(
+        width: 200, height: 100,
+        scroll: NativeSwiftScrollMeasurement(viewport: 200, content: 800, travelLimit: nil))
+    ]
+    func maximum() throws -> Float? {
+      flatten(try session.snapshot(measuredComponents: measured).root)
+        .first { $0.scrollDirection != nil }?.scrollMaximum
+    }
+    #expect(try maximum() == 600)
+    #expect(session.setFloat(123, forID: maximumID))
+    #expect(try maximum() == 123)
+  }
+
+  /// A host measures a scroll only for what reads its layout's extents, such as a readout. A plain
+  /// scroll or a pager nothing reads costs no measurement.
+  @Test func onlyAScrollWhoseExtentsAreReadIsMeasured() throws {
+    func measured(_ document: RemoteDocument) throws -> Bool {
+      let session = try NativeSwiftDocumentSession.open(data: document.encodedData())
+      let node = try scrolled(document)
+      return try session.snapshot().boundComponents.contains(node.componentID)
+    }
+    let read = RemoteScrollPosition()
+    #expect(try !measured(RemoteDocument(width: 200, height: 100) { RemoteScrollView { rows() } }))
+    #expect(
+      try measured(
+        RemoteDocument(width: 200, height: 100) {
+          RemoteVStack {
+            RemoteText("\(read.maximumOffset, decimals: 0)")
+            RemoteScrollView(position: read) { rows() }
+          }
+        }))
+    #expect(
+      try !measured(
+        RemoteDocument(width: 200, height: 100) {
+          RemoteScrollView(.horizontal, pageCount: 4) { rows() }
+        }))
+  }
+
   @Test func aPositionBelongsToOneScrollView() {
     let position = RemoteScrollPosition()
     let document = RemoteDocument(width: 200, height: 200) {

@@ -55,6 +55,8 @@
       case clickAreas(x: Float, y: Float)
       case customFloat(Float, componentID: Int, propertyID: Int)
       case customText(String, componentID: Int, propertyID: Int)
+      /// What the host's layout measured of the scrolls whose extents the document reads.
+      case scrollLayout([Int: NativeSwiftScrollMeasurement])
     }
 
     struct Frame: Sendable {
@@ -68,7 +70,8 @@
       ///
       /// Carried per frame rather than held once because its state is frozen when taken, and a
       /// document's state moves — a gesture, a set value, the clock. Nil when the document binds no
-      /// component geometry, which is almost all of them, so the copy is not paid for unnecessarily.
+      /// component geometry and reads no scroll extent, which is almost all of them, so the copy is
+      /// not paid for unnecessarily.
       let refiner: NativeSwiftDocumentSession?
 
       init(
@@ -243,6 +246,8 @@
       case .customText(let value, let componentID, let propertyID):
         return try returnCustomText(
           value, componentID: componentID, propertyID: propertyID, at: time)
+      case .scrollLayout(let measured):
+        return try update(accepted: session.publishScrollLayout(measured), timeSeconds: time)
       }
     }
 

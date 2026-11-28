@@ -103,7 +103,8 @@ struct ParsedDocument {
 
   /// `images` as snapshots in id order, shared by every frame's snapshot.
   let imageSnapshots: [NativeSwiftImageResourceSnapshot]
-  /// The components `componentValues` bind, as `NativeSwiftDocumentSnapshot.boundComponents`.
+  /// The components `componentValues` bind, and the scrolls whose published extents the document
+  /// reads, as `NativeSwiftDocumentSnapshot.boundComponents`.
   let boundComponentIDs: Set<Int>
   /// Whether the tolerant first expression pass can change what the authoritative pass computes:
   /// a component-value binding reads between them, or an expression reads an id that the same or
@@ -257,6 +258,8 @@ struct ParsedModifierContainer {
   var actionSink: ParsedActionSink?
   /// Set when the container is a `FloatFunctionDefine` body, whose end completes the function.
   var isFunctionBody = false
+  /// Set when the container is a scroll modifier: the component its touch expression scrolls.
+  var scrollOwner: ParsedNode?
 }
 
 /// AndroidX `FloatFunctionDefine`: a body of operations that runs only when called, with its
@@ -568,13 +571,25 @@ struct ParsedInsetWords {
 // `ParsedNode` itself is declared in NativeSwiftDocumentDecoder.swift, beside the only code that
 // may build it; see the ownership note there. What reads a node lives here.
 extension ParsedNode {
+  /// The slots a scroll's layout fills: its maximum offset and content length. Empty for a
+  /// component that does not scroll.
+  var scrollExtentIDs: Set<Int> {
+    guard scrollDirection != nil else { return [] }
+    return Set(
+      [scrollMaximumWord, scrollContentLengthWord].compactMap {
+        $0.flatMap(NativeSwiftFloatExpression.referenceID)
+      })
+  }
+
   /// Whether any word in this subtree references one of `ids`.
   ///
   /// A player that publishes a value the document reads has to refresh it: a frame that resolves a
   /// calendar field once and then idles shows a frozen clock. This is the scan that decides it, and
   /// it covers every word a node can carry — geometry, padding, spacing, corner radii, text, and
-  /// each draw command's own words, path, gradient and image fields.
-  func references(anyOf ids: Set<Int>) -> Bool {
+  /// each draw command's own words, path, gradient and image fields. Without
+  /// `countingScrollExtents` it leaves out each scroll's maximum and content-length slots, which
+  /// its layout writes rather than reads.
+  func references(anyOf ids: Set<Int>, countingScrollExtents: Bool = true) -> Bool {
     func matches(_ word: UInt32) -> Bool {
       NativeSwiftFloatExpression.referenceID(word).map(ids.contains) ?? false
     }
@@ -600,7 +615,10 @@ extension ParsedNode {
     if let visibilityID, ids.contains(visibilityID) { return true }
     if let stateIndexID, ids.contains(stateIndexID) { return true }
     if let scrollPositionWord, matches(scrollPositionWord) { return true }
-    if let scrollMaximumWord, matches(scrollMaximumWord) { return true }
+    if countingScrollExtents, let scrollMaximumWord, matches(scrollMaximumWord) { return true }
+    if countingScrollExtents, let scrollContentLengthWord, matches(scrollContentLengthWord) {
+      return true
+    }
     if matches(marqueeRepeatDelayWord) || matches(marqueeInitialDelayWord)
       || matches(marqueeSpacingWord)
     {
@@ -654,7 +672,9 @@ extension ParsedNode {
       if matches(command.paint.textSize) { return true }
       if let alphaWord = command.alphaWord, matches(alphaWord) { return true }
     }
-    return children.contains { $0.references(anyOf: ids) }
+    return children.contains {
+      $0.references(anyOf: ids, countingScrollExtents: countingScrollExtents)
+    }
   }
 }
 

@@ -352,6 +352,7 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   ) throws -> NativeSwiftDocumentSnapshot {
     stateLock.lock()
     defer { stateLock.unlock() }
+    publishScrollMeasurements(measuredComponents.compactMapValues(\.scroll))
     if canReuseStaticSnapshot(timeSeconds: timeSeconds, wallClock: wallClock),
       let cached = staticSnapshotCache, cached.measuredComponents == measuredComponents
     {
@@ -1318,6 +1319,10 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
       scrollMaximum: node.scrollMaximumWord.map {
         NativeSwiftFloatExpression.resolve($0, values: values)
       } ?? 0,
+      scrollMaximumID: node.scrollMaximumWord.flatMap(NativeSwiftFloatExpression.referenceID),
+      scrollContentLengthID: node.scrollContentLengthWord.flatMap(
+        NativeSwiftFloatExpression.referenceID),
+      scrollHasTouchExpression: node.scrollHasTouchExpression,
       // Refused as the Kotlin player's support check refuses it: every float finite and the
       // velocity positive. A zero velocity would hold the content still while the document kept
       // asking for frames.
@@ -1498,6 +1503,44 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
         offset: 0, reason: "\(field) resolved to \(value), which is not positive")
     }
     return value
+  }
+
+  /// AndroidX `ScrollModifierOperation.layout`: each measured scroll loads its maximum offset and
+  /// content length (the notch maximum) through `updateFloat`, which is not a host write and leaves
+  /// an id the host overrode alone. In component order, so two scrolls naming one slot leave the
+  /// same value every pass; O(m log m) for the m measured components, a handful.
+  @discardableResult
+  private func publishScrollMeasurements(_ measured: [Int: NativeSwiftScrollMeasurement]) -> Bool {
+    var changed = false
+    for componentID in measured.keys.sorted() {
+      guard let scroll = measured[componentID], let node = document.nodes[componentID] else {
+        continue
+      }
+      let slotValues = [
+        (node.scrollMaximumWord, scroll.maximumOffset),
+        (node.scrollContentLengthWord, scroll.content),
+      ]
+      for case (let word?, let value) in slotValues {
+        guard let id = NativeSwiftFloatExpression.referenceID(word), value.isFinite,
+          floatOverrides[id] == nil, floats[id] != value
+        else { continue }
+        floats[id] = value
+        integers[id] = nativeSwiftIntegerView(value)
+        changed = true
+      }
+    }
+    if changed { staticSnapshotCache = nil }
+    return changed
+  }
+
+  /// Loads what a host's own layout measured of its scrolls into the extents they publish, as
+  /// ``snapshot(timeSeconds:wallClock:measuredComponents:)`` does, for a host that refines on a
+  /// copy of this session. Returns whether a slot changed.
+  @discardableResult
+  public func publishScrollLayout(_ measured: [Int: NativeSwiftScrollMeasurement]) -> Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return publishScrollMeasurements(measured)
   }
 
   /// A float write: the float view, and the integer view under the same id, truncated toward zero

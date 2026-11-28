@@ -30,6 +30,25 @@ import Testing
       await shown.writtenNamedValues().map(\.value) == [.integer(NativeSwiftVisibility.gone)])
   }
 
+  /// What a host's live layout measured of a scroll reaches the session, whose frames then read
+  /// the extents AndroidX's layout would load; the same layout again changes nothing.
+  @Test func aScrollLayoutReachesTheSession() async throws {
+    let (engine, opened) = try await NativePlayerEngine.open(
+      data: NativeTestFixtures.data("scroll-metrics-paged.rc"), maximumDocumentBytes: 1 << 20)
+    func scroll(_ node: NativeSwiftNodeSnapshot) -> NativeSwiftNodeSnapshot? {
+      node.scrollDirection != nil ? node : node.children.lazy.compactMap(scroll).first
+    }
+    let node = try #require(scroll(opened.snapshot.root))
+    #expect(node.scrollMaximum == 0)
+    // Four 480-pixel pages in a 480-pixel viewport travel three pages.
+    let measured = NativeSwiftScrollMeasurement(viewport: 480, content: 1920, travelLimit: 1440)
+    let layout = [node.componentID: measured]
+    let update = try await engine.apply(.scrollLayout(layout))
+    #expect(update.accepted)
+    #expect(scroll(update.frame.snapshot.root)?.scrollMaximum == 1440)
+    #expect(try await !engine.apply(.scrollLayout(layout)).accepted)
+  }
+
   /// `signalOne` releases the longest waiter only, skipping one that was cancelled; a later
   /// `signal` releases the rest.
   @MainActor @Test func inputAvailabilityWakesOneWaiterInArrivalOrder() async throws {
