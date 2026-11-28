@@ -60,19 +60,12 @@ import Testing
         limits: RemoteComposeNativeExecutionLimits(maximumFrameWork: 4))
     }
 
+    // A resolved coordinate is never refused: layout reads NaN as 0, a draw keeps it for
+    // `isDrawable`, and both hold the rest to the coordinate limit.
+    let coordinates = RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10)
+    #expect(coordinates.layoutCoordinate(.nan) == 0 && coordinates.layoutCoordinate(-11) == -10)
+    #expect(coordinates.drawCoordinate(.nan).isNaN && coordinates.drawCoordinate(.infinity) == 10)
     let numbers = NativeFrameBudget()
-    expect(.nonFiniteValue(componentID: 42, field: "path")) {
-      try numbers.validateNumbers(
-        [.nan], componentID: 42, field: "path", limits: .default)
-    }
-    expect(
-      .coordinateTooLarge(
-        componentID: 7, field: "draw", actual: 11, maximum: 10)
-    ) {
-      try numbers.validateNumbers(
-        [11], componentID: 7, field: "draw",
-        limits: RemoteComposeNativeExecutionLimits(maximumCoordinateMagnitude: 10))
-    }
     expect(.canvasTooLarge(actual: 101, maximum: 100)) {
       try numbers.validateCanvasDimensions(
         [101], limits: RemoteComposeNativeExecutionLimits(maximumCanvasDimension: 100))

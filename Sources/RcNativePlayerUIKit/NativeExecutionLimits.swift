@@ -122,7 +122,10 @@ public enum RemoteComposeNativeLimitError: Error, Equatable, LocalizedError, Sen
   case textTooLong(actual: Int, maximum: Int)
   case invalidCanvasDimension(actual: Double)
   case canvasTooLarge(actual: Double, maximum: Double)
+  /// Thrown only for a non-finite canvas size; a resolved value is normalised or dropped instead.
   case nonFiniteValue(componentID: Int, field: String)
+  /// Not thrown: resolved coordinates are clamped to `maximumCoordinateMagnitude`. Kept as public
+  /// API.
   case coordinateTooLarge(componentID: Int, field: String, actual: Double, maximum: Double)
   /// Not thrown: every resolved width and height renders. Kept as public API.
   case invalidDimensionValue(componentID: Int, field: String, actual: Double)
@@ -266,23 +269,6 @@ struct NativeFrameBudget: Equatable, Sendable {
   ) throws {
     work += additionalWork
     try validateWork(limits)
-  }
-
-  func validateNumbers(
-    _ values: [Double], componentID: Int, field: String,
-    limits: RemoteComposeNativeExecutionLimits
-  ) throws {
-    for value in values {
-      guard value.isFinite else {
-        throw RemoteComposeNativeLimitError.nonFiniteValue(
-          componentID: componentID, field: field)
-      }
-      guard abs(value) <= limits.maximumCoordinateMagnitude else {
-        throw RemoteComposeNativeLimitError.coordinateTooLarge(
-          componentID: componentID, field: field, actual: value,
-          maximum: limits.maximumCoordinateMagnitude)
-      }
-    }
   }
 
   func validateCanvasDimensions(
