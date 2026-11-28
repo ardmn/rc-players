@@ -213,22 +213,29 @@ private enum NativeUIKitImageScaleType {
   static let fixed = 7
 }
 
+/// Where `ImageScaling` puts a bitmap in its destination, for the UIKit and AppKit renderers.
 enum NativeImageGeometry {
+  /// AndroidX's `ImageScaling.adjustDrawToType` (ImageScaling.java:135-200) works in `int`, so each
+  /// size and offset here is truncated toward zero as its `(int)` casts and divisions are, in
+  /// `CGFloat` so a host's huge value scales instead of trapping. A non-finite rectangle or factor
+  /// gives `.zero`, as Skia rejects one (`SkCanvas::quickReject`).
   static func destination(
     source: CGRect,
     destination: CGRect,
     scaleType: Int,
     scaleFactor: CGFloat
   ) -> CGRect {
-    let sourceWidth = source.width
-    let sourceHeight = source.height
-    let destinationWidth = destination.width
-    let destinationHeight = destination.height
+    func truncated(_ value: CGFloat) -> CGFloat { value.rounded(.towardZero) }
     guard
-      source.minX.isFinite, source.minY.isFinite, sourceWidth.isFinite, sourceHeight.isFinite,
+      source.minX.isFinite, source.minY.isFinite, source.width.isFinite, source.height.isFinite,
       destination.minX.isFinite, destination.minY.isFinite,
-      destinationWidth.isFinite, destinationHeight.isFinite, scaleFactor.isFinite,
-      sourceWidth > 0, sourceHeight > 0, destinationWidth >= 0, destinationHeight >= 0
+      destination.width.isFinite, destination.height.isFinite, scaleFactor.isFinite
+    else { return .zero }
+    let sourceWidth = truncated(source.width)
+    let sourceHeight = truncated(source.height)
+    let destinationWidth = truncated(destination.width)
+    let destinationHeight = truncated(destination.height)
+    guard sourceWidth > 0, sourceHeight > 0, destinationWidth >= 0, destinationHeight >= 0
     else { return .zero }
     var width = destinationWidth
     var height = destinationHeight
@@ -238,38 +245,40 @@ enum NativeImageGeometry {
       height = sourceHeight
     case NativeUIKitImageScaleType.inside:
       if !(destinationHeight > sourceHeight && destinationWidth > sourceWidth) {
-        if sourceWidth * destination.height > destination.width * sourceHeight {
-          height = destinationWidth * sourceHeight / sourceWidth
+        if sourceWidth * destinationHeight > destinationWidth * sourceHeight {
+          height = truncated(destinationWidth * sourceHeight / sourceWidth)
         } else {
-          width = destinationHeight * sourceWidth / sourceHeight
+          width = truncated(destinationHeight * sourceWidth / sourceHeight)
         }
       } else {
         width = sourceWidth
         height = sourceHeight
       }
-    case NativeUIKitImageScaleType.fitWidth: height = destinationWidth * sourceHeight / sourceWidth
-    case NativeUIKitImageScaleType.fitHeight: width = destinationHeight * sourceWidth / sourceHeight
+    case NativeUIKitImageScaleType.fitWidth:
+      height = truncated(destinationWidth * sourceHeight / sourceWidth)
+    case NativeUIKitImageScaleType.fitHeight:
+      width = truncated(destinationHeight * sourceWidth / sourceHeight)
     case NativeUIKitImageScaleType.fit:
-      if sourceWidth * destination.height > destination.width * sourceHeight {
-        height = destinationWidth * sourceHeight / sourceWidth
+      if sourceWidth * destinationHeight > destinationWidth * sourceHeight {
+        height = truncated(destinationWidth * sourceHeight / sourceWidth)
       } else {
-        width = destinationHeight * sourceWidth / sourceHeight
+        width = truncated(destinationHeight * sourceWidth / sourceHeight)
       }
     case NativeUIKitImageScaleType.crop:
-      if sourceWidth * destination.height < destination.width * sourceHeight {
-        height = destinationWidth * sourceHeight / sourceWidth
+      if sourceWidth * destinationHeight < destinationWidth * sourceHeight {
+        height = truncated(destinationWidth * sourceHeight / sourceWidth)
       } else {
-        width = destinationHeight * sourceWidth / sourceHeight
+        width = truncated(destinationHeight * sourceWidth / sourceHeight)
       }
     case NativeUIKitImageScaleType.fillBounds: break
     case NativeUIKitImageScaleType.fixed:
-      width = sourceWidth * scaleFactor
-      height = sourceHeight * scaleFactor
+      width = truncated(sourceWidth * scaleFactor)
+      height = truncated(sourceHeight * scaleFactor)
     default: return .zero
     }
     let result = CGRect(
-      x: destination.minX + (destinationWidth - width) / 2,
-      y: destination.minY + (destinationHeight - height) / 2,
+      x: destination.minX + truncated((destinationWidth - width) / 2),
+      y: destination.minY + truncated((destinationHeight - height) / 2),
       width: width,
       height: height)
     guard

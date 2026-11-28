@@ -94,6 +94,20 @@ import Testing
         scaleFactor: 1) == .zero)
   }
 
+  /// Each step is whole pixels, as AndroidX's `ImageScaling.adjustDrawToType` computes it in `int`
+  /// (ImageScaling.java:135-200): a 3×2 bitmap fit into 100×100 is 66 high at 17, not 66.67 at
+  /// 16.67.
+  @Test func imageScalingTruncatesAsAndroidXDoes() {
+    let fit = NativeImageGeometry.destination(
+      source: CGRect(x: 0, y: 0, width: 3, height: 2),
+      destination: CGRect(x: 0, y: 0, width: 100, height: 100), scaleType: 4, scaleFactor: 1)
+    #expect(fit == CGRect(x: 0, y: 17, width: 100, height: 66))
+    let fixed = NativeImageGeometry.destination(
+      source: CGRect(x: 0, y: 0, width: 3, height: 3),
+      destination: CGRect(x: 0, y: 0, width: 10, height: 10), scaleType: 7, scaleFactor: 1.5)
+    #expect(fixed == CGRect(x: 3, y: 3, width: 4, height: 4))
+  }
+
   private func expect(
     _ expected: RemoteComposeNativeResourceError,
     initialTotal: Int = 0,
