@@ -19,6 +19,12 @@ public enum RemoteEncodingError: Error, Sendable, Hashable {
   case invalidFontWeight(Double)
   /// A flex weight that is not positive and finite.
   case invalidFlexWeight(Double)
+  /// A scroll view's initial offset that is negative or not finite.
+  case invalidScrollOffset(Double)
+  /// A scroll view's page count that is not 1 or more, or more than a touch expression's stops.
+  case invalidPageCount(Int)
+  /// One ``RemoteScrollPosition`` given to two scroll views: a position belongs to one.
+  case scrollPositionReused
   /// A number format whose digit counts are outside 0...16.
   case invalidNumberFormat(integerDigits: Int, decimals: Int)
   /// A number is a NaN or an infinity. On the wire a NaN is a reference to a variable, so it
@@ -91,7 +97,8 @@ public struct RemoteDocument: Sendable {
     }
 
     let writer = RemoteWriter(displayScale: Float(displayScale))
-    try writer.writeRoot(content)
+    let content = content
+    try Self.onLargeStack { () throws(RemoteEncodingError) in try writer.writeRoot(content) }
 
     var properties = [
       WireHeaderProperty(key: HeaderProperty.docWidth, value: .int(Int32(pixelWidth))),
@@ -118,6 +125,43 @@ public struct RemoteDocument: Sendable {
     /// The document's `.rc` bytes as `Data`, for a player or a file.
     public func encodedData() throws(RemoteEncodingError) -> Data { Data(try encode()) }
   #endif
+
+  /// The stack the writer runs on: 16 MiB.
+  static let writerStackSize = 16 << 20
+
+  /// Runs `body` on a thread with a large stack, and waits for it.
+  ///
+  /// The writer recurses through the view tree, a generic call or two per modifier and stack, and
+  /// unoptimised builds spend a lot of stack on each. A secondary thread's 512 KiB on Apple
+  /// platforms (where `encode()` may be called from a task or a test) is not enough for a modest
+  /// settings screen, and overflowing it is a crash, not an error. Where Foundation is missing,
+  /// `body` runs on the calling thread.
+  static func onLargeStack(
+    _ body: @escaping () throws(RemoteEncodingError) -> Void
+  ) throws(RemoteEncodingError) {
+    #if canImport(Foundation)
+      final class Outcome: @unchecked Sendable {
+        var error: RemoteEncodingError?
+        let done = DispatchSemaphore(value: 0)
+      }
+      let outcome = Outcome()
+      nonisolated(unsafe) let body = body
+      let thread = Thread {
+        do throws(RemoteEncodingError) {
+          try body()
+        } catch {
+          outcome.error = error
+        }
+        outcome.done.signal()
+      }
+      thread.stackSize = writerStackSize
+      thread.start()
+      outcome.done.wait()
+      if let error = outcome.error { throw error }
+    #else
+      try body()
+    #endif
+  }
 }
 
 extension HeaderProperty {
