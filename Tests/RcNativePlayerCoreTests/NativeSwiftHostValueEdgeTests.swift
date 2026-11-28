@@ -443,9 +443,10 @@ import Testing
   }
 
   /// The budget is spent once per document, when the loops are unrolled at decode: a loop in a
-  /// component that is GONE still uses its share. AndroidX counts per paint
-  /// (RemoteContext.java:1146) and paints no GONE component, so there the shown canvas draws its
-  /// 5,000 passes; here it draws none. A known difference (`maximumLoopOperationsPerDocument`).
+  /// component that is GONE still uses its share. AndroidX (RemoteContext.java:1146) and the Kotlin
+  /// player (`MAX_LOOP_OPERATIONS_PER_FRAME`) count per paint and paint no GONE component, so there
+  /// the shown canvas draws its 5,000 passes; here it draws none. A known divergence
+  /// (`maximumLoopOperationsPerDocument`).
   @Test func aLoopInAGoneCanvasStillUsesItsShareOfTheBudget() throws {
     typealias Op = NativeSwiftWireOpcode
     let document = Writer()

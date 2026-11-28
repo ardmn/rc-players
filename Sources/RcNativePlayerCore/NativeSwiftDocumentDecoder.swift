@@ -16,10 +16,13 @@ enum NativeSwiftDocumentDecoder {
   private static let maximumNodes = 20_000
   private static let maximumNestingDepth = 256
   /// The loop operations one document may unroll, all loops together: AndroidX's per-frame
-  /// `MAX_OP_COUNT` (Limits.java:24). Loops are unrolled once at decode, so a loop that does not
-  /// paint (a GONE component's) still spends its share; AndroidX counts only what each paint runs.
-  /// Past it AndroidX fails the frame (RemoteContext.java:1146); here the next pass stops instead.
-  /// AndroidX also counts a frame's other operations; only loops count here.
+  /// `MAX_OP_COUNT` (Limits.java:24). Past it AndroidX fails the frame (RemoteContext.java:1146);
+  /// here the next pass stops instead. AndroidX also counts a frame's other operations; only loops
+  /// count here.
+  ///
+  /// Known divergence: AndroidX and the Kotlin player (`MAX_LOOP_OPERATIONS_PER_FRAME`) count from
+  /// zero on every paint, only the loops that paint. Loops are unrolled once at decode here, so a
+  /// loop that does not paint (a GONE component's, a false conditional's) still spends its share.
   static let maximumLoopOperationsPerDocument = 20_000
   /// The refusal when a for-each or a loop needs more generated ids than the macro range holds.
   private static let macroIDsExhausted = "LOOM macro generated-id range is exhausted"
