@@ -39,6 +39,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcDocument
 import ee.schimke.composeai.rcplayer.protocol.RcDraw4
 import ee.schimke.composeai.rcplayer.protocol.RcDynamicFloatList
 import ee.schimke.composeai.rcplayer.protocol.RcFitBoxLayout
+import ee.schimke.composeai.rcplayer.protocol.RcFloatConstant
 import ee.schimke.composeai.rcplayer.protocol.RcFloatWord
 import ee.schimke.composeai.rcplayer.protocol.RcFlowLayout
 import ee.schimke.composeai.rcplayer.protocol.RcGraphicsLayerAttribute
@@ -400,49 +401,119 @@ class RcLayoutRenderTest {
   @Test
   fun marqueeClipsAndScrollsOverflowingLayoutContent() =
     runSkikoComposeUiTest(size = Size(80f, 20f), density = Density(1f)) {
-      val red = 0xffff0000.toInt()
-      val blue = 0xff0000ff.toInt()
-      val document =
-        RcDocument(
-          RcHeader(RcVersion(1, 0, 0), legacyWidth = 80, legacyHeight = 20, modern = false),
-          listOf(
-            RcRootLayout(1),
-            RcLayoutContent(2),
-            RcRowLayout(3, 30, 1, 4, RcFloatWord.literal(0f)),
-            width(40f),
-            height(20f),
-            RcMarqueeModifier(
-              iterations = 1,
-              animationMode = 0,
-              repeatDelayMillis = RcFloatWord.literal(0f),
-              initialDelayMillis = RcFloatWord.literal(0f),
-              spacing = RcFloatWord.literal(0f),
-              velocity = RcFloatWord.literal(40f),
-            ),
-            RcLayoutContent(4),
-          ) +
-            canvas(5, 40f, red) +
-            canvas(6, 40f, blue) +
-            List(4) { RcNoArg(RcOpcodes.CONTAINER_END) },
-        )
       mainClock.autoAdvance = false
       // Pinned like a real host: a bare player wraps to its 40 px row, and the probe at x = 60
       // needs
       // the 80 px window.
-      setContent { RcComposePlayer(document, Modifier.fillMaxSize()) }
+      setContent {
+        RcComposePlayer(marqueeDocument(RcFloatWord.literal(40f)), Modifier.fillMaxSize())
+      }
       mainClock.advanceTimeByFrame()
 
       val atRest = onRoot().captureToImage().toPixelMap()
-      assertEquals(red, atRest[30, 10].toArgb())
+      assertEquals(MARQUEE_RED, atRest[30, 10].toArgb())
       assertEquals(0, atRest[60, 10].toArgb(), "blue overflow must be clipped to the marquee width")
 
       // 40 dp/s with no initial delay: 750 ms on, the content has moved 30 px and blue shows at x =
       // 30.
       mainClock.advanceTimeBy(750)
       val scrolled = onRoot().captureToImage().toPixelMap()
-      assertEquals(blue, scrolled[30, 10].toArgb(), "the marquee must scroll as the clock advances")
+      assertEquals(
+        MARQUEE_BLUE,
+        scrolled[30, 10].toArgb(),
+        "the marquee must scroll as the clock advances",
+      )
       assertEquals(0, scrolled[60, 10].toArgb(), "scrolled content stays clipped")
     }
+
+  /**
+   * AndroidX's MarqueeModifierOperation.paint (java:177-186) sweeps -v as v and stands still at 0;
+   * NaN or an infinity, its own or a host's, has no sweep, so it stands still too.
+   */
+  @OptIn(ExperimentalTestApi::class)
+  @Test
+  fun aMarqueeTakesAnyVelocityAsAndroidXPaintsIt() {
+    val hostVelocity = RcFloatWord(0x7fc00000 or MARQUEE_VELOCITY)
+    val cases =
+      listOf(
+        "-40" to RcFloatWord.literal(-40f),
+        "0" to RcFloatWord.literal(0f),
+        "NaN" to RcFloatWord.literal(Float.NaN),
+        "+inf" to RcFloatWord.literal(Float.POSITIVE_INFINITY),
+        "host NaN" to hostVelocity,
+      )
+    for ((label, velocity) in cases) {
+      runSkikoComposeUiTest(size = Size(80f, 20f), density = Density(1f)) {
+        mainClock.autoAdvance = false
+        val values =
+          mutableStateMapOf<String, RcNamedValue>(
+            "USER:velocity" to RcNamedValue.FloatValue(Float.NaN),
+          )
+        setContent {
+          RcComposePlayer(marqueeDocument(velocity), Modifier.fillMaxSize(), namedValues = values)
+        }
+        mainClock.advanceTimeByFrame()
+        assertEquals(MARQUEE_RED, onRoot().captureToImage().toPixelMap()[30, 10].toArgb(), label)
+
+        mainClock.advanceTimeBy(750)
+        val expected = if (label == "-40") MARQUEE_BLUE else MARQUEE_RED
+        assertEquals(expected, onRoot().captureToImage().toPixelMap()[30, 10].toArgb(), label)
+      }
+    }
+  }
+
+  /**
+   * AndroidX never starts a marquee whose delay is infinite (`(long)` of it); an endless one with
+   * infinite delays must still play here, standing still.
+   */
+  @OptIn(ExperimentalTestApi::class)
+  @Test
+  fun anEndlessMarqueeWithInfiniteDelaysStandsStill() =
+    runSkikoComposeUiTest(size = Size(80f, 20f), density = Density(1f)) {
+      mainClock.autoAdvance = false
+      val infinite = RcFloatWord.literal(Float.POSITIVE_INFINITY)
+      setContent {
+        RcComposePlayer(
+          marqueeDocument(RcFloatWord.literal(40f), delay = infinite, iterations = -1),
+          Modifier.fillMaxSize(),
+        )
+      }
+      mainClock.advanceTimeByFrame()
+      mainClock.advanceTimeBy(750)
+
+      assertEquals(MARQUEE_RED, onRoot().captureToImage().toPixelMap()[30, 10].toArgb())
+    }
+
+  /** A 40 px marquee row over a red then a blue 40 px canvas, moving at [velocity] dp/s. */
+  private fun marqueeDocument(
+    velocity: RcFloatWord,
+    delay: RcFloatWord = RcFloatWord.literal(0f),
+    iterations: Int = 1,
+  ): RcDocument =
+    RcDocument(
+      RcHeader(RcVersion(1, 0, 0), legacyWidth = 80, legacyHeight = 20, modern = false),
+      listOf(
+        RcFloatConstant(MARQUEE_VELOCITY, RcFloatWord.literal(40f)),
+        RcNamedVariable(MARQUEE_VELOCITY, RcNamedVariable.FLOAT_TYPE, "USER:velocity"),
+        RcRootLayout(1),
+        RcLayoutContent(2),
+        RcRowLayout(3, 30, 1, 4, RcFloatWord.literal(0f)),
+        width(40f),
+        height(20f),
+        RcMarqueeModifier(
+          iterations = iterations,
+          animationMode = 0,
+          repeatDelayMillis = delay,
+          initialDelayMillis = delay,
+          spacing = RcFloatWord.literal(0f),
+          velocity = velocity,
+        ),
+        RcLayoutContent(4),
+      ) +
+        canvas(5, 40f, MARQUEE_RED) +
+        canvas(6, 40f, MARQUEE_BLUE) +
+        List(4) { RcNoArg(RcOpcodes.CONTAINER_END) },
+    )
 
   @OptIn(ExperimentalTestApi::class)
   @Test
@@ -2503,6 +2574,10 @@ class RcLayoutRenderTest {
     )
 
   private companion object {
+    const val MARQUEE_RED = 0xffff0000.toInt()
+    const val MARQUEE_BLUE = 0xff0000ff.toInt()
+    /** The id of `USER:velocity` in [marqueeDocument]. */
+    const val MARQUEE_VELOCITY = 70
     const val PURPLE = 0xff3b3444.toInt()
     const val GRAY = 0xff808080.toInt()
     const val RED = 0xffff0000.toInt()

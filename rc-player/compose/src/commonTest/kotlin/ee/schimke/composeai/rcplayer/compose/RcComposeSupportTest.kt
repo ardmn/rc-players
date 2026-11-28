@@ -392,30 +392,34 @@ class RcComposeSupportTest {
     assertTrue(document.composeSupportReport(RcOperationProfiles.CMP_IOS_ALPHA18).fullyRenderable)
   }
 
+  /**
+   * AndroidX plays a marquee whatever its timing (MarqueeModifierOperation.paint, java:177-186): 0
+   * and NaN stand still, -v sweeps as v. A variable's word is NaN, so it must not count as one.
+   */
   @Test
-  fun rejectsInvalidMarqueeTimelineBeforeRendering() {
-    val issues =
-      RcDocument(
-          header,
-          listOf(
-            RcMarqueeModifier(
-              iterations = 1,
-              animationMode = 0,
-              repeatDelayMillis = RcFloatWord.literal(Float.NaN),
-              initialDelayMillis = RcFloatWord.literal(0f),
-              spacing = RcFloatWord.literal(0f),
-              velocity = RcFloatWord.literal(0f),
-            ),
-          ),
-        )
-        .composeSupportReport()
-        .issues
-        .map { it.detail }
+  fun aMarqueeWithAnyTimingIsRenderable() {
+    val variable = RcFloatWord(0x7fc00000 or 42)
+    for (value in listOf(Float.NaN, 0f, -40f, Float.POSITIVE_INFINITY)) {
+      for (word in listOf(RcFloatWord.literal(value), variable)) {
+        val report =
+          RcDocument(
+              header,
+              listOf(
+                RcMarqueeModifier(
+                  iterations = 1,
+                  animationMode = 0,
+                  repeatDelayMillis = word,
+                  initialDelayMillis = word,
+                  spacing = word,
+                  velocity = word,
+                ),
+              ),
+            )
+            .composeSupportReport()
 
-    assertEquals(
-      listOf("repeat delay must be finite", "velocity must be greater than zero"),
-      issues,
-    )
+        assertTrue(report.issues.isEmpty(), "$value / $word: ${report.issues}")
+      }
+    }
   }
 
   @Test

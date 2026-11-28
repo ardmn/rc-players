@@ -335,6 +335,7 @@ import ee.schimke.composeai.rcplayer.trace.RcTraceCategory
 import ee.schimke.composeai.rcplayer.trace.rcTrace
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.math.PI
+import kotlin.math.absoluteValue
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -4524,15 +4525,20 @@ private fun Modifier.applyAndroidXMarquee(
 ): Modifier {
   val density = androidx.compose.ui.platform.LocalDensity.current
   val spacing = state.dpTypedDp(state.resolve(operation.spacing), density)
+  // AndroidX sweeps -v as v (MarqueeModifierOperation.paint, java:180-184); a velocity with no
+  // sweep stands still, as no iteration: basicMarquee's tween would divide by its 0 ms duration.
+  val speed = state.resolve(operation.velocity).absoluteValue
+  val moves = speed.isFinite() && speed > 0f
+  val iterations = if (operation.iterations == -1) Int.MAX_VALUE else operation.iterations
   return basicMarquee(
-    iterations = if (operation.iterations == -1) Int.MAX_VALUE else operation.iterations,
+    iterations = if (moves) iterations else 0,
     animationMode =
       if (operation.animationMode == 0) MarqueeAnimationMode.Immediately
       else MarqueeAnimationMode.WhileFocused,
     repeatDelayMillis = state.resolve(operation.repeatDelayMillis).toInt().coerceAtLeast(0),
     initialDelayMillis = state.resolve(operation.initialDelayMillis).toInt().coerceAtLeast(0),
-    spacing = MarqueeSpacing(spacing),
-    velocity = state.resolve(operation.velocity).dp,
+    spacing = MarqueeSpacing(if (spacing.value.isFinite()) spacing else 0.dp),
+    velocity = if (moves) speed.dp else 0.dp,
   )
 }
 
