@@ -1526,11 +1526,12 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   }
 
   /// A host's float write, AndroidX's `RemoteComposeState.overrideFloat` (java:318-324): nothing
-  /// for the value the id holds now, an expression's output included, so the expression keeps
-  /// driving it; otherwise `storeFloat`. NaN is never equal to itself and is always written.
+  /// for the value an expression's output holds now, so the expression keeps driving it; otherwise
+  /// `storeFloat`. An equal write to any other id is still stored, which only records it for a
+  /// reopened session (`writtenNamedValues`). NaN is never equal to itself and is always written.
   private func overrideFloat(_ id: Int, _ value: Float) {
-    let held = floatOverrides[id] ?? heldFloats[id] ?? floats[id] ?? integers[id].map(Float.init)
-    guard value != (held ?? 0) else { return }
+    let isDriven = floatExpressionIDs.contains(id) && floatOverrides[id] == nil
+    guard !(isDriven && value == heldFloats[id]) else { return }
     storeFloat(id, value)
   }
 
