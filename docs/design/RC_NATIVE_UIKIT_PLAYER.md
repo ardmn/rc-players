@@ -829,10 +829,10 @@ Custom components require an explicit host registry; documents never instantiate
 Objective-C classes by name.
 
 Loops (`LoopStart`) are unrolled once, at decode, within one budget for the whole document: 20,000
-loop operations, AndroidX's per-frame `MAX_OP_COUNT`. This is a known divergence: AndroidX and the
-Kotlin player count from zero on every paint and only the loops that paint, so on them a loop in a
-GONE component or under a false conditional leaves the budget to the others; here it still spends
-its share.
+loop operations, AndroidX's per-frame `MAX_OP_COUNT`. This is a known divergence: AndroidX counts
+from zero on every paint and only the loops that paint, so there a loop in a GONE component or under
+a false conditional leaves the budget to the others; here it still spends its share (the Kotlin
+player keeps each loop's last count, which differs the same way once a loop stops).
 
 ## Evolution plan
 

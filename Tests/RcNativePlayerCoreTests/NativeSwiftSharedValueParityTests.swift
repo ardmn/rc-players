@@ -33,7 +33,7 @@ import Testing
     return Double(source[literal].replacingOccurrences(of: "_", with: ""))
   }
 
-  /// The same number; Kotlin spends it per paint and Swift per document, a known divergence.
+  /// The same number; AndroidX spends it per paint and Swift per document, a known divergence.
   @Test func theLoopBudgetMatchesTheKotlinPlayer() throws {
     let kotlin = try Self.kotlinConstant("MAX_LOOP_OPERATIONS_PER_FRAME", in: Self.kotlinState)
     #expect(kotlin == Double(NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument))

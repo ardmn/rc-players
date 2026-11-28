@@ -20,9 +20,9 @@ enum NativeSwiftDocumentDecoder {
   /// here the next pass stops instead. AndroidX also counts a frame's other operations; only loops
   /// count here.
   ///
-  /// Known divergence: AndroidX and the Kotlin player (`MAX_LOOP_OPERATIONS_PER_FRAME`) count from
-  /// zero on every paint, only the loops that paint. Loops are unrolled once at decode here, so a
-  /// loop that does not paint (a GONE component's, a false conditional's) still spends its share.
+  /// Known divergence: AndroidX counts from zero on every paint, only the loops that paint. Loops
+  /// are unrolled once at decode here, so a loop that does not paint (a GONE component's, a false
+  /// conditional's) still spends its share; the Kotlin player keeps each loop's last count.
   static let maximumLoopOperationsPerDocument = 20_000
   /// The refusal when a for-each or a loop needs more generated ids than the macro range holds.
   private static let macroIDsExhausted = "LOOM macro generated-id range is exhausted"
