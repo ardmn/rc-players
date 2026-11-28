@@ -78,8 +78,8 @@ import ee.schimke.composeai.rcplayer.trace.rcTrace
  * `Limits.MAX_OP_COUNT` (Limits.java:24, androidx-main 4cd983e99fe). AndroidX counts every pass and
  * every body operation at every depth (LoopOperation.java:126-140), from zero each paint
  * (CoreDocument.java:2357), and throws past it; here the loop stops. AndroidX also counts a frame's
- * other operations; only loops count here. The Swift player's constant of the same name is its
- * twin.
+ * other operations; only loops count here. The Swift player's twin is
+ * `NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument`, spent once per document at decode.
  */
 private const val MAX_LOOP_OPERATIONS_PER_FRAME = 20_000
 
