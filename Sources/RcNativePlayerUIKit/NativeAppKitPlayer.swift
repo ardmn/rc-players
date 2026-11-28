@@ -3221,13 +3221,12 @@ private final class NativeMacComponentView: NSView, NSGestureRecognizerDelegate,
     guard let positionID = node.scrollPositionID, let direction = node.scrollDirection else {
       return nil
     }
-    // A document constant is the travel, as the touch expression's maximum is in AndroidX; a slot
-    // holds what this layout measures, which a drag reads directly so it moves before publishing.
-    let maximum =
-      node.scrollMaximumID == nil && node.scrollMaximum > 0
-      ? node.scrollMaximum : scrollMeasurement?.maximumOffset ?? node.scrollMaximum
+    // The slot holds what a layout published, or a host's override; a scroll nothing reads keeps
+    // 0 there. A drag reads this layout's measurement too, so it moves before anything publishes,
+    // and still honours a larger value the document already holds.
     return NativeMacScrollTarget(
-      positionID: positionID, direction: direction, offset: node.scrollOffset, maximum: maximum)
+      positionID: positionID, direction: direction, offset: node.scrollOffset,
+      maximum: max(node.scrollMaximum, scrollMeasurement?.maximumOffset ?? 0))
   }
 
   override func layout() {

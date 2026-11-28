@@ -3199,8 +3199,8 @@ enum NativeSwiftDocumentDecoder {
       }
     }
     // A host measures a scroll only when something reads what its layout publishes: measuring one
-    // costs the host a second resolve each frame. One
-    // scan of the document when nothing reads any extent, else one per scroll.
+    // costs the host a second resolve each frame. One scan of the document when nothing reads any
+    // extent, else one per scroll.
     let scrolls = nodes.values.filter { !$0.scrollExtentIDs.isEmpty }
     let measuredScrollIDs =
       references(Set(scrolls.flatMap(\.scrollExtentIDs)), countingScrollExtents: false)

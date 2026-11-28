@@ -182,8 +182,7 @@ public enum NativeSwiftTextFormatter {
     !negative ? value : parentheses ? "(\(value))" : "-\(value)"
   }
 
-  private static func characters(_ value: Float, before: Int, after: Int, rounding: Bool) -> String
-  {
+  private static func characters(_ value: Float, before: Int, after: Int, rounding: Bool) -> String {
     var adjusted = value
     // Kotlin's Long arithmetic wraps; a document asking for 19 or more places must not trap here.
     var power: Int64 = 1

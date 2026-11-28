@@ -129,9 +129,9 @@ import Testing
     #expect(modifier.direction == 1)
   }
 
-  /// Layout loads the travel as AndroidX's `updateFloat` does, which skips an id the host
-  /// overrode: the host's value stays.
-  @Test func aHostWriteOfTheMaximumOutlivesLayout() throws {
+  /// A host's write of the maximum is what readers see after later layouts, as an AndroidX
+  /// override outlives `updateFloat`.
+  @Test func aHostWriteOfTheMaximumWinsOverLayout() throws {
     let document = RemoteDocument(width: 200, height: 100) {
       RemoteScrollView(.horizontal, pageCount: 4) { rows() }
     }
@@ -174,6 +174,15 @@ import Testing
       try !measured(
         RemoteDocument(width: 200, height: 100) {
           RemoteScrollView(.horizontal, pageCount: 4) { rows() }
+        }))
+    // An action that copies the travel reads it too, when the tap runs.
+    let jumpedTo = RemoteVariable("jumpedTo", default: 0.0)
+    let tapped = RemoteScrollPosition()
+    #expect(
+      try measured(
+        RemoteDocument(width: 200, height: 100) {
+          RemoteScrollView(position: tapped) { rows() }
+            .onTapGesture(.set(jumpedTo, to: tapped.maximumOffset))
         }))
   }
 

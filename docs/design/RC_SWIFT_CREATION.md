@@ -211,8 +211,10 @@ name.
   | ![](../../renders/swift-creation/scroll-position-cmp-jvm.png) | ![](../../renders/swift-creation/scroll-paging-cmp-jvm.png) |
 
   The native player fills `maximumOffset` and `contentLength` from its layout whenever the document
-  reads them, as AndroidX's `ScrollModifierOperation.layout` does. It does not snap pages yet, and
-  its live views do not scroll on a drag or move the content by the offset.
+  reads them, as AndroidX's `ScrollModifierOperation.layout` does, except that a scroll below a
+  sibling in a column still measures the column's whole height, so its `maximumOffset` is short. It
+  does not snap pages yet, and its live views do not scroll on a drag or move the content by the
+  offset.
 
 - **An integer is also a float, so it is written as text.** The players keep each integer as a
   float too, so `"\(page + 1) of 4"` formats the integer's own id with `TextFromFloat`, and
