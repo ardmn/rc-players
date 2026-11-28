@@ -3835,7 +3835,7 @@ private final class NativeMacCanvasView: NSView {
     // overflow it, while a malformed or fixed draw must never leak outside it.
     context.saveGState()
     context.clip(to: destination)
-    let target = scaledImageDestination(
+    let target = NativeImageGeometry.destination(
       source: source, destination: destination, scaleType: draw.scaleType,
       scaleFactor: CGFloat(draw.scaleFactor))
     // The paint's filter quality, bilinear when it named none, as the reference players filter;
@@ -3872,58 +3872,6 @@ private final class NativeMacCanvasView: NSView {
       return cgImage
     }
     return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
-  }
-
-  /// Where an image lands in `destination`, as AndroidX's `ImageScaling` places it: its `int` steps
-  /// truncate here in `CGFloat`, so a host's huge value scales instead of trapping. A non-finite
-  /// rectangle or factor gives `.zero`, as Skia rejects one (`SkCanvas::quickReject`).
-  private func scaledImageDestination(
-    source: NSRect, destination: NSRect, scaleType: Int, scaleFactor: CGFloat
-  ) -> NSRect {
-    func truncated(_ value: CGFloat) -> CGFloat { value.rounded(.towardZero) }
-    let sourceWidth = truncated(source.width)
-    let sourceHeight = truncated(source.height)
-    let destinationWidth = truncated(destination.width)
-    let destinationHeight = truncated(destination.height)
-    guard Self.isFinite(source), Self.isFinite(destination), scaleFactor.isFinite,
-      sourceWidth > 0, sourceHeight > 0, destinationWidth >= 0, destinationHeight >= 0
-    else { return .zero }
-    var width = destinationWidth
-    var height = destinationHeight
-    switch scaleType {
-    case NativeSwiftImageScaleType.none: width = sourceWidth; height = sourceHeight
-    case NativeSwiftImageScaleType.inside:
-      if !(destinationHeight > sourceHeight && destinationWidth > sourceWidth) {
-        if sourceWidth * destinationHeight > destinationWidth * sourceHeight {
-          height = truncated(destinationWidth * sourceHeight / sourceWidth)
-        } else { width = truncated(destinationHeight * sourceWidth / sourceHeight) }
-      } else { width = sourceWidth; height = sourceHeight }
-    case NativeSwiftImageScaleType.fitWidth:
-      height = truncated(destinationWidth * sourceHeight / sourceWidth)
-    case NativeSwiftImageScaleType.fitHeight:
-      width = truncated(destinationHeight * sourceWidth / sourceHeight)
-    case NativeSwiftImageScaleType.fit:
-      if sourceWidth * destinationHeight > destinationWidth * sourceHeight {
-        height = truncated(destinationWidth * sourceHeight / sourceWidth)
-      } else { width = truncated(destinationHeight * sourceWidth / sourceHeight) }
-    case NativeSwiftImageScaleType.crop:
-      if sourceWidth * destinationHeight < destinationWidth * sourceHeight {
-        height = truncated(destinationWidth * sourceHeight / sourceWidth)
-      } else { width = truncated(destinationHeight * sourceWidth / sourceHeight) }
-    case NativeSwiftImageScaleType.fillBounds: break
-    case NativeSwiftImageScaleType.fixed:
-      width = truncated(sourceWidth * scaleFactor)
-      height = truncated(sourceHeight * scaleFactor)
-    default: return .zero
-    }
-    return NSRect(
-      x: destination.minX + truncated((destinationWidth - width) / 2),
-      y: destination.minY + truncated((destinationHeight - height) / 2), width: width,
-      height: height)
-  }
-
-  private static func isFinite(_ rect: NSRect) -> Bool {
-    rect.minX.isFinite && rect.minY.isFinite && rect.width.isFinite && rect.height.isFinite
   }
 
   private func path(_ commands: [NativeMacPathCommand]) -> CGPath {

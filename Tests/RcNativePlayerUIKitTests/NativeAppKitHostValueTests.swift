@@ -23,7 +23,7 @@
         data: Data(contentsOf: directory.appendingPathComponent("\(name).rc")))
     }
 
-    /// A 200 KB host string, over the 128 KiB a frame's own text may take: `setString` takes it,
+    /// A 200 KB host string, over the 192 KiB a frame's own text may take: `setString` takes it,
     /// as AndroidX's `setNamedStringOverride` does, so the frame must render it.
     @Test(arguments: ["long-text", "long-text-length-as-width"])
     func aHostStringOverTheTextBudgetRenders(_ name: String) throws {

@@ -189,7 +189,7 @@ import Testing
     let documentText = String(repeating: "x", count: 4_000)
     var repeated = NativeFrameBudget()
     #expect(throws: RemoteComposeNativeLimitError.self) {
-      for _ in 0..<40 { try repeated.recordStrings([documentText], limits: .default) }
+      for _ in 0..<50 { try repeated.recordStrings([documentText], limits: .default) }
     }
   }
 

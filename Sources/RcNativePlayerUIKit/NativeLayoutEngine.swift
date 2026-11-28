@@ -97,6 +97,7 @@ extension NativeLayoutNode {
     heightType = snapshot.heightType
     heightValue = limits.layoutDimension(snapshot.heightValue, type: snapshot.heightType)
     minimumWidth = limits.layoutCoordinate(snapshot.minimumWidth)
+    // A negative maximum is `NativeSwiftNodeSnapshot.noMaximum`: no bound.
     maximumWidth =
       snapshot.maximumWidth < 0 ? nil : limits.layoutCoordinate(snapshot.maximumWidth)
     minimumHeight = limits.layoutCoordinate(snapshot.minimumHeight)

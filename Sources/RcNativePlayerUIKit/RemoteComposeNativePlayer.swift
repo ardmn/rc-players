@@ -1546,7 +1546,8 @@
         if queued, !Self.isNamedWrite(input) {
           // A newer input will install its own frame; validate and deliver this input's events in
           // order without building and discarding an intermediate NativeDocument.
-          var budget = NativeFrameBudget()
+          // The frame's host strings, so an event's host string costs what it does once installed.
+          var budget = NativeFrameBudget(hostStrings: update.frame.snapshot.hostStrings)
           try validateEvents(update.events, budget: &budget)
           dispatch(update.events, generation: generation)
           return outcome

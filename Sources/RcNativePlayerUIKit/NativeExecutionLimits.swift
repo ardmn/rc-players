@@ -11,9 +11,10 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   public var maximumNestingDepth: Int
   public var maximumDrawCommandCount: Int
   public var maximumPathElementCount: Int
-  /// The UTF-8 bytes of text one frame may lay out, each also a unit of `maximumFrameWork`. A
-  /// document's string counts each place it is shown; a host's counts once, at most
-  /// `longestDocumentTextBytes`, so one renders at any length. The 128 KiB default holds two such.
+  /// The UTF-8 bytes of text one frame may lay out. A document's string counts at each place it is
+  /// shown; a host's counts once, at most `longestDocumentTextBytes`, so it renders at any length.
+  /// Every place either is shown also costs that much `maximumFrameWork`, which bounds the layout
+  /// work. The default holds four host strings of any length.
   public var maximumTextBytes: Int
   /// The largest view or canvas side. The document's own size over it is refused; the UIKit
   /// player clamps a resolved exact width or height to it instead (`layoutDimension`).
@@ -29,7 +30,7 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
     maximumNestingDepth: Int = 256,
     maximumDrawCommandCount: Int = 50_000,
     maximumPathElementCount: Int = 100_000,
-    maximumTextBytes: Int = 128 * 1024,
+    maximumTextBytes: Int = 4 * longestDocumentTextBytes,
     maximumCanvasDimension: Double = 16_384,
     maximumCoordinateMagnitude: Double = 1_000_000,
     maximumFrameWork: Int = 200_000
@@ -49,7 +50,7 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
 
   /// The longest UTF-8 text a document can make itself: a `TextMerge` result of at most 16K UTF-16
   /// units (TextMerge.java:41), 3 bytes each. Any longer string is a host's.
-  static let longestDocumentTextBytes = 3 * 16 * 1024
+  public static let longestDocumentTextBytes = 3 * 16 * 1024
 
   /// A resolved layout float (padding, spacing, offset, constraint, z-index) as UIKit can take it:
   /// NaN reads 0, as in Java's `(int)`; the rest is held to ±`maximumCoordinateMagnitude`.
@@ -97,10 +98,11 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   private static let arcAngleIndices = 4...5
 
   /// Whether a draw command's geometry, paint and path are all finite: Skia draws nothing for a
-  /// non-finite shape (`SkCanvas::quickReject`).
+  /// non-finite shape (`SkCanvas::quickReject`). Only a stroke reads the stroke width.
   func isDrawable(_ command: NativeSwiftDrawCommandSnapshot) -> Bool {
     let geometryIsFinite = command.geometryValues.allSatisfy(\.isFinite)
-    let paintIsFinite = command.strokeWidth.isFinite && command.alpha.isFinite
+    let strokeIsFinite = !command.isStroke || command.strokeWidth.isFinite
+    let paintIsFinite = strokeIsFinite && command.alpha.isFinite
     return geometryIsFinite && paintIsFinite
       && command.path.allSatisfy { $0.values.allSatisfy(\.isFinite) }
   }
@@ -120,7 +122,10 @@ public enum RemoteComposeNativeLimitError: Error, Equatable, LocalizedError, Sen
   case textTooLong(actual: Int, maximum: Int)
   case invalidCanvasDimension(actual: Double)
   case canvasTooLarge(actual: Double, maximum: Double)
+  /// Thrown only for a non-finite canvas size; a resolved value is normalised or dropped instead.
   case nonFiniteValue(componentID: Int, field: String)
+  /// Not thrown: resolved coordinates are clamped to `maximumCoordinateMagnitude`. Kept as public
+  /// API.
   case coordinateTooLarge(componentID: Int, field: String, actual: Double, maximum: Double)
   /// Not thrown: every resolved width and height renders. Kept as public API.
   case invalidDimensionValue(componentID: Int, field: String, actual: Double)
@@ -169,7 +174,7 @@ struct NativeFrameBudget: Equatable, Sendable {
   private(set) var work = 0
   /// The frame's host strings (`NativeSwiftDocumentSnapshot.hostStrings`).
   let hostStrings: Set<String>
-  /// The host strings, and strings longer than a document can make, counted so far.
+  /// The host strings, and strings longer than a document can make, counted in `textBytes` so far.
   private var countedHostStrings: Set<String> = []
 
   init(hostStrings: Set<String> = []) {
@@ -232,18 +237,23 @@ struct NativeFrameBudget: Equatable, Sendable {
   ) throws {
     let longest = RemoteComposeNativeExecutionLimits.longestDocumentTextBytes
     var addedBytes = 0
+    var addedWork = 0
     for string in strings.compactMap({ $0 }) {
       let bytes = string.utf8.count
-      // A host's string counts once per frame, at most `longest`; the lookup hashes it, O(length).
-      let isHostString = bytes > longest || hostStrings.contains(string)
-      if isHostString {
-        if countedHostStrings.insert(string).inserted { addedBytes += min(bytes, longest) }
+      // A host's string counts once in the text, at most `longest`, but each place it is shown
+      // costs that much work, so a document can lay one out a few times per frame, not thousands.
+      // The lookups hash it, O(length).
+      if bytes > longest || hostStrings.contains(string) {
+        let charged = min(bytes, longest)
+        if countedHostStrings.insert(string).inserted { addedBytes += charged }
+        addedWork += charged
       } else {
         addedBytes += bytes
+        addedWork += bytes
       }
     }
     textBytes += addedBytes
-    work += addedBytes
+    work += addedWork
     guard textBytes <= limits.maximumTextBytes else {
       throw RemoteComposeNativeLimitError.textTooLong(
         actual: textBytes, maximum: limits.maximumTextBytes)
@@ -265,23 +275,6 @@ struct NativeFrameBudget: Equatable, Sendable {
   ) throws {
     work += additionalWork
     try validateWork(limits)
-  }
-
-  func validateNumbers(
-    _ values: [Double], componentID: Int, field: String,
-    limits: RemoteComposeNativeExecutionLimits
-  ) throws {
-    for value in values {
-      guard value.isFinite else {
-        throw RemoteComposeNativeLimitError.nonFiniteValue(
-          componentID: componentID, field: field)
-      }
-      guard abs(value) <= limits.maximumCoordinateMagnitude else {
-        throw RemoteComposeNativeLimitError.coordinateTooLarge(
-          componentID: componentID, field: field, actual: value,
-          maximum: limits.maximumCoordinateMagnitude)
-      }
-    }
   }
 
   func validateCanvasDimensions(

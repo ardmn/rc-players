@@ -33,6 +33,55 @@ import Testing
     }
   }
 
+  /// A marquee whose velocity a host sets to NaN, 0 or below stands still instead of failing the
+  /// frame: Kotlin's `androidXMarqueeOffset` gives 0 for a duration that is not finite and
+  /// positive, and AndroidX's `MarqueeModifierOperation.paint` (java:180) divides by the raw
+  /// velocity.
+  @Test func aHostMarqueeVelocityThatIsNotPositiveStandsStill() throws {
+    typealias Op = NativeSwiftWireOpcode
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(70).float(30)
+    document.namedVariable(id: 70, type: NativeSwiftNamedVariableType.float, name: "USER:velocity")
+    document.text(id: 80, String(repeating: "scrolls ", count: 40))
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutText).int(2).int(0).int(80).int(Int(Int32(bitPattern: 0xff00_0000)))
+    document.float(16).int(0).float(400).int(-1).int(1).int(1).int(1)
+    document.u8(Op.modifierMarquee).int(-1).int(0).float(0).float(0).float(0)
+      .int(Writer.nanReference(70))
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    for value: Float in [.nan, 0, -30, -.infinity] {
+      let session = try NativeSwiftDocumentSession.open(data: document.data)
+      #expect(session.setFloat(value, for: "USER:velocity"))
+      let snapshot = try session.snapshot(timeSeconds: 5)
+      let marquee = try #require(Self.nodes(snapshot.root).compactMap(\.marquee).first)
+      #expect(
+        marquee.offset(overflowDistance: 200, density: 1, elapsedSeconds: 5) == 0, "\(value)")
+    }
+  }
+
+  /// A host write equal to the value an expression gives its id changes nothing, so the expression
+  /// keeps driving it: AndroidX's `overrideFloat` writes and marks an override only for a value
+  /// `!=` the one held (RemoteComposeState.java:318-324).
+  @Test func aHostWriteEqualToAnExpressionsValueLeavesItDriven() throws {
+    typealias Op = NativeSwiftWireOpcode
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(70).float(0)
+    document.namedVariable(id: 70, type: NativeSwiftNamedVariableType.float, name: "USER:sum")
+    document.u8(Op.dataFloat).int(71).float(5)
+    document.namedVariable(id: 71, type: NativeSwiftNamedVariableType.float, name: "USER:input")
+    // 70 = input + 0.
+    document.u8(Op.animatedFloat).int(70).int(3).int(Writer.nanReference(71)).float(0)
+      .int(Writer.floatOperator(NativeSwiftFloatOperator.add))
+    document.u8(Op.layoutRoot).int(1).u8(Op.containerEnd)
+    let session = try NativeSwiftDocumentSession.open(data: document.data)
+    #expect(try session.probeValues(timeSeconds: 0).floats[70] == 5)
+    #expect(session.setFloat(5, for: "USER:sum"))
+    #expect(session.setFloat(9, for: "USER:input"))
+    #expect(try session.probeValues(timeSeconds: 0).floats[70] == 9)
+  }
+
   /// A host offset reaches the snapshot as a finite number: NaN reads 0 and an infinity is held at
   /// the largest finite float of its sign, as the Kotlin player's `javaRoundToInt` reads it and as
   /// `resolvedFloat` saturates a padding.
@@ -251,7 +300,7 @@ import Testing
   /// `RcPlayerStateTest.loopOperationHonorsTheIterationCap`'s cases: AndroidX counts a pass and each
   /// body operation (`LoopOperation.java:126-140`) and fails the frame past 20 000; here the loop
   /// stops there, so a one-operation body runs 10 000. Bounds are literals here, never NaN.
-  @Test func aLoopStopsAtTheFramesOperationBudget() throws {
+  @Test func aLoopStopsAtTheDocumentsOperationBudget() throws {
     let cases: [(from: Float, until: Float, step: Float, passes: Int)] = [
       (0, 1, 0.000_01, 10_000), (0, .infinity, 1, 10_000), (0, 1, 0, 10_000),
       (1e9, 2e9, 1, 10_000), (-.infinity, 0, 1, 10_000), (.infinity, .infinity, 1, 0),
@@ -272,9 +321,9 @@ import Testing
     }
   }
 
-  /// The budget is the frame's, every loop's passes and body operations together, charged in the
-  /// order AndroidX runs them: a pass and each operation directly in its body.
-  @Test func everyLoopInTheFrameSharesOneOperationBudget() throws {
+  /// The budget is the document's, every loop's passes and body operations together, charged in
+  /// the order AndroidX runs them: a pass and each operation directly in its body.
+  @Test func everyLoopInTheDocumentSharesOneOperationBudget() throws {
     typealias Op = NativeSwiftWireOpcode
     func rects(_ count: Int, _ document: Writer) {
       for _ in 0..<count { document.u8(Op.drawRect).float(0).float(0).float(1).float(1) }
@@ -286,7 +335,7 @@ import Testing
       let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
       return root.commands.count
     }
-    let budget = NativeSwiftDocumentDecoder.maximumLoopOperationsPerFrame
+    let budget = NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument
     #expect(budget == 20_000)
     // Three operations a pass: 4 each.
     let threeEach = try drawn { document in
@@ -304,6 +353,34 @@ import Testing
       }
     }
     #expect(twoLoops == budget / 2)
+  }
+
+  /// The budget is spent once per document, when the loops are unrolled at decode: a loop in a
+  /// component that is GONE still uses its share. AndroidX counts per paint
+  /// (RemoteContext.java:1146) and paints no GONE component, so there the shown canvas draws its
+  /// 5,000 passes; here it draws none. A known difference (`maximumLoopOperationsPerDocument`).
+  @Test func aLoopInAGoneCanvasStillUsesItsShareOfTheBudget() throws {
+    typealias Op = NativeSwiftWireOpcode
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataInt).int(70).int(NativeSwiftVisibility.gone)
+    document.u8(Op.layoutRoot).int(1)
+    for (canvas, visibility, passes) in [(2, Optional(70), Float(15_000)), (3, nil, 5_000)] {
+      document.u8(Op.layoutCanvas).int(canvas).int(-1)
+      if let visibility { document.u8(Op.modifierVisibility).int(visibility) }
+      document.u8(Op.loopStart).int(0).float(0).float(1).float(passes)
+      document.u8(Op.drawRect).float(0).float(0).float(1).float(1)
+      document.u8(Op.containerEnd)
+      document.u8(Op.containerEnd)
+    }
+    document.u8(Op.containerEnd)
+    let root = try NativeSwiftDocumentSession.open(data: document.data).snapshot().root
+    let budget = NativeSwiftDocumentDecoder.maximumLoopOperationsPerDocument
+    let gone = try #require(Self.nodes(root).first { $0.componentID == 2 })
+    let shown = try #require(Self.nodes(root).first { $0.componentID == 3 })
+    // Two operations a pass: the GONE canvas's loop took the whole budget.
+    #expect(gone.visibility == NativeSwiftVisibility.gone && gone.commands.count == budget / 2)
+    #expect(shown.commands.isEmpty)
   }
 
   /// After the loop its index holds the last value it took, as the Kotlin player's `setFloat` of
