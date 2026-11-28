@@ -120,7 +120,7 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
       14 -> stack[sp] = floor(stack[sp])
       15 -> stack[sp] = log10(stack[sp])
       16 -> stack[sp] = ln(stack[sp])
-      17 -> stack[sp] = javaRound(stack[sp]).toFloat()
+      17 -> stack[sp] = stack[sp].javaRoundToInt().toFloat()
       18 -> stack[sp] = sin(stack[sp])
       19 -> stack[sp] = cos(stack[sp])
       20 -> stack[sp] = tan(stack[sp])
@@ -345,14 +345,6 @@ public class RcFloatExpressionEvaluator(private val arrays: (Int) -> FloatArray?
     val upperY = coordinate(t + range, y1, y2)
     return (upperY - lowerY) * (x - lowerX) / (upperX - lowerX) + lowerY
   }
-
-  private fun javaRound(value: Float): Int =
-    when {
-      value.isNaN() -> 0
-      value >= Int.MAX_VALUE -> Int.MAX_VALUE
-      value <= Int.MIN_VALUE -> Int.MIN_VALUE
-      else -> floor(value + 0.5f).toInt()
-    }
 
   private fun FloatArray.sumOfSquares(): Float {
     var total = 0f

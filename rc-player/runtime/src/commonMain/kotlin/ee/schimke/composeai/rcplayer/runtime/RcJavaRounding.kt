@@ -1,9 +1,10 @@
 package ee.schimke.composeai.rcplayer.runtime
 
-import kotlin.math.roundToInt
+import kotlin.math.floor
 
 /**
- * Java's `Math.round(float)`, which AndroidX rounds with: NaN (a host's value, or 0/0) is 0 where
- * `roundToInt` throws; out-of-range values saturate and a half rounds up, as in both.
+ * Java's `Math.round(float)`, which AndroidX rounds with: the closest int, a half up, NaN 0, past
+ * `Int` saturated (`Double.toInt`). The sum is exact in double; Kotlin/Native's `roundToInt` adds
+ * 0.5f in float (stdlib math.kt:1337), which rounds 0.49999997f to 1.
  */
-public fun Float.javaRoundToInt(): Int = if (isNaN()) 0 else roundToInt()
+public fun Float.javaRoundToInt(): Int = floor(toDouble() + 0.5).toInt()
