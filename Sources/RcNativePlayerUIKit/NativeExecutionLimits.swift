@@ -14,8 +14,9 @@ public struct RemoteComposeNativeExecutionLimits: Equatable, Sendable {
   /// The UTF-8 bytes of text one frame may lay out. A document's string counts at each place it is
   /// shown; a host's counts once, at most `longestDocumentTextBytes`, so it renders at any length.
   /// Every place a document string is shown costs its bytes of `maximumFrameWork`, and a host's up
-  /// to `hostStringPlacementWork`, which bounds the layout work. The default holds four host
-  /// strings of any length.
+  /// to `hostStringPlacementWork`, which bounds the layout work. The default,
+  /// 4 × `longestDocumentTextBytes`, holds four distinct host strings of any length when the frame
+  /// shows no other text, or three beside up to 48 KiB of the document's own.
   public var maximumTextBytes: Int
   /// The largest view or canvas side. The document's own size over it is refused; the UIKit
   /// player clamps a resolved exact width or height to it instead (`layoutDimension`).

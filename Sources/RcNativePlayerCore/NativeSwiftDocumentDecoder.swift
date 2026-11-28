@@ -1352,7 +1352,7 @@ enum NativeSwiftDocumentDecoder {
         try drawingNode().commands.append(
           ParsedDrawCommand(
             kind: NativeSwiftDrawKind.text, words: words, paint: paint, textID: textID,
-            textFlags: flags, nanSentinelIndices: [3]))
+            textFlags: flags, nanMeansUnsetIndices: [3]))
       case NativeSwiftWireOpcode.drawTextOnPath:
         let textID = try input.int("draw text path text id")
         let pathID = try input.int("draw text path id")
