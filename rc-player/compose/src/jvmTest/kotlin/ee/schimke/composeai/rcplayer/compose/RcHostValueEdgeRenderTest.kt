@@ -309,6 +309,12 @@ class RcHostValueEdgeRenderTest {
     listOf(
       text("text-size", HOST_TEXT_ID, fontSize = HOST),
       Case("core-text-size", coreTextDocument(fontSize = HOST)),
+      // AndroidX's autosize search never ends on an infinite bound (CoreText.java:720-739).
+      Case(
+        "core-text-autosize-max",
+        coreTextDocument(literal(12f), autosize(maximum = HOST, minimum = literal(-1f))),
+      ),
+      Case("core-text-autosize-bounds", coreTextDocument(literal(12f), autosize(HOST, HOST))),
       canvas(
         "paint-text-size",
         draws =
@@ -357,8 +363,19 @@ class RcHostValueEdgeRenderTest {
       ),
     )
 
+  /** TextStyle.java's autosize flag (22) and its min (25) and max (26) font sizes. */
+  private fun autosize(maximum: RcFloatWord, minimum: RcFloatWord) =
+    listOf(
+      RcTextStyleProperty.BooleanValue(22, true),
+      RcTextStyleProperty.FloatValue(25, minimum),
+      RcTextStyleProperty.FloatValue(26, maximum),
+    )
+
   /** A `CoreText` showing the host's text at [fontSize], in a box. */
-  private fun coreTextDocument(fontSize: RcFloatWord): RcDocument =
+  private fun coreTextDocument(
+    fontSize: RcFloatWord,
+    extra: List<RcTextStyleProperty> = emptyList(),
+  ): RcDocument =
     document(
       listOf(
         RcRootLayout(1),
@@ -373,7 +390,7 @@ class RcHostValueEdgeRenderTest {
               RcTextStyleProperty.IntValue(2, 50),
               RcTextStyleProperty.IntValue(3, INK),
               RcTextStyleProperty.FloatValue(5, fontSize),
-            ),
+            ) + extra,
         ),
         END,
       ) + List(4) { END },

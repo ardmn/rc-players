@@ -2337,11 +2337,13 @@ private fun RenderLayoutNodeContent(
           val fontWeight = rcFontWeight(state.resolve(properties.floatProperty(7, 400f)))
           val colorId = properties.intProperty(4, -1)
           val autosize = properties.booleanProperty(22, false)
-          val minFontSize = properties.floatProperty(25, -1f).let(state::resolve)
-          val maxFontSize = properties.floatProperty(26, -1f).let(state::resolve)
-          val resolvedMaxFontSize = if (maxFontSize > 0f) maxFontSize else 400f
-          val resolvedMinFontSize =
-            minOf(if (minFontSize > 0f) minFontSize else 4f, resolvedMaxFontSize)
+          val autoSizeRange =
+            rcAutoSizeRange(
+              minimum = properties.floatProperty(25, -1f).let(state::resolve),
+              maximum = properties.floatProperty(26, -1f).let(state::resolve),
+            )
+          val resolvedMinFontSize = autoSizeRange.start
+          val resolvedMaxFontSize = autoSizeRange.endInclusive
           // Font-variation axes (properties 20/21) — a variable font's `wght` / `wdth` / …
           // instance.
           // The tags arrive as text ids and the values may be document floats, so both are resolved
@@ -3340,6 +3342,22 @@ internal fun rcTextFontSizePixels(
  */
 internal fun rcTextSizePixels(size: Float, previous: Float = RC_DEFAULT_TEXT_SIZE_PX): Float =
   if (size >= 0f) size.coerceAtMost(RC_MAX_TEXT_SIZE_PX) else previous
+
+/**
+ * A `CoreText`'s autosize sizes in pixels: AndroidX's defaults for an unset or non-positive bound
+ * (CoreText.java:720-721), each at most [RC_MAX_TEXT_SIZE_PX]. AndroidX's search never ends on an
+ * infinite bound (CoreText.java:725, `max - min` stays infinite).
+ */
+internal fun rcAutoSizeRange(minimum: Float, maximum: Float): ClosedFloatingPointRange<Float> {
+  val max =
+    (if (maximum > 0f) maximum else RC_AUTOSIZE_DEFAULT_MAX_PX).coerceAtMost(RC_MAX_TEXT_SIZE_PX)
+  val min = (if (minimum > 0f) minimum else RC_AUTOSIZE_DEFAULT_MIN_PX).coerceAtMost(max)
+  return min..max
+}
+
+/** AndroidX `CoreText`'s autosize bounds when the document sets none (CoreText.java:720-721). */
+private const val RC_AUTOSIZE_DEFAULT_MIN_PX = 4f
+private const val RC_AUTOSIZE_DEFAULT_MAX_PX = 400f
 
 /** The text size a fresh Android `Paint` holds: Skia's `SkFont` default. */
 internal const val RC_DEFAULT_TEXT_SIZE_PX: Float = 12f
@@ -8741,10 +8759,6 @@ internal fun rcFlatTextSpec(
   val fontWeight = rcFontWeight(state.resolve(properties.floatProperty(7, 400f)))
   val colorId = properties.intProperty(4, -1)
   val autosize = properties.booleanProperty(22, false)
-  val minFontSize = properties.floatProperty(25, -1f).let(state::resolve)
-  val maxFontSize = properties.floatProperty(26, -1f).let(state::resolve)
-  val resolvedMaxFontSize = if (maxFontSize > 0f) maxFontSize else 400f
-  val resolvedMinFontSize = minOf(if (minFontSize > 0f) minFontSize else 4f, resolvedMaxFontSize)
   // Font-variation axes (properties 20/21) — a variable font's `wght` / `wdth` / … instance.
   // The tags arrive as text ids and the values may be document floats, so both are resolved
   // through the player state before they are paired up.
