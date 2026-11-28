@@ -1745,6 +1745,7 @@ private fun RenderLayoutNodeContent(
               ?.operations
               ?.takeIf { it.isNotEmpty() }
               ?.let { operations ->
+                ReleaseLoopPassOnDispose(state, operations)
                 val clockGate = RcClockDrawGate(LocalRcGateClockDraws.current)
                 Canvas(Modifier.fillMaxSize()) {
                   clockGate.follow(frameTime) // Redraw with the clock; see [RcClockDrawGate].
@@ -1791,6 +1792,7 @@ private fun RenderLayoutNodeContent(
           // `ComponentValue` to the canvas content's own id (the AndroidX `RemoteCanvas` writer
           // does) reads its width and height back, and drawing with `Modifier.fillMaxSize()` alone
           // never published them, so every coordinate derived from them collapsed to the origin.
+          ReleaseLoopPassOnDispose(state, node.operations)
           val clockGate = RcClockDrawGate(LocalRcGateClockDraws.current)
           Canvas(effectiveModifier.fillMaxSize()) {
             clockGate.follow(frameTime) // Redraw with the clock; see [RcClockDrawGate].
@@ -3411,6 +3413,15 @@ internal fun arrangeLinear(
   return outPositions
 }
 
+/**
+ * Releases the loop budget [operations]' drawing recorded once it leaves the composition (a GONE
+ * component), which AndroidX no longer paints or counts (CoreDocument.java:2357).
+ */
+@Composable
+private fun ReleaseLoopPassOnDispose(state: RcPlayerState, operations: List<RcLinkedNode>) {
+  DisposableEffect(state, operations) { onDispose { state.releaseLoopPass(operations) } }
+}
+
 @Composable
 private fun Modifier.applyComponentModifiers(
   modifiers: RcLayoutModifiers,
@@ -3432,6 +3443,7 @@ private fun Modifier.applyComponentModifiers(
   val extensionSessions = LocalRcExtensionSessions.current
   val frameTime = LocalRcFrameTime.current
   val paintVersion = LocalRcPaintVersion.current
+  canvasOperations?.let { ReleaseLoopPassOnDispose(state, it) }
   // A `RippleModifier` is an `Indication` at its wire position, driven by the presses of the
   // component's clickable through this shared source (see `applyAndroidXRipple`).
   val rippleInteractions =
@@ -6397,19 +6409,23 @@ private fun DrawScope.drawOperations(
   activeTargets.enter()
   state.beginPaint()
   try {
-    drawOperationsRouted(
-      operations,
-      state,
-      paint,
-      computedPaths,
-      textMeasurer,
-      images,
-      functions,
-      requestedTheme,
-      filterTheme,
-      drawContent,
-      activeTargets,
-    )
+    val draw = {
+      drawOperationsRouted(
+        operations,
+        state,
+        paint,
+        computedPaths,
+        textMeasurer,
+        images,
+        functions,
+        requestedTheme,
+        filterTheme,
+        drawContent,
+        activeTargets,
+      )
+    }
+    // A component's own drawing owns the loop budget its loops record (see `inLoopPass`).
+    if (targets == null && !inFunction) state.inLoopPass(operations, draw) else draw()
   } finally {
     state.endPaint()
     activeTargets.leave(this)
