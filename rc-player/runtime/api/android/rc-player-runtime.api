@@ -976,6 +976,7 @@ public final class ee/schimke/composeai/rcplayer/runtime/RcPlayerState {
 	public final fun floatList (I)Lee/schimke/composeai/rcplayer/protocol/RcFloatList;
 	public final fun floatValues (I)[F
 	public final fun forEachLoopValue (Lee/schimke/composeai/rcplayer/protocol/RcLoopOperation;ILkotlin/jvm/functions/Function1;)V
+	public final fun forEachLoopValue (Lee/schimke/composeai/rcplayer/protocol/RcLoopOperation;Lkotlin/jvm/functions/Function1;)V
 	public final fun forEachParticle (Lee/schimke/composeai/rcplayer/protocol/RcParticleLoop;Lkotlin/jvm/functions/Function0;)V
 	public final fun forgetRecentClockReads ()V
 	public final fun getAnimationTimeSeconds ()F

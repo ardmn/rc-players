@@ -487,6 +487,17 @@ class RcPlayerStateTest {
     assertEquals(ANDROIDX_MAX_OP_COUNT, passes(secondDrawing, second))
   }
 
+  /** v4.1.0 published `forEachLoopValue(operation, block)`; it still runs, a pass costing one. */
+  @Suppress("DEPRECATION")
+  @Test
+  fun theV410LoopOverloadStillRuns() {
+    val state = RcPlayerState(RcDocument(RcHeader(RcVersion(1, 0, 0)), emptyList()))
+    state.setFloat(30, Float.POSITIVE_INFINITY)
+    var passes = 0
+    state.forEachLoopValue(loop(30)) { passes++ }
+    assertEquals(ANDROIDX_MAX_OP_COUNT, passes)
+  }
+
   private fun loop(until: Int) =
     RcLoopOperation(
       0,

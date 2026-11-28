@@ -1016,6 +1016,14 @@ private constructor(
     }
   }
 
+  /** The v4.1.0 form: each pass costs one, as for a loop with no body. */
+  @Deprecated(
+    "Pass the loop body's operation count, which AndroidX charges per pass.",
+    ReplaceWith("forEachLoopValue(operation, bodyOperations = 0, block)"),
+  )
+  public fun forEachLoopValue(operation: RcLoopOperation, block: (Float) -> Unit): Unit =
+    forEachLoopValue(operation, bodyOperations = 0, block)
+
   /**
    * Runs [block] as one top-level drawing of [owner]'s operations. The loop budget the previous
    * drawing of [owner] recorded is released first, so a loop it no longer runs (a false
