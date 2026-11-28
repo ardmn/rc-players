@@ -50,6 +50,7 @@ import ee.schimke.composeai.rcplayer.protocol.RcTextData
 import ee.schimke.composeai.rcplayer.protocol.RcTextStyleProperty
 import ee.schimke.composeai.rcplayer.protocol.RcVersion
 import ee.schimke.composeai.rcplayer.protocol.RcVisibilityModifier
+import ee.schimke.composeai.rcplayer.protocol.RcWidthInModifier
 import ee.schimke.composeai.rcplayer.protocol.RcWidthModifier
 import ee.schimke.composeai.rcplayer.protocol.RcZIndexModifier
 import ee.schimke.composeai.rcplayer.runtime.RcFloatExpressionEvaluator
@@ -201,6 +202,30 @@ class RcFlatLayoutTest {
           expected,
           redPixelsInFirstRow(document, width = 100, height = 60, flatten),
           "$size, flatten $flatten",
+        )
+      }
+    }
+  }
+
+  /**
+   * A negative `widthIn` maximum other than -1 (unset) leaves no width: AndroidX's default measure
+   * policy takes min(maxWidth, max) unchecked (BaseModernMeasurePolicy.java:71-73, 111-112).
+   */
+  @Test
+  fun aNegativeWidthInMaximumLeavesNoWidth() {
+    for ((maximum, expected) in
+      listOf(Float.NEGATIVE_INFINITY to 0, -5f to 0, -1f to 50, Float.POSITIVE_INFINITY to 50)) {
+      val widthIn = RcWidthInModifier(RcFloatWord.literal(-1f), RcFloatWord.literal(maximum))
+      val document =
+        document(
+          RcColumnLayout(3, -1, 1, 4, RcFloatWord.literal(0f)),
+          listOf(box(10, 1f, 50f, 20f, leading = listOf(widthIn))),
+        )
+      for (flatten in listOf(false, true)) {
+        assertEquals(
+          expected,
+          redPixelsInFirstRow(document, width = 100, height = 60, flatten),
+          "$maximum, flatten $flatten",
         )
       }
     }
