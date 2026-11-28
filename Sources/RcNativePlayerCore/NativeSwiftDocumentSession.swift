@@ -21,8 +21,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// resolution puts back over the document's (`RcPlayerState.textOverrides`).
   private var textOverrides: [Int: String] = [:]
   /// The float view of every numeric value, live (`RcPlayerState.floats`). Value writes go through
-  /// `storeFloat`, `setFloat` or `setInteger` so the integer view moves with it; only a system
-  /// load (float only), a carried value and a time attribute's clear write the views themselves.
+  /// `storeFloat`, `setFloat` or `setInteger` so the integer view moves with it; after
+  /// construction only a system load, a carried value and a time attribute's clear write the views.
   ///
   /// Exclusivity checks are off for this and `integers`: `stateLock` already serialises access, and
   /// the check cost about a tenth of a resolution at 5000 values (`scenarios.resolutionCost`). So
@@ -668,8 +668,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
   /// Text `id` as it stands now, for an action that sends or stores it
   /// (`RcPlayerState.currentText`).
   ///
-  /// A text with a producer is recomputed, inputs first, because its inputs may have moved since
-  /// the last frame; any other text is sent as it stands. O(the texts `id` depends on).
+  /// An unwritten text with a producer is recomputed, inputs first, because its inputs may have
+  /// moved since the last frame; any other text is sent as it stands. O(the texts `id` depends on).
   private func currentText(_ id: Int) -> String? {
     guard textOverrides[id] == nil, document.textProducers[id] != nil else { return texts[id] }
     var order: [ParsedTextOperation] = []
@@ -695,9 +695,9 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 
   /// Every value the document holds at `timeSeconds`, after one resolution at that instant.
   ///
-  /// Resolves as `snapshot` does, minus impulses, so a probe after a `snapshot` at the same instant
-  /// is a second pass: values that read their previous ones move again. Its run actions replace
-  /// any frame effects not yet taken.
+  /// Resolves as `snapshot` does, minus impulses and the document's frame effects, so a probe after
+  /// a `snapshot` at the same instant is a second pass: values that read their previous ones move
+  /// again. At a new instant its run actions replace any frame effects not yet taken.
   @_spi(Conformance) public func probeValues(
     timeSeconds: TimeInterval, wallClock: NativeSwiftWallClock? = nil
   ) throws -> NativeSwiftProbeValues {
@@ -1627,7 +1627,8 @@ public final class NativeSwiftDocumentSession: @unchecked Sendable {
 
   /// One resolution at `timeSeconds`: `beginFrame`, every step once in wire order against the live
   /// store, then the measured component values. No fixed point: a step that reads a later step's
-  /// numeric output reads the previous resolution's value, as in Kotlin.
+  /// number or colour reads the previous resolution's value (a text reads the document's), as in
+  /// Kotlin.
   ///
   /// Cost: O(steps + the expression words they evaluate), plus the component-value estimates; the
   /// steps run once more when a component value moved or a step failed waiting for a component
