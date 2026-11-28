@@ -112,6 +112,41 @@ import Testing
     #expect(try session.probeValues(timeSeconds: 0).floats[70] == 9)
   }
 
+  /// A host's autosize bounds as the Kotlin player's `rcAutoSizeRange` takes them: AndroidX's 4 and
+  /// 400 for a NaN or non-positive bound (CoreText.java:720-721), each at most
+  /// `RC_MAX_TEXT_SIZE_PX`, and the minimum never above the maximum.
+  @Test func aHostAutosizeBoundIsCappedAsTheKotlinPlayerCapsIt() throws {
+    typealias Op = NativeSwiftWireOpcode
+    typealias Property = NativeSwiftTextProperty
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.text(id: 20, "fit")
+    for (id, name) in [(70, "USER:min"), (71, "USER:max")] {
+      document.u8(Op.dataFloat).int(id).float(1)
+      document.namedVariable(id: id, type: NativeSwiftNamedVariableType.float, name: name)
+    }
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.coreText).int(20).u16(3)
+    document.u8(Property.autosize).u8(1)
+    document.u8(Property.minFontSize).int(Writer.nanReference(70))
+    document.u8(Property.maxFontSize).int(Writer.nanReference(71))
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    let cases: [(minimum: Float, maximum: Float, expected: NativeSwiftTextAutosize)] = [
+      (.infinity, .infinity, NativeSwiftTextAutosize(minimumFontSize: 1e6, maximumFontSize: 1e6)),
+      (.nan, .nan, NativeSwiftTextAutosize(minimumFontSize: 4, maximumFontSize: 400)),
+      (-.infinity, 3e9, NativeSwiftTextAutosize(minimumFontSize: 4, maximumFontSize: 1e6)),
+      (900, 20, NativeSwiftTextAutosize(minimumFontSize: 20, maximumFontSize: 20)),
+    ]
+    for (minimum, maximum, expected) in cases {
+      let session = try NativeSwiftDocumentSession.open(data: document.data)
+      #expect(session.setFloat(minimum, for: "USER:min"))
+      #expect(session.setFloat(maximum, for: "USER:max"))
+      let root = try session.snapshot(timeSeconds: 0).root
+      let text = try #require(Self.nodes(root).compactMap(\.text).first)
+      #expect(text.autosize == expected, "\(minimum)...\(maximum)")
+    }
+  }
+
   /// The same for an id a `TextLength` computes: AndroidX's `overrideFloat` ignores an equal value
   /// for any id (RemoteComposeState.java:318-324), so the length keeps following the text.
   @Test func aHostWriteEqualToATextLengthLeavesItDriven() throws {

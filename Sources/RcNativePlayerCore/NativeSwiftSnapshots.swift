@@ -1128,6 +1128,23 @@ public struct NativeSwiftTextAutosize: Equatable, Sendable {
     self.maximumFontSize = maximumFontSize
   }
 
+  /// AndroidX `CoreText`'s bounds when the document sets none (CoreText.java:720-721); Kotlin's
+  /// `RC_AUTOSIZE_DEFAULT_MIN_PX` and `RC_AUTOSIZE_DEFAULT_MAX_PX`.
+  static let defaultMinimumFontSize: Float = 4
+  static let defaultMaximumFontSize: Float = 400
+
+  /// The Kotlin player's `rcAutoSizeRange`: an unset or non-positive bound (the wire's -1) takes
+  /// its default, each is at most `NativeSwiftTextSnapshot.maximumSize`, and the minimum never
+  /// passes the maximum. AndroidX's own search never ends on an infinite bound (CoreText.java:725).
+  static func resolved(minimum: Float?, maximum: Float?) -> NativeSwiftTextAutosize {
+    func bound(_ value: Float?, default fallback: Float) -> Float {
+      min(value.flatMap { $0 > 0 ? $0 : nil } ?? fallback, NativeSwiftTextSnapshot.maximumSize)
+    }
+    let upper = bound(maximum, default: defaultMaximumFontSize)
+    let lower = min(bound(minimum, default: defaultMinimumFontSize), upper)
+    return NativeSwiftTextAutosize(minimumFontSize: lower, maximumFontSize: upper)
+  }
+
   /// The font size the text takes: what autosize chooses, as the reference's
   /// `CoreText.computeWrapSize` searches.
   ///

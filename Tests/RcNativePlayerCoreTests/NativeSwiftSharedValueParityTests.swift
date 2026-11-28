@@ -45,6 +45,13 @@ import Testing
     #expect(largest == Double(NativeSwiftTextSnapshot.maximumSize))
   }
 
+  @Test func theAutosizeDefaultsMatchTheKotlinPlayer() throws {
+    let minimum = try Self.kotlinConstant("RC_AUTOSIZE_DEFAULT_MIN_PX", in: Self.kotlinPlayer)
+    #expect(minimum == Double(NativeSwiftTextAutosize.defaultMinimumFontSize))
+    let maximum = try Self.kotlinConstant("RC_AUTOSIZE_DEFAULT_MAX_PX", in: Self.kotlinPlayer)
+    #expect(maximum == Double(NativeSwiftTextAutosize.defaultMaximumFontSize))
+  }
+
   @Test func theNormalWeightMatchesTheKotlinPlayer() throws {
     let kotlin = try Self.kotlinConstant("RC_NORMAL_TEXT_WEIGHT", in: Self.kotlinPlayer)
     #expect(kotlin == Double(NativeSwiftTextSnapshot.normalWeight))
