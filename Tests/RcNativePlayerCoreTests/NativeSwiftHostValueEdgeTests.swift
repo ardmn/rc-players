@@ -33,6 +33,32 @@ import Testing
     }
   }
 
+  /// A marquee whose velocity a host sets to NaN, 0 or below stands still instead of failing the
+  /// frame: Kotlin's `androidXMarqueeOffset` gives 0 for a duration that is not finite and positive,
+  /// and AndroidX's `MarqueeModifierOperation.paint` (java:180) divides by the raw velocity.
+  @Test func aHostMarqueeVelocityThatIsNotPositiveStandsStill() throws {
+    typealias Op = NativeSwiftWireOpcode
+    let document = Writer()
+    document.header(width: 100, height: 100)
+    document.u8(Op.dataFloat).int(70).float(30)
+    document.namedVariable(id: 70, type: NativeSwiftNamedVariableType.float, name: "USER:velocity")
+    document.text(id: 80, String(repeating: "scrolls ", count: 40))
+    document.u8(Op.layoutRoot).int(1)
+    document.u8(Op.layoutText).int(2).int(0).int(80).int(Int(Int32(bitPattern: 0xff00_0000)))
+    document.float(16).int(0).float(400).int(-1).int(1).int(1).int(1)
+    document.u8(Op.modifierMarquee).int(-1).int(0).float(0).float(0).float(0)
+      .int(Writer.nanReference(70))
+    document.u8(Op.containerEnd).u8(Op.containerEnd)
+    for value: Float in [.nan, 0, -30, -.infinity] {
+      let session = try NativeSwiftDocumentSession.open(data: document.data)
+      #expect(session.setFloat(value, for: "USER:velocity"))
+      let snapshot = try session.snapshot(timeSeconds: 5)
+      let marquee = try #require(Self.nodes(snapshot.root).compactMap(\.marquee).first)
+      #expect(
+        marquee.offset(overflowDistance: 200, density: 1, elapsedSeconds: 5) == 0, "\(value)")
+    }
+  }
+
   /// A host offset reaches the snapshot as a finite number: NaN reads 0 and an infinity is held at
   /// the largest finite float of its sign, as the Kotlin player's `javaRoundToInt` reads it and as
   /// `resolvedFloat` saturates a padding.
